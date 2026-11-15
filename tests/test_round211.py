@@ -89,9 +89,11 @@ class TestLibraryDialog(unittest.TestCase):
         dlg = ToolLibraryDialog(None, None, lib)
         self.assertEqual(dlg.import_folder(tree(), replace=False), 4)
         self.assertTrue(lib.exists())                                          # tools.json créé
-        tops = [dlg.tree.topLevelItem(i).text(0) for i in range(dlg.tree.topLevelItemCount())]
+        node = dlg.tree.topLevelItem(dlg.tree.topLevelItemCount() - 1)     # 1043 : un seul arbre, Mes outils en bas
+        self.assertTrue(node.text(0).startswith('📚 '), node.text(0))
+        tops = [node.child(i).text(0) for i in range(node.childCount())]
         self.assertEqual(tops, ['📁 Datron', '📁 gravure'])
-        datron = dlg.tree.topLevelItem(0)
+        datron = node.child(0)
         self.assertEqual(sorted(datron.child(i).text(0) for i in range(datron.childCount())),
                          ['📁 coniques', '📁 fraises'])
         self.assertIn(str(lib), dlg.info.text())                              # où est le tools.json

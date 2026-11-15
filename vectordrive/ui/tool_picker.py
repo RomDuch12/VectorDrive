@@ -81,7 +81,15 @@ class ToolPickerDialog(QDialog):
         lay.addLayout(row)
         open_large(self, settings, 'outils/choix_agrandi', full=True)
         row = QHBoxLayout()
-        self.tree = QTreeWidget()
+        from . import tool_favorites as FAV                # une étoile devant chaque outil, les favoris en tête
+        self.tree = FAV.FavoriteTree(self._favorites_moved)
+        self.stars = FAV.StarDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(0, self.stars)
+        self.stars.toggled.connect(self._star_clicked)
+        self._opening = False                            # (dépliage fait par la liste elle-même : pas retenu)
+        self.tree.itemExpanded.connect(lambda it: self._fav_folded(it, True))
+        self.tree.itemCollapsed.connect(lambda it: self._fav_folded(it, False))
+        self.tree.header().sortIndicatorChanged.connect(lambda c, _o: self._lock_favorites(c))
         from .tool_columns import install                 # colonnes arrangeables, n° T dans la sienne (cachée)
         install(self.tree, settings, 'outils/choix_colonnes')
         from .tool_filters import sortable
@@ -96,6 +104,7 @@ class ToolPickerDialog(QDialog):
         row.addWidget(self.tree, 1)
         from .tool_sheet import ToolSheet                 # colonne de droite : la fiche modifiable, DXF et STEP
         self.sheet = ToolSheet(self, self.tree, settings, 'outils/choix_colonnes')
+        self.sheet.shared_key = self._key_shared         # une copie renommée : l'original reste favori
         self.sheet.setMinimumWidth(340)
         self.sheet.saved.connect(self._sheet_saved)
         self.preview = self.sheet.preview                  # la silhouette
@@ -142,15 +151,41 @@ class ToolPickerDialog(QDialog):
         self._select_key(key)
 
     def _select_key(self, key) -> None:
-        it = next((i for i in self._items() if key and i.data(0, ROLE) == key and not i.isHidden()), None)
+        rows = [i for i in self._items() if key and i.data(0, ROLE) == key and not i.isHidden()]
+        g = self.favorites_group()
+        if g is not None and not g.isExpanded():          # favoris pliés : la ligne de l'outil hors du groupe
+            rows = [i for i in rows if i.parent() is not g] + [i for i in rows if i.parent() is g]
+        it = next(iter(rows), None)
         if it is not None and self.tree.currentItem() is not it:
-            self.tree.setCurrentItem(it)
+            self._opening = True                          # (Qt déplie les dossiers de la ligne : pas retenu)
+            try:
+                self.tree.setCurrentItem(it)
+            finally:
+                self._opening = False
 
     def _fill(self, doc_tools, current) -> None:
+        from . import tool_favorites as FAV
         from .tool_filters import group_item
         self._fill_args = (list(doc_tools), current)
         self.tree.clear()
         cur_item = None
+        self._fav_keys = set(FAV.load(self.settings))
+        fav_group, fav_rows = None, []
+        favs = FAV.ordered(self.settings, list(doc_tools) + list(self.library.values()))
+        if favs:                                          # ★ Favoris en tête, dans leur ordre (glisser : le changer)
+            fav_group = group_item([tr('★ Favoris') + f'  ({len(favs)})'])
+            f = fav_group.font(0)
+            f.setBold(True)
+            fav_group.setFont(0, f)
+            fav_group.setData(0, ROLE + 2, 'favoris')
+            fav_group.setToolTip(0, tr('Les outils étoilés : un clic sur l’étoile d’un outil l’ajoute ou le retire ; '
+                                       'les glisser pour les ranger'))
+            self.tree.addTopLevelItem(fav_group)
+            for t in favs:
+                it = self._row(t, t.id if t.id in self._doc else 'lib:' + t.id)
+                fav_group.addChild(it)
+                fav_rows.append(it)
+            fav_group.setExpanded(FAV.is_open(self.settings))
         prefs = toolprefs.load(self.settings)
         if self.op_kind and toolprefs.customized(self.op_kind, prefs):     # réglée : les proposés en tête
             best = toolprefs.ordered(list(doc_tools) + list(self.library.values()), self.op_kind, prefs, only=True)
@@ -179,7 +214,8 @@ class ToolPickerDialog(QDialog):
                     cur_item = it
             g.setExpanded(True)
         nodes: dict = {}
-        tools = sorted(self.library.values(), key=lambda t: (toollib.folder_of(t).lower(), t.diameter, t.name.lower()))
+        tools = sorted(self.library.values(), key=lambda t: (toollib.folder_sort_key(toollib.folder_of(t)), t.diameter,
+                                                             t.name.lower()))     # familles dans leur ordre
         for t in tools:
             g = self._group(nodes, toollib.folder_of(t))
             it = self._row(t, 'lib:' + t.id)
@@ -203,14 +239,18 @@ class ToolPickerDialog(QDialog):
                 p.setExpanded(True)
                 p = p.parent()
             self.tree.setCurrentItem(cur_item)
+        # seuls les favoris se glissent, et seulement dans leur groupe (pas quand la liste est triée par une colonne)
+        FAV.lock_drops(self.tree, fav_group, fav_rows, draggable=self.tree.sortColumn() < 0)
 
     def _row(self, t, key) -> QTreeWidgetItem:
         """Ligne d'un outil : silhouette, « nom — Ø2 L4 » et une cellule par colonne (`tool_columns`), fiche en
         infobulle."""
         from .tool_columns import COLUMNS, row
         from .tool_filters import machine_labels, tool_icon
+        from .tool_favorites import STAR_ROLE
         it = row(t)
         it.setData(0, ROLE, key)
+        it.setData(0, STAR_ROLE, toollib.favorite_key(t) in getattr(self, '_fav_keys', ()))     # ★ ou ☆
         it.setIcon(0, tool_icon(t, 14, 26))
         if not hasattr(self, '_mlabels'):
             self._mlabels = machine_labels()
@@ -259,6 +299,65 @@ class ToolPickerDialog(QDialog):
         if isinstance(key, str) and key.startswith('lib:'):
             return self.library.get(key[4:])
         return getattr(self, '_doc', {}).get(key) if hasattr(self, '_doc') else None
+
+    # --- favoris (demande du 15/11) -----------------------------------------------------------------------------
+    def _star_clicked(self, index) -> None:
+        """Clic sur l'étoile d'un outil : basculée une fois l'événement de la souris fini (la liste est refaite)."""
+        it = self.tree.itemFromIndex(index)
+        key = it.data(0, ROLE) if it is not None else None
+        if key:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self, lambda k=key: self.toggle_favorite(k))
+
+    def toggle_favorite(self, key):
+        """L'outil `key` favori, ou plus ; la liste refaite (même recherche, même outil choisi). Rend son nouvel état
+        (None : outil inconnu)."""
+        from . import tool_favorites as FAV
+        t = self._tool(key)
+        if t is None:
+            return None
+        on = FAV.toggle(self.settings, t)
+        self._refill()
+        return on
+
+    def _key_shared(self, tool, key) -> bool:
+        """Un autre outil de la liste (copie dans le document, original d'une bibliothèque) a la clé de favori `key`."""
+        doc = getattr(self, '_fill_args', ((), None))[0]
+        return any(x is not tool and toollib.favorite_key(x) == key for x in list(doc) + list(self.library.values()))
+
+    def favorites_group(self):
+        """Le groupe « ★ Favoris » (None : aucun favori parmi ces outils)."""
+        return next((self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
+                     if self.tree.topLevelItem(i).data(0, ROLE + 2) == 'favoris'), None)
+
+    def _favorites_moved(self) -> None:
+        """Favoris glissés dans leur groupe : leur nouvel ordre retenu, la liste refaite après le dépôt."""
+        from . import tool_favorites as FAV
+        from PySide6.QtCore import QTimer
+        g = self.favorites_group()
+        if g is None:
+            return
+        if self.tree.sortColumn() >= 0:                   # triée par une colonne : l'ordre retenu ne change pas
+            QTimer.singleShot(0, self, self._refill)
+            return
+        tools = [self._tool(g.child(i).data(0, ROLE)) for i in range(g.childCount())]
+        FAV.reorder(self.settings, [t for t in tools if t is not None])
+        QTimer.singleShot(0, self, self._refill)
+
+    def _lock_favorites(self, col=None) -> None:
+        """Tri par une colonne : plus rien ne se glisse ; tri retiré : les favoris se rangent de nouveau."""
+        from . import tool_favorites as FAV
+        g = self.favorites_group()
+        rows = [g.child(i) for i in range(g.childCount())] if g is not None else []
+        FAV.lock_drops(self.tree, g, rows, draggable=(self.tree.sortColumn() if col is None else col) < 0)
+
+    def _fav_folded(self, it, on: bool) -> None:
+        """Groupe « Favoris » plié ou déplié à la main : retenu (pas pendant une recherche, qui ouvre les dossiers, ni
+        quand la liste déplie elle-même la ligne choisie)."""
+        busy = self._opening or bool(self.search.text().strip())
+        if it is not None and it.data(0, ROLE + 2) == 'favoris' and not busy:
+            from . import tool_favorites as FAV
+            FAV.set_open(self.settings, on)
 
     def toggle_full_screen(self) -> bool:
         from .tool_filters import toggle_full_screen

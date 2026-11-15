@@ -9,6 +9,7 @@ un moteur GPU (QRhi) prendra le relais pour les très gros fichiers.
 from __future__ import annotations
 
 import math
+import weakref
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (QBrush, QFont, QPolygonF, QColor, QKeyEvent, QMouseEvent, QPainter,
@@ -138,8 +139,47 @@ def item_path(it: Item) -> Path | None:
     if isinstance(it, Shape):
         return it.path
     if isinstance(it, Text):
+        if it.outline is None:
+            _late_outline(it)
         return it.outline
     return None
+
+
+#: textes restés sans tracé (police absente ou illisible) : {id : (réf. faible, police, chaîne)} — pas d'essai à chaque
+#: rendu, un nouvel essai si la police ou la chaîne change
+_NO_OUTLINE: dict = {}
+
+
+def _late_outline(t: Text) -> None:
+    """Texte lu sans tracé (DXF, conversion…) : tracé au premier affichage et gardé dans le texte (demande du 15/11 :
+    les cotes des dessins d'outils ne s'affichaient pas). Police absente : rien — pas de police de remplacement ici,
+    le texte passe par `missing_fonts` (VD Géo dans une copie de son calque)."""
+    if not (t.text or '').strip():
+        return
+    got = _NO_OUTLINE.get(id(t))
+    if got is not None and got[0]() is t and got[1:] == (t.font, t.text):
+        return
+    from ..core import missing_fonts as MF
+    from ..core import text as TX
+    try:
+        if not MF.absent(t):
+            t.outline = TX.outline_for(t)
+    except Exception:                                    # noqa: BLE001 — police illisible : le texte reste sans tracé
+        pass
+    if t.outline is None:
+        if len(_NO_OUTLINE) > 20000:
+            _NO_OUTLINE.clear()
+        _NO_OUTLINE[id(t)] = (weakref.ref(t), t.font, t.text)
+
+
+def _cull_rect(q: QPainterPath) -> QRectF:
+    """Rectangle de tri à l'affichage, jamais plat : `QRectF.intersects` est faux pour un rectangle sans largeur ou sans
+    hauteur — un trait seul horizontal ou vertical (ligne de cote, axe) n'était pas dessiné (demande du 15/11)."""
+    r = q.controlPointRect()
+    if r.width() <= 0 or r.height() <= 0:
+        e = 1e-6 * max(1.0, r.width(), r.height(), abs(r.x()), abs(r.y()))
+        r = r.adjusted(-e, -e, e, e)
+    return r
 
 
 def _polyline_touches(P, rect) -> bool:
@@ -609,7 +649,7 @@ class Canvas(QWidget):
         if e is not None and e[0] is src:
             return e
         q = to_qpath(src)
-        e = (src, q, q.controlPointRect())
+        e = (src, q, _cull_rect(q))
         self._cache[id(src)] = e
         return e
 
@@ -896,7 +936,7 @@ class Canvas(QWidget):
             p.setPen(pen)
             for it in items:
                 q = self._compare_qpath(it)
-                if q is not None and q.controlPointRect().intersects(vis_doc):
+                if q is not None and _cull_rect(q).intersects(vis_doc):
                     p.drawPath(q)
         col = self.COMPARE_COLORS
         draw(cmp_.removed, col['removed'], 1.6, Qt.PenStyle.DashLine)
@@ -1770,7 +1810,7 @@ class Canvas(QWidget):
                         e = self._entry(old) if src else None
                         if e is not None:
                             q = qt.map(e[1])
-                            self._cache[id(src)] = (src, q, q.controlPointRect())
+                            self._cache[id(src)] = (src, q, _cull_rect(q))
         self.selection = new_sel
         self.documentChanged.emit()
         self.selectionChanged.emit()

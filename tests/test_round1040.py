@@ -153,7 +153,7 @@ class CloseButton(Base):
 class NeverOverAControl(Base):
     """Sans place libre dans la bande du haut, la fenêtre se resserre à droite : le ✕ ne couvre rien."""
 
-    def show_full(self, dlg):
+    def show_full(self, dlg, half=False):
         dlg.setWindowState(FULL)
         dlg.show()
         settle()
@@ -161,7 +161,10 @@ class NeverOverAControl(Base):
         b = close_button(dlg)
         self.assertIsNotNone(b, 'avant : pas de ✕')
         self.assertTrue(b.isVisible())
-        self.assertGreater(b.x(), dlg.width() - 3 * b.width())               # en haut à droite
+        if half:                                     # place libre dans la bande du haut : dans sa moitié droite
+            self.assertGreaterEqual(b.x(), dlg.width() // 2)
+        else:
+            self.assertGreater(b.x(), dlg.width() - 3 * b.width())           # en haut à droite
         self.assertEqual(covered(dlg, b), [])
         return b
 
@@ -194,7 +197,7 @@ class NeverOverAControl(Base):
         picker.reject()
         picker.deleteLater()
         lib = ToolLibraryDialog(self.win, path=os.path.join(tempfile.mkdtemp(), 'tools.json'))
-        self.show_full(lib)
+        self.show_full(lib, half=True)               # (1043 : plus de liste des bibliothèques en haut)
         lib.reject()
         lib.deleteLater()
 

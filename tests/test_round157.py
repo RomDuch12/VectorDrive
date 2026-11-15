@@ -83,7 +83,7 @@ class TestCanvasAndDialog(unittest.TestCase):
         c.resize(800, 600)
         if hasattr(c, 'fit'):
             c.fit()
-        pt = c.to_screen(0.0, 5.0)                                               # bord gauche du carré
+        pt = c.to_screen(10.0, 5.0)              # bord droit du carré (loin du « A », tracé et cliquable depuis 0.899.0)
         self.assertIs(c.pick(QPointF(pt)), self.its[0])
         c.pick_filter = {'open'}
         self.assertIsNone(c.pick(QPointF(pt)))

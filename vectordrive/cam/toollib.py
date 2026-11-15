@@ -624,12 +624,91 @@ def library(path=None) -> list[CamTool]:
         return []
 
 
+# --- familles (classement des listes d'outils, demande du 15/11) ----------------------------------------------------
+#: famille → dossier des listes d'outils, dans leur ordre : Cylindriques (› Cyl 3, Cyl 4…), Coniques (› Con 90,
+#: Con 45…), Boules, Chamfer, Thread, Ext-Rad, T-slot, Drill, puis les autres
+FAMILIES = (('fraise', 'Cylindriques'), ('conique', 'Coniques'), ('boule', 'Boules'), ('chanfrein', 'Chamfer'),
+            ('filetage', 'Thread'), ('rayon', 'Ext-Rad'), ('tslot', 'T-slot'), ('foret', 'Drill'),
+            ('torique', 'Toriques'), ('surfacage', 'Surfaçage'), ('laser', 'Laser'), ('couteau', 'Couteaux'),
+            ('profil', 'Profils'))
+_FAMILY = dict(FAMILIES)
+#: sous-dossier d'une famille : « Cyl 3 » (Ø), « Con 90 » (angle)
+_SUB = re.compile(r'(Cyl|Con) (\d+(?:\.\d+)?)')
+
+
+def family(t) -> str:
+    """Famille d'un outil : celle de ses cotes ou de sa fiche (« chanfrein », « filetage »…), sinon sa nature."""
+    for d in (getattr(t, 'geometry', None), getattr(t, 'catalog', None)):
+        f = str((d or {}).get('famille') or '').strip().lower()
+        if f in _FAMILY:
+            return f
+    k = str(getattr(t, 'kind', '') or 'fraise')
+    return k if k in _FAMILY else 'fraise'
+
+
+def _short(v) -> str:
+    return f'{round(float(v or 0), 3):g}'
+
+
+def family_path(t) -> list[str]:
+    """Dossiers d'un outil classé par famille : ['Cylindriques', 'Cyl 3'] (par Ø), ['Coniques', 'Con 90'] (par angle),
+    ['Boules'], ['Chamfer']… (libellés traduits)."""
+    from ..i18n import tr
+    f = family(t)
+    top = tr(_FAMILY[f])
+    if f == 'fraise' and float(getattr(t, 'diameter', 0) or 0) > 0:
+        return [top, 'Cyl ' + _short(t.diameter)]
+    if f == 'conique' and float(getattr(t, 'angle', 0) or 0) > 0:
+        return [top, 'Con ' + _short(t.angle)]
+    return [top]
+
+
+_RANKS: dict = {}
+
+
+def _family_rank() -> dict:
+    """Rang de chaque famille par son libellé traduit, calculé une fois par langue (tri d'une longue liste)."""
+    from ..i18n import tr
+    lang = tr(FAMILIES[0][1])
+    got = _RANKS.get(lang)
+    if got is None:
+        got = _RANKS[lang] = {tr(label): i for i, (_k, label) in enumerate(FAMILIES)}
+    return got
+
+
+def folder_sort_key(name: str) -> tuple:
+    """Clé de tri d'un dossier : les familles dans leur ordre (`FAMILIES`), « Cyl » par Ø croissant, « Con » par angle
+    décroissant (Con 90, Con 45, Con 30…), les autres dossiers par nom (sans casse)."""
+    rank = _family_rank()
+    out = []
+    for part in folder_parts(name):
+        m = _SUB.fullmatch(part)
+        if m:
+            v = float(m.group(2))
+            out.append((0, -v if m.group(1) == 'Con' else v, ''))
+        elif part in rank:
+            out.append((0, float(rank[part]), ''))
+        else:
+            out.append((1, 0.0, part.casefold()))
+    return tuple(out)
+
+
+def favorite_key(t: CamTool) -> str:
+    """Clé d'un outil favori (`ui.tool_favorites`) : sa référence, sinon son nom, sa nature et ses cotes — la même pour
+    l'outil d'une bibliothèque et ses copies (Mes outils, le document), comme `find_match`."""
+    ref = str(t.ref or '').strip().lower()
+    if ref:
+        return 'ref:' + ref
+    return 'outil:{0}|{1}|{2}|{3}|{4}'.format(str(t.name or '').strip().lower(), t.kind, _short(t.diameter),
+                                             _short(t.angle), _short(t.tip))
+
+
 def with_plugins(mine=None, sources: dict | None = None) -> list[CamTool]:
     """« Choisir un outil » : Mes outils (`mine`, sinon `library()`), puis les outils des bibliothèques des plugins (les
     outils DATRON de l'atelier…), dans l'ordre. Un outil déjà vu (même référence, sinon même nom, même nature et mêmes
     cotes : `find_match`) n'y est qu'une fois ; ceux d'un plugin sont des copies, rangées sous le nom de leur
-    bibliothèque quand leur dossier ne commence pas par lui. Une bibliothèque en défaut est sautée. `sources` reçoit
-    id → nom de la bibliothèque."""
+    bibliothèque puis par famille (`family_path` : « Datron/Cylindriques/Cyl 3 »). Une bibliothèque en défaut est
+    sautée. `sources` reçoit id → nom de la bibliothèque."""
     from ..plugins import REGISTRY
     out = list(library() if mine is None else mine)
     if sources is not None:
@@ -649,7 +728,9 @@ def with_plugins(mine=None, sources: dict | None = None) -> list[CamTool]:
                 continue
             parts = folder_parts(c.folder)
             if not parts or parts[0].casefold() != str(name).strip().casefold():
-                c.folder = join_folder(str(name), *parts)
+                parts = [str(name), *parts]
+            c.plugin_folder = join_folder(*parts)        # son dossier dans le plugin : les règles « dossier » d'avant
+            c.folder = join_folder(str(name), *family_path(c))     # classés par famille (demande du 15/11)
             if not c.id or c.id in ids:
                 c.id = new_id()
             ids.add(c.id)

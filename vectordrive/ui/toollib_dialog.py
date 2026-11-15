@@ -18,6 +18,13 @@ from ..i18n import tr
 
 MINE = '__mienne__'
 DOC = '__document__'
+#: réglages : la dernière liste utilisée (sa clé : MINE, DOC, nom d'une bibliothèque de plugin) et son dernier dossier
+LAST_LIST = 'outils/derniere_liste'
+LAST_FOLDER = 'outils/dernier_dossier'
+#: données des lignes de l'arbre : la bibliothèque montrée, le chemin d'un dossier, le groupe des favoris
+SOURCE_ROLE = Qt.ItemDataRole.UserRole + 3
+PATH_ROLE = Qt.ItemDataRole.UserRole + 4
+FAV_GROUP = Qt.ItemDataRole.UserRole + 5
 PREVIEW = (220, 300)
 
 
@@ -122,11 +129,41 @@ class _LibTree(QTreeWidget):
         super().__init__()
         self.on_drop = on_drop
 
+    @staticmethod
+    def in_favorites(it) -> bool:
+        while it is not None and not it.data(0, FAV_GROUP):
+            it = it.parent()
+        return it is not None
+
+    def refuses(self, target) -> bool:
+        """Dépôt refusé sur `target` (le pointeur le montre ; rien n'est fait) :
+        - hors des favoris : des outils d'une autre bibliothèque que Mes outils (ils ne se rangent que dans les
+          favoris), ou des lignes des favoris (les favoris ne rangent pas Mes outils) ;
+        - dans les favoris : un dossier (seuls des outils y vont), ou des favoris rangés pendant un tri par colonne
+          (l'ordre montré ne changerait pas)."""
+        rows = self.selectedItems()
+        if self.in_favorites(target):
+            if any(not it.data(0, Qt.ItemDataRole.UserRole) for it in rows):
+                return True
+            return self.sortColumn() >= 0 and all(self.in_favorites(it) for it in rows)
+        return any(it.data(0, SOURCE_ROLE) != MINE or self.in_favorites(it) for it in rows)
+
+    def dragMoveEvent(self, ev) -> None:                       # noqa: N802 (API Qt)
+        """Refusé dès le survol (`refuses`), plutôt qu'un dépôt qui ne ferait rien."""
+        super().dragMoveEvent(ev)
+        target = self.itemAt(ev.position().toPoint())
+        if target is not None and ev.isAccepted() and self.refuses(target):
+            ev.ignore()
+
     def dropEvent(self, ev) -> None:                           # noqa: N802 (API Qt)
         target = self.itemAt(ev.position().toPoint())
+        if target is not None and self.refuses(target):
+            ev.ignore()
+            return
+        after = self.dropIndicatorPosition() == self.DropIndicatorPosition.BelowItem     # marque sous la ligne
         ev.setDropAction(Qt.DropAction.IgnoreAction)          # l'arbre est refait : pas de déplacement Qt
         ev.accept()
-        self.on_drop(target)
+        self.on_drop(target, after)
 
 
 class ToolLibraryDialog(QDialog):
@@ -155,11 +192,18 @@ class ToolLibraryDialog(QDialog):
         #: dossiers créés à la main, même vides (gardés dans tools.json)
         self.empty_folders = toollib.load_folders(self.path)
         self.tools: list = []
+        self._libs: dict = {}                              # outils des bibliothèques des plugins, lus une fois
+        self._lib_errors: dict = {}
+        self._opening = False                            # (dépliage par la fenêtre : pas retenu)
+        self._doc_setup = None                           # réglage FAO du document lu pour l'arbre (`_tools_of`)
+        self._keep_form = False                          # arbre refait sans recharger la fiche (`_refill_keeping_form`)
+        self._trimming = False                           # (`_one_library`)
         self.current = None
         self.settings = getattr(parent, 'settings', None)
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
-        top.addWidget(QLabel(tr('Bibliothèque')))
+        # plus de liste « Bibliothèque » (demande du 15/11) : toutes les bibliothèques sont dans l'arbre ; cette
+        # liste, cachée, garde celle de l'outil choisi (`source_key`), qui vaut pour les commandes
         self.source = QComboBox()
         self.source.addItem(tr('Mes outils ({0})').format(self.path.name), MINE)
         if panel is not None:
@@ -167,10 +211,15 @@ class ToolLibraryDialog(QDialog):
         from ..plugins import REGISTRY
         for name in REGISTRY.tool_libraries:
             self.source.addItem(tr(name), name)
+        last = str(self.settings.value(LAST_LIST, '') or '') if self.settings is not None else ''
+        if last and self.source.findData(last) >= 0:     # la dernière liste utilisée
+            self.source.setCurrentIndex(self.source.findData(last))
         self.source.currentIndexChanged.connect(self.reload)
-        self.source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.source.setMinimumContentsLength(16)
-        top.addWidget(self.source, 1)
+        self.source.hide()
+        top.addWidget(self.source)
+        self.lib_label = QLabel()                        # la bibliothèque des commandes : celle de l'outil choisi
+        top.addWidget(self.lib_label)
+        top.addStretch(1)
         head = top
         top = QHBoxLayout()                                      # les commandes : une ligne à part
         # une seule barre : les commandes rares dans « Plus », et toutes au clic droit
@@ -282,6 +331,13 @@ class ToolLibraryDialog(QDialog):
         split = QSplitter()
         self.tree = _LibTree(self.dropped)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)     # Ctrl / Maj : plusieurs
+        from . import tool_favorites as FAV              # une étoile devant chaque outil, les favoris en tête
+        self.stars = FAV.StarDelegate(self.tree)
+        self.tree.setItemDelegateForColumn(0, self.stars)
+        self.stars.toggled.connect(self._star_clicked)
+        self.tree.itemExpanded.connect(lambda it: self._folded(it, True))
+        self.tree.itemCollapsed.connect(lambda it: self._folded(it, False))
+        self.tree.selectionModel().selectionChanged.connect(self._one_library)
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
@@ -407,30 +463,88 @@ class ToolLibraryDialog(QDialog):
     def editable(self) -> bool:
         return self.source_key() in (MINE, DOC)
 
-    def reload(self) -> None:
-        key = self.source_key()
+    def _sources(self) -> list:
+        """Les bibliothèques de l'arbre, dans son ordre : celles des plugins (Datron…), les outils du document, puis
+        Mes outils."""
+        keys = [self.source.itemData(i) for i in range(self.source.count())]
+        return [k for k in keys if k not in (MINE, DOC)] + [k for k in (DOC, MINE) if k in keys]
+
+    def _source_label(self, key) -> str:
         if key == MINE:
-            self.tools = self.mine
-        elif key == DOC:
-            self.tools = self.panel.setup().tools
-        else:
+            return tr('Mes outils')
+        if key == DOC:
+            return tr('Outils du document')
+        return tr(str(key))
+
+    def _tools_of(self, key) -> list:
+        """Les outils de la bibliothèque `key` (ceux d'un plugin : lus une fois par fenêtre ; en défaut : aucun, et
+        l'erreur dite sous l'arbre)."""
+        if key == MINE:
+            return self.mine
+        if key == DOC:
+            if self.panel is None:
+                return []
+            if self._doc_setup is None:                  # lu une fois par remplissage : les mêmes outils pour l'arbre,
+                self._doc_setup = self.panel.setup()     # les commandes et l'enregistrement (`persist`)
+            return self._doc_setup.tools
+        if key not in self._libs:
             from ..plugins import REGISTRY
             try:
-                self.tools = list(REGISTRY.tool_libraries[key]())
+                self._libs[key] = list(REGISTRY.tool_libraries[key]())
             except Exception as ex:
-                self.tools = []
-                self.info.setText(str(ex))
-        for k in ('new', 'dup', 'del', 'imp'):
+                self._libs[key] = []
+                self._lib_errors[key] = str(ex)
+        return self._libs[key]
+
+    def _sync_actions(self) -> None:
+        """Les commandes valent pour la bibliothèque de l'outil choisi (`source_key`)."""
+        key = self.source_key()
+        for k in ('new', 'dup', 'del'):
             self.acts[k].setEnabled(self.editable())
-        for k in ('move', 'merge', 'impdir', 'newdir', 'up', 'down'):
+        for k in ('move', 'merge', 'newdir', 'up', 'down'):
             self.acts[k].setEnabled(key == MINE)
+        for k in ('imp', 'impdir'):                       # les imports vont toujours dans Mes outils
+            self.acts[k].setEnabled(True)
         self.acts['ren'].setEnabled(self.editable())
-        self.tree.setDragEnabled(key == MINE)
         self.acts['add'].setEnabled(key != DOC and self.panel is not None)
         self.acts['keep'].setEnabled(key != MINE)
         take = self.acts['add'] if self.acts['add'].isEnabled() else self.acts['keep']
         self.buttons['take'].setDefaultAction(take)
-        self.filters.set_tools(self.tools)
+        self._order_actions()
+        self.lib_label.setText(tr('Bibliothèque') + ' : ' + self._source_label(key))
+
+    def _one_library(self, selected=None, _deselected=None) -> None:
+        """Une sélection reste dans une bibliothèque : Ctrl, Maj ou le clavier sur une autre la remplace (les
+        commandes ne valent que pour une bibliothèque). Les lignes ajoutées décident, sinon la ligne choisie."""
+        if self._trimming:
+            return
+        added = [self.tree.itemFromIndex(i) for i in selected.indexes()] if selected is not None else []
+        keys = {it.data(0, SOURCE_ROLE) for it in added if it is not None} - {None}
+        cur = self.tree.currentItem()
+        key = next(iter(keys)) if len(keys) == 1 else (cur.data(0, SOURCE_ROLE) if cur is not None else None)
+        if key is None:
+            return
+        others = [it for it in self.tree.selectedItems() if it.data(0, SOURCE_ROLE) != key]
+        self._trimming = True
+        try:
+            for it in others:
+                it.setSelected(False)
+        finally:
+            self._trimming = False
+
+    def _use_source(self, key) -> None:
+        """La bibliothèque de l'outil choisi devient celle des commandes (liste cachée), sans refaire l'arbre."""
+        self.source.blockSignals(True)
+        self.source.setCurrentIndex(max(0, self.source.findData(key)))
+        self.source.blockSignals(False)
+        self.tools = self._tools_of(key)
+        self._sync_actions()
+
+    def reload(self) -> None:
+        """La liste cachée a changé (une commande, un import) : ses commandes, et l'arbre refait, ouvert sur elle."""
+        self.tools = self._tools_of(self.source_key())
+        self._sync_actions()
+        self.filters.set_tools([t for k in self._sources() for t in self._tools_of(k)])
         self.fill()
 
     def persist(self) -> None:
@@ -440,21 +554,45 @@ class ToolLibraryDialog(QDialog):
             self.empty_folders = [f for f in dict.fromkeys(self.empty_folders) if f not in have]
             toollib.save(self.mine, self.path, self.empty_folders)
         elif key == DOC:
-            self.panel.save(self.panel.setup())
+            # le réglage lu pour l'arbre, dont les outils viennent d'être modifiés (avant : un réglage relu, sans eux)
+            self.panel.save(self._doc_setup if self._doc_setup is not None else self.panel.setup())
 
     # --- liste -----------------------------------------------------------------------------------
-    def _folder_item(self, groups: dict, name: str) -> QTreeWidgetItem:
+    def _folder_item(self, groups: dict, name: str, root=None) -> QTreeWidgetItem:
         """Ligne du dossier `name` (« Datron/Fraises » : sous « Datron »),
-        créée avec ses parents au besoin."""
+        créée avec ses parents au besoin, sous `root` (la ligne de Mes outils)."""
         from .tool_filters import group_item
         parts = toollib.folder_parts(name) or [name]
-        parent = None
+        parent = root
         for i, part in enumerate(parts):
             key = toollib.SEP.join(parts[:i + 1])
             it = groups.get(key)
             if it is None:
                 it = groups[key] = group_item(['📁 ' + part])
                 it.setData(0, Qt.ItemDataRole.UserRole + 1, key)
+                it.setData(0, PATH_ROLE, key)
+                f = it.font(0)
+                f.setBold(True)
+                it.setFont(0, f)
+                if parent is None:
+                    self.tree.addTopLevelItem(it)
+                else:
+                    parent.addChild(it)
+            parent = it
+        return parent
+
+    def _family_item(self, groups: dict, parts: list, root=None) -> QTreeWidgetItem:
+        """Ligne de la famille `parts` (« Cylindriques », puis « Cyl 3 ») d'une liste classée par famille, créée avec
+        ses parents au besoin, sous `root` : un groupe, pas un dossier de Mes outils (ni choisi, ni renommé)."""
+        from .tool_filters import group_item
+        parent = root
+        for i, part in enumerate(parts):
+            key = ('famille',) + tuple(parts[:i + 1])     # (à part des dossiers de `groups`)
+            it = groups.get(key)
+            if it is None:
+                it = groups[key] = group_item(['📁 ' + part])
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                it.setData(0, PATH_ROLE, toollib.SEP.join(parts[:i + 1]))
                 f = it.font(0)
                 f.setBold(True)
                 it.setFont(0, f)
@@ -471,49 +609,243 @@ class ToolLibraryDialog(QDialog):
             self.acts[k].setEnabled(self.source_key() == MINE and self.tree.sortColumn() < 0)
 
     def fill(self) -> None:
-        from .tool_columns import COLUMNS
-        from .tool_columns import row as tool_row
+        """L'arbre (demande du 15/11) : « ★ Favoris » en tête, puis chaque bibliothèque (`_sources`) — Mes outils par
+        dossier, les autres par famille ; « Adaptés à » : les outils proposés de chacune, dans l'ordre proposé. La
+        bibliothèque de l'outil choisi (la dernière utilisée) est dépliée, sur son dernier dossier."""
+        from . import tool_favorites as FAV
         from .tool_filters import group_item
         q = self.filters.active()
-        self.tree.clear()
-        groups = {}
-        shown = self.filters.apply(self.tools)
         op = self.filters.op.currentData()
-        by_folder = self.source_key() == MINE and not op   # Mes outils : par dossier (un import = un dossier)
-        if op:                                            # « Adaptés à » : une liste, dans l'ordre proposé
-            g = groups[''] = group_item([tr('Proposés pour : {0}').format(
-                tr(model.op_kinds().get(op, op)).split(' (')[0])])
-            g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            self.tree.addTopLevelItem(g)
-        for t in shown:
+        cur = self.source_key()
+        self.tree.clear()
+        self._fav_keys = set(FAV.load(self.settings))
+        sources = self._sources()
+        order = [k for k in (DOC, MINE) if k in sources] + [k for k in sources if k not in (DOC, MINE)]
+        self._doc_setup = None                            # le réglage du document relu, une fois : ses outils gardent
+        lists = {k: self._tools_of(k) for k in order}     # leur identité pendant tout le remplissage
+        if cur in lists:
+            self.tools = lists[cur]
+        src_of = {id(t): k for k in order for t in lists[k]}
+        favs = self.filters.apply(FAV.ordered(self.settings, [t for k in order for t in lists[k]]))
+        fav_group = None
+        if favs:                                          # ★ Favoris : les outils étoilés de toutes les bibliothèques
+            fav_group = group_item([tr('★ Favoris') + f'  ({len(favs)})'])
+            f = fav_group.font(0)
+            f.setBold(True)
+            fav_group.setFont(0, f)
+            fav_group.setData(0, FAV_GROUP, True)
+            fav_group.setToolTip(0, tr('Les outils étoilés : un clic sur l’étoile d’un outil l’ajoute ou le retire ; '
+                                       'les glisser pour les ranger'))
+            self.tree.addTopLevelItem(fav_group)
+            for t in favs:
+                fav_group.addChild(self._tool_row(t, src_of[id(t)]))
+        total = shown_n = 0
+        nodes: dict = {}
+        for key in sources:
+            tools = lists[key]
+            shown = self.filters.apply(tools)
+            total += len(tools)
+            shown_n += len(shown)
+            label = '📚 ' + self._source_label(key)
             if op:
-                g = groups['']
-            elif by_folder:
-                g = self._folder_item(groups, toollib.folder_of(t))
-            else:
-                g = groups.get(t.kind)
-                if g is None:
-                    g = groups[t.kind] = group_item([tr(model.TOOL_KINDS.get(t.kind, t.kind))])
-                    g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-                    self.tree.addTopLevelItem(g)
-            it = tool_row(t)
-            it.setData(0, Qt.ItemDataRole.UserRole, t.id)
-            from .tool_filters import tool_icon
-            it.setIcon(0, tool_icon(t, 14, 26))
-            tip = toollib.summary(t, self._mlabels())
-            for c in range(len(COLUMNS)):
-                it.setToolTip(c, tip)
-            g.addChild(it)
-        if by_folder and not q:
-            for f in self.empty_folders:                   # dossiers créés, encore vides
-                self._folder_item(groups, f)
-        self.tree.expandAll()
+                label += '  —  ' + tr('Proposés pour : {0}').format(tr(model.op_kinds().get(op, op)).split(' (')[0])
+            node = nodes[key] = group_item([label + f'  ({len(shown)})'])
+            f = node.font(0)
+            f.setBold(True)
+            node.setFont(0, f)
+            self.tree.addTopLevelItem(node)
+            groups: dict = {}
+            if op:                                        # « Adaptés à » : une liste, dans l'ordre proposé
+                for t in shown:
+                    node.addChild(self._tool_row(t, key))
+            elif key == MINE:                             # Mes outils : par dossier (un import = un dossier)
+                for t in shown:
+                    self._folder_item(groups, toollib.folder_of(t), node).addChild(self._tool_row(t, key))
+                if not q:
+                    for name in self.empty_folders:       # dossiers créés, encore vides
+                        self._folder_item(groups, name, node)
+            else:                                         # document, plugins : par famille (Cylindriques › Cyl 3…)
+                paths = {id(t): toollib.family_path(t) for t in shown}
+                shown = sorted(shown, key=lambda t: (toollib.folder_sort_key(toollib.join_folder(*paths[id(t)])),
+                                                     t.diameter, t.name.casefold()))
+                for t in shown:
+                    self._family_item(groups, paths[id(t)], node).addChild(self._tool_row(t, key))
+            stack = [node]
+            while stack:                                  # dossiers et groupes : la bibliothèque qu'ils montrent
+                it = stack.pop()
+                if it.data(0, SOURCE_ROLE) is None:
+                    it.setData(0, SOURCE_ROLE, key)
+                stack.extend(it.child(j) for j in range(it.childCount()))
+            node.setHidden(bool(q and not shown))
+        self._arrange_drops(fav_group, nodes.get(MINE))
+        self._open(fav_group, nodes, cur, q)
         self._order_actions()                             # triée : monter, descendre n'ont plus de sens
-        text =tr('{0} outil(s)').format(len(self.tools)) if len(shown) == len(self.tools) else \
-            tr('{0} outil(s) sur {1}').format(len(shown), len(self.tools))
-        if by_folder:
-            text += '  —  ' + tr('fichier : {0}').format(self.path)
-        self.info.setText(text)
+        text = tr('{0} outil(s)').format(total) if shown_n == total else \
+            tr('{0} outil(s) sur {1}').format(shown_n, total)
+        text += '  —  ' + tr('fichier : {0}').format(self.path)
+        self.info.setText('\n'.join([text] + [f'{k} : {e}' for k, e in self._lib_errors.items()]))
+
+    def _tool_row(self, t, key) -> QTreeWidgetItem:
+        """Ligne de l'outil `t` de la bibliothèque `key` : silhouette, étoile, une cellule par colonne, fiche en
+        infobulle."""
+        from . import tool_favorites as FAV
+        from .tool_columns import COLUMNS
+        from .tool_columns import row as tool_row
+        from .tool_filters import tool_icon
+        it = tool_row(t)
+        it.setData(0, Qt.ItemDataRole.UserRole, t.id)
+        it.setData(0, SOURCE_ROLE, key)
+        if self.settings is not None:                     # ★ ou ☆ (sans réglages où les retenir : pas d'étoile)
+            it.setData(0, FAV.STAR_ROLE, toollib.favorite_key(t) in self._fav_keys)
+        it.setIcon(0, tool_icon(t, 14, 26))
+        tip = toollib.summary(t, self._mlabels())
+        for c in range(len(COLUMNS)):
+            it.setToolTip(c, tip)
+        return it
+
+    def _arrange_drops(self, fav_group, mine_node) -> None:
+        """Ce qui se glisse et où : tout outil se glisse, les dossiers de Mes outils aussi ; on dépose dans Mes outils
+        (ranger) ou dans les favoris (les ranger, en ajouter), nulle part ailleurs."""
+        drag, drop = Qt.ItemFlag.ItemIsDragEnabled, Qt.ItemFlag.ItemIsDropEnabled
+        root = self.tree.invisibleRootItem()
+        root.setFlags(root.flags() & ~drop)
+
+        def walk(it, in_mine, in_favs):
+            f = it.flags() & ~(drag | drop)
+            if it.data(0, Qt.ItemDataRole.UserRole) or (in_mine and it is not mine_node):
+                f |= drag
+            if in_mine or in_favs:
+                f |= drop
+            it.setFlags(f)
+            for j in range(it.childCount()):
+                walk(it.child(j), in_mine, in_favs)
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            walk(top, top is mine_node, top is fav_group)
+
+    def _open(self, fav_group, nodes: dict, cur, q) -> None:
+        """Dépliés : les favoris (comme la dernière fois), la bibliothèque `cur` (Mes outils en entier, une autre sur
+        ses familles) et son dernier dossier ; tout, pendant une recherche."""
+        from . import tool_favorites as FAV
+        self._opening = True
+        try:
+            if fav_group is not None:
+                fav_group.setExpanded(bool(q) or FAV.is_open(self.settings))
+            for key, node in nodes.items():
+                if q or (key == cur and key == MINE):
+                    self.tree.expandRecursively(self.tree.indexFromItem(node))
+                elif key == cur:
+                    node.setExpanded(True)
+                    for j in range(node.childCount()):
+                        node.child(j).setExpanded(True)
+            node = nodes.get(cur)
+            last = str(self.settings.value(LAST_FOLDER, '') or '') if self.settings is not None else ''
+            hit = self._find_path(node, last) if node is not None and last and not q else None
+            if hit is not None:
+                p = hit
+                while p is not None:
+                    p.setExpanded(True)
+                    p = p.parent()
+            aim = hit if hit is not None else node
+            if aim is not None and not q:
+                self.tree.scrollToItem(aim, QTreeWidget.ScrollHint.PositionAtTop)
+        finally:
+            self._opening = False
+
+    @staticmethod
+    def _find_path(node, path: str):
+        stack = [node]
+        while stack:
+            it = stack.pop()
+            if it.data(0, PATH_ROLE) == path:
+                return it
+            stack.extend(it.child(j) for j in range(it.childCount()))
+        return None
+
+    def _in_favorites(self, it) -> bool:
+        while it is not None:
+            if it.data(0, FAV_GROUP):
+                return True
+            it = it.parent()
+        return False
+
+    def _item_tool(self, it):
+        """L'outil d'une ligne de l'arbre, quelle que soit sa bibliothèque (None : dossier, groupe)."""
+        tid = it.data(0, Qt.ItemDataRole.UserRole) if it is not None else None
+        key = it.data(0, SOURCE_ROLE) if it is not None else None
+        if not tid or key is None:
+            return None
+        return next((t for t in self._tools_of(key) if t.id == tid), None)
+
+    def _remember(self, it, key) -> None:
+        """La dernière liste utilisée et son dossier, rouverts la prochaine fois (pas pour une ligne des favoris)."""
+        if self.settings is None or self._in_favorites(it):
+            return
+        folder = it.parent() if it.data(0, Qt.ItemDataRole.UserRole) else it
+        path = folder.data(0, PATH_ROLE) if folder is not None else None
+        self.settings.setValue(LAST_LIST, key)
+        self.settings.setValue(LAST_FOLDER, str(path or ''))
+
+    # --- favoris (demande du 15/11) --------------------------------------------------------------------------------
+    def _star_clicked(self, index) -> None:
+        """Clic sur l'étoile d'un outil : basculée une fois l'événement de la souris fini (l'arbre est refait)."""
+        t = self._item_tool(self.tree.itemFromIndex(index))
+        if t is not None:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self, lambda: self.toggle_favorite(t))
+
+    def toggle_favorite(self, tool):
+        """L'outil `tool` favori, ou plus ; l'arbre refait, l'outil choisi le reste. Rend son nouvel état (None : pas
+        de réglages où le retenir)."""
+        from . import tool_favorites as FAV
+        if self.settings is None:
+            return None
+        on = FAV.toggle(self.settings, tool)
+        self._refill_keeping_form()
+        return on
+
+    def _refill_keeping_form(self) -> None:
+        """L'arbre refait (étoile, favoris rangés) : l'outil choisi le reste, et sa fiche en cours de saisie n'est pas
+        rechargée (rien de perdu de ce qui n'est pas encore enregistré)."""
+        keep, cur = self.selected(), self.current
+        self._keep_form = True
+        try:
+            self.fill()
+            self.current = cur                            # (`fill` vide l'arbre : plus d'outil choisi un instant)
+            if keep is not None:
+                self.select(keep)
+        finally:
+            self._keep_form = False
+
+    def _drop_in_favorites(self, target, after: bool = False) -> bool:
+        """Outils glissés dans les favoris : ils y prennent place avant l'outil visé, après lui si la marque du dépôt
+        est sous sa ligne (`after`), au bout sur le groupe."""
+        from . import tool_favorites as FAV
+        moving = []
+        for it in self.tree.selectedItems() or [self.tree.currentItem()]:
+            t = self._item_tool(it)
+            if t is not None and all(t is not m for m in moving):
+                moving.append(t)
+        if not moving or self.settings is None:
+            return False
+        mk = list(dict.fromkeys(toollib.favorite_key(t) for t in moving))
+        rest = [k for k in FAV.load(self.settings) if k not in mk]
+        aim = self._item_tool(target)
+        pos = len(rest)
+        if aim is not None:
+            ak = toollib.favorite_key(aim)
+            if ak in mk:
+                return False
+            pos = rest.index(ak) + int(after) if ak in rest else len(rest)
+        FAV.save(self.settings, rest[:pos] + mk + rest[pos:])
+        self._refill_keeping_form()
+        return True
+
+    def _folded(self, it, on: bool) -> None:
+        """Groupe « Favoris » plié ou déplié à la main : retenu (pas pendant une recherche, ni par la fenêtre)."""
+        if it is not None and it.data(0, FAV_GROUP) and not self._opening and not self.filters.text.text().strip():
+            from . import tool_favorites as FAV
+            FAV.set_open(self.settings, on)
 
     def offer_machine(self, tools) -> str:
         """Outils importés et machine du réglage FAO connue : l'indication à
@@ -586,7 +918,10 @@ class ToolLibraryDialog(QDialog):
         """Outils choisis (plusieurs avec Ctrl / Maj), dans l'ordre de la
         bibliothèque ; un dossier choisi compte pour tous ses outils."""
         ids, folders = set(), []
+        key = self.source_key()
         for it in self.tree.selectedItems():
+            if it.data(0, SOURCE_ROLE) != key:            # ligne d'une autre bibliothèque : pas pour ses commandes
+                continue
             tid = it.data(0, Qt.ItemDataRole.UserRole)
             if tid:
                 ids.add(tid)
@@ -597,19 +932,30 @@ class ToolLibraryDialog(QDialog):
             ids.add(cur.id)
         return [t for t in self.tools if t.id in ids or any(toollib.in_folder(t, f) for f in folders)]
 
-    def dropped(self, target) -> bool:
-        """Glisser-déposer : sur un dossier, les outils y vont ; sur un
-        outil, ils se placent juste avant lui (dans son dossier)."""
+    def dropped(self, target, after: bool = False) -> bool:
+        """Glisser-déposer : dans les favoris, les outils glissés y prennent place ; dans Mes outils, sur un dossier,
+        les outils y vont (sur « 📚 Mes outils » : hors dossier) ; sur un outil, ils se placent juste avant lui, ou
+        juste après si la marque du dépôt est sous sa ligne (`after`), dans son dossier. Rien sur un dépôt refusé
+        (`_LibTree.refuses`)."""
+        if target is not None and self.tree.refuses(target):
+            return False
+        if target is not None and self._in_favorites(target):
+            return self._drop_in_favorites(target, after)
         moving = self.selected_tools()
         if not moving or self.source_key() != MINE or target is None:
             return False
-        folder = target.data(0, Qt.ItemDataRole.UserRole + 1)
+        node = target.parent() is None and target.data(0, SOURCE_ROLE) == MINE
+        folder = toollib.NO_FOLDER if node else target.data(0, Qt.ItemDataRole.UserRole + 1)
         before = None
         if not folder:
             before = self.tool_by_id(target.data(0, Qt.ItemDataRole.UserRole))
             if before is None or before in moving:
                 return False
             folder = toollib.folder_of(before)
+            if after:                                     # sous la ligne visée : avant l'outil qui la suit
+                same = [t for t in self.mine if toollib.folder_of(t) == folder and all(t is not m for m in moving)]
+                i = next((j for j, t in enumerate(same) if t is before), -1)
+                before = same[i + 1] if 0 <= i < len(same) - 1 else None
         toollib.place(self.mine, moving, folder, before)
         self.persist()
         self.fill()
@@ -619,13 +965,18 @@ class ToolLibraryDialog(QDialog):
     def _reselect(self, tools) -> None:
         ids = {t.id for t in tools}
         self.tree.clearSelection()
-        first = None
-        for it in self._items():
-            if it.data(0, Qt.ItemDataRole.UserRole) in ids:
+        rows = [it for it in self._items() if it.data(0, Qt.ItemDataRole.UserRole) in ids]
+        key = self.source_key()                           # leur ligne dans la bibliothèque des commandes, hors favoris
+        rows = [it for it in rows if not self._in_favorites(it) and it.data(0, SOURCE_ROLE) == key] or \
+            [it for it in rows if not self._in_favorites(it)] or rows
+        self._opening = True                              # (Qt déplie les dossiers des lignes : pas retenu)
+        try:
+            for it in rows:
                 it.setSelected(True)
-                first = first or it
-        if first is not None:
-            self.tree.setCurrentItem(first, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            if rows:
+                self.tree.setCurrentItem(rows[0], 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+        finally:
+            self._opening = False
 
     def shift(self, d: int) -> bool:
         """↑ / ↓ : les outils choisis montent ou descendent dans leur dossier."""
@@ -683,11 +1034,18 @@ class ToolLibraryDialog(QDialog):
         new = (new or '').strip()
         if not new or new == t.name:
             return False
+        before = toollib.favorite_key(t)
         t.name = new
+        from . import tool_favorites as FAV                # un favori renommé le reste, à sa place (et l'original
+        FAV.rekey(self.settings, before, toollib.favorite_key(t), keep=self._key_shared(t, before))    # d'une copie)
         self.persist()
         self.fill()
         self.select(t)
         return True
+
+    def _key_shared(self, tool, key) -> bool:
+        """Un autre outil (copie, original d'une bibliothèque) a encore la clé de favori `key`."""
+        return any(x is not tool and toollib.favorite_key(x) == key for k in self._sources() for x in self._tools_of(k))
 
     def selected_folder(self) -> str | None:
         """Dossier choisi (ligne du dossier, ou dossier de l'outil choisi)."""
@@ -842,14 +1200,30 @@ class ToolLibraryDialog(QDialog):
         return dlg
 
     def select(self, tool) -> None:
-        for it in self._items():
-            if it.data(0, Qt.ItemDataRole.UserRole) == tool.id:
+        """Choisit l'outil `tool` : sa ligne dans la bibliothèque des commandes, plutôt que dans les favoris."""
+        items = [it for it in self._items() if it.data(0, Qt.ItemDataRole.UserRole) == tool.id]
+        key = self.source_key()
+        it = next((i for i in items if i.data(0, SOURCE_ROLE) == key and not self._in_favorites(i)), None) or \
+            next((i for i in items if i.data(0, SOURCE_ROLE) == key), None) or next(iter(items), None)
+        if it is not None:
+            self._opening = True                          # (Qt déplie les dossiers de la ligne : pas retenu)
+            try:
                 self.tree.setCurrentItem(it)
-                return
+            finally:
+                self._opening = False
 
     def _select(self, *_a) -> None:
+        it = self.tree.currentItem()
+        key = it.data(0, SOURCE_ROLE) if it is not None else None
+        if key is not None and key != self.source_key():  # la bibliothèque suit la ligne choisie (arbre unique)
+            self._use_source(key)
+        if key is not None:
+            self._remember(it, key)
         t = self.selected()
+        same = self._keep_form and t is not None and self.current is not None and t.id == self.current.id
         self.current = t
+        if same:                                          # arbre refait (étoile, favoris rangés) : la fiche en cours
+            return                                        # de saisie gardée telle quelle
         if t is None:
             self._sync_drawing_buttons()                 # plus d'outil choisi : plus de dessin à ouvrir
             return
@@ -913,6 +1287,7 @@ class ToolLibraryDialog(QDialog):
         t = self.current
         if t is None or not self.editable():
             return
+        before = toollib.favorite_key(t)
         t.name = self.w['name'].text().strip() or t.name
         t.kind = self.w['kind'].currentData()
         t.number = self.w['number'].value()
@@ -937,6 +1312,8 @@ class ToolLibraryDialog(QDialog):
         cat.update({'prix': prix, 'devise': 'EUR'} if prix else {})
         t.catalog = cat
         t.notes = self.w['notes'].toPlainText()
+        from . import tool_favorites as FAV                # favori renommé, recoté : il le reste, à sa place (et
+        FAV.rekey(self.settings, before, toollib.favorite_key(t), keep=self._key_shared(t, before))  # l'original)
         self.persist()
         self.fill()
         self.select(t)
@@ -972,6 +1349,16 @@ class ToolLibraryDialog(QDialog):
         tools = self.selected_tools()
         if not tools or not self.editable():
             return 0
+        if self.source_key() == DOC:                      # comme la FAO : pas un outil dont une opération se sert
+            self._tools_of(DOC)
+            used = {o.tool_id for o in self._doc_setup.operations} if self._doc_setup is not None else set()
+            busy = [t.name for t in tools if t.id in used]
+            if busy:
+                msg = tr("Outil utilisé par une opération : changer d'abord l'opération")
+                self.info.setText(msg + ' : ' + ', '.join(busy))
+                if confirm:
+                    QMessageBox.warning(self, tr('FAO'), msg)
+                return 0
         if confirm and len(tools) > 1 and QMessageBox.question(
                 self, tr('Supprimer des outils'), tr('Supprimer les {0} outils choisis ?').format(len(tools))) \
                 != QMessageBox.StandardButton.Yes:
@@ -984,6 +1371,8 @@ class ToolLibraryDialog(QDialog):
 
     # --- échanges ----------------------------------------------------------------------------------------
     def import_file(self, path) -> int:
+        if self.source_key() != MINE:                      # un import va toujours dans Mes outils
+            self._use_source(MINE)
         try:
             tools, notes = toollib.import_file(path)
         except (OSError, ValueError) as ex:
@@ -1016,8 +1405,7 @@ class ToolLibraryDialog(QDialog):
         if not paths:
             return 0
         self._remember_import(paths[0])
-        if self.source_key() != MINE:                      # outils du document : import direct
-            return sum(self.import_file(p) for p in paths)
+        # (les imports vont toujours dans Mes outils, avec l'aperçu : la bibliothèque de l'outil choisi n'y fait rien)
         return self.import_preview(*toollib.import_files(paths))
 
     def import_preview(self, imported: dict, notes=(), errors=(), *, exec_dialog: bool = True):
@@ -1185,6 +1573,8 @@ class ToolLibraryDialog(QDialog):
             c.number = max(x.number for x in s.tools) + 1
         s.tools.append(c)
         self.panel.save(s)
+        self.fill()                                      # la copie paraît tout de suite sous « Outils du document »
+        self.select(t)
         self.info.setText(tr('« {0} » ajouté aux outils du document (T{1})').format(c.name, c.number))
         return 1
 
@@ -1197,6 +1587,8 @@ class ToolLibraryDialog(QDialog):
         toollib.set_folder([c], self.source.currentText())       # dossier : la bibliothèque d'origine
         self.mine.append(c)
         toollib.save(self.mine, self.path)
+        self.fill()                                      # la copie paraît tout de suite sous « Mes outils »
+        self.select(t)
         self.info.setText(tr('« {0} » copié dans mes outils').format(c.name))
         return 1
 

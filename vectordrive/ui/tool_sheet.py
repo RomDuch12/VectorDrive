@@ -53,6 +53,8 @@ class ToolSheet(QWidget):
         self.source = ''
         self.modified = False
         self._loading = False
+        #: (outil, clé) → vrai si un autre outil de la liste a encore cette clé de favori (fourni par la liste)
+        self.shared_key = None
         self._shown: dict = {}
         self._orig = None
         lay = QVBoxLayout(self)
@@ -264,7 +266,11 @@ class ToolSheet(QWidget):
             except (OSError, ValueError) as ex:
                 self.note.setText(tr('Fiche non enregistrée : {0}').format(ex))
                 return False
+        before = toollib.favorite_key(t)
         self.read_into(t)
+        from . import tool_favorites as FAV                # favori renommé, recoté : il le reste, à sa place ;
+        shared = self.shared_key is not None and self.shared_key(t, before)    # une copie : l'original aussi
+        FAV.rekey(self.settings, before, toollib.favorite_key(t), keep=bool(shared))
         self.show_tool(t, self.source)
         if emit:
             self.saved.emit(t)

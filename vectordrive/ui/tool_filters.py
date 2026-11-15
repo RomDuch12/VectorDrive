@@ -9,7 +9,7 @@ from __future__ import annotations
 import itertools
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QLineEdit, QToolButton,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QToolButton,
                                QWidget)
 
 #: silhouettes d'outils en icône, par cotes (elles ne changent pas d'un affichage à l'autre)
@@ -45,6 +45,35 @@ from ..cam import model, toollib, toolprefs
 from ..i18n import tr
 
 
+class NumField(QLineEdit):
+    """Champ de nombre sans flèches, avec une croix pour l'effacer (Ø des filtres, demande du 15/11) : vide ou 0, sans
+    borne ; virgule ou point. Même interface qu'un QDoubleSpinBox pour les filtres : `value`, `setValue`,
+    `valueChanged`."""
+
+    valueChanged = Signal(float)
+
+    def __init__(self, placeholder: str = '', tip: str = '', parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import QRegularExpression
+        from PySide6.QtGui import QRegularExpressionValidator
+        self.setPlaceholderText(placeholder)
+        self.setToolTip(tip)
+        self.setClearButtonEnabled(True)
+        self.setValidator(QRegularExpressionValidator(QRegularExpression(r'\d{0,4}([.,]\d{0,3})?'), self))
+        self.setFixedWidth(self.fontMetrics().horizontalAdvance('0000.00') + 40)
+        self.textChanged.connect(lambda _t: self.valueChanged.emit(self.value()))
+
+    def value(self) -> float:
+        try:
+            return float(self.text().strip().replace(',', '.') or 0)
+        except ValueError:
+            return 0.0
+
+    def setValue(self, v) -> None:                                    # noqa: N802 — comme QDoubleSpinBox
+        v = float(v or 0)
+        self.setText(f'{round(v, 3):g}' if v > 0 else '')
+
+
 class FilterBar(QWidget):
     changed = Signal()
 
@@ -56,31 +85,28 @@ class FilterBar(QWidget):
         self.text = QLineEdit()
         self.text.setPlaceholderText(tr('Chercher (nom, référence, fabricant, Ø, T, dossier)'))
         self.text.setClearButtonEnabled(True)
-        lay.addWidget(self.text, 4)
+        lay.addWidget(self.text, 3)
         self.kind = QComboBox()
         self.kind.addItem(tr('Toutes natures'), '')
         for k, lab in model.TOOL_KINDS.items():
             self.kind.addItem(tr(lab).split(' (')[0], k)
-        lay.addWidget(self.kind)
+        lay.addWidget(self.kind, 2)
         lay.addWidget(QLabel('Ø'))
-        self.dmin, self.dmax = QDoubleSpinBox(), QDoubleSpinBox()
-        for sb, tip in ((self.dmin, tr('Ø minimal (0 : sans borne)')), (self.dmax, tr('Ø maximal (0 : sans borne)'))):
-            sb.setRange(0, 1000)
-            sb.setDecimals(2)
-            sb.setSpecialValueText('—')
-            sb.setToolTip(tip)
-            sb.setMaximumWidth(80)
+        # sans flèches, une croix pour effacer (demande du 15/11) ; vide : sans borne
+        self.dmin = NumField('min', tr('Ø minimal (0 : sans borne)'))
+        self.dmax = NumField('max', tr('Ø maximal (0 : sans borne)'))
+        for sb in (self.dmin, self.dmax):
             lay.addWidget(sb)
         self.vendor = QComboBox()
         self.vendor.addItem(tr('Tous fabricants'), '')
-        lay.addWidget(self.vendor)
+        lay.addWidget(self.vendor, 2)
         self.op = QComboBox()
         self.op.addItem(tr('Toutes opérations'), '')
         for k, lab in model.op_kinds().items():
             self.op.addItem(tr('Adaptés à : {0}').format(tr(lab).split(' (')[0]), k)
         self.op.setToolTip(tr('Les outils proposés pour cette stratégie, dans l\'ordre réglé '
                               '(Outils proposés par opération)'))
-        lay.addWidget(self.op)
+        lay.addWidget(self.op, 3)
         self.machine_key = ''
         self.mach = QCheckBox()
         self.mach.setVisible(False)
@@ -92,11 +118,12 @@ class FilterBar(QWidget):
         self.reset_btn.setToolTip(tr('Effacer les filtres'))
         self.reset_btn.clicked.connect(self.reset)
         lay.addWidget(self.reset_btn)
-        for c, n in ((self.kind, 160), (self.vendor, 150), (self.op, 210)):   # la recherche prend la place
+        for c in (self.kind, self.vendor, self.op):     # réparties sur la largeur (demande du 15/11)
             c.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             c.setMinimumContentsLength(6)
-            c.setMaximumWidth(n)
+            c.setSizePolicy(QSizePolicy.Policy.Expanding, c.sizePolicy().verticalPolicy())
         self.text.setMinimumWidth(160)
+        self.text.setMaximumWidth(460)                  # la recherche ne prend plus toute la place
         if op_kind:
             self.op.setCurrentIndex(max(0, self.op.findData(op_kind)))
         self.text.textChanged.connect(self.changed)

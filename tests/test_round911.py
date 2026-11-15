@@ -108,14 +108,17 @@ class Trees(unittest.TestCase):
         try:
             dlg = w.cam_panel.tool_library(exec_dialog=False)
             tree = dlg.tree
-            folder = tree.topLevelItem(0)
-            self.assertIn('Essai 911', folder.text(0))
+
+            def essai():                                 # 1043 : un seul arbre, le dossier sous « 📚 Mes outils »
+                tops = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+                return next(top.child(j) for top in tops for j in range(top.childCount())
+                            if 'Essai 911' in top.child(j).text(0))
+            folder = essai()
             tree.sortByColumn(1, ASC)
             self.assertEqual([folder.child(i).text(1) for i in range(folder.childCount())], ['0.5', '3', '12'])
             self.assertFalse(dlg.acts['up'].isEnabled())                      # triée : pas de Monter / Descendre
             tree.sortByColumn(1, DESC)
-            self.assertIn('Essai 911', tree.topLevelItem(0).text(0))
-            self.assertEqual([tree.topLevelItem(0).child(i).text(1) for i in range(3)], ['12', '3', '0.5'])
+            self.assertEqual([essai().child(i).text(1) for i in range(3)], ['12', '3', '0.5'])
             tree.header().setSortIndicator(-1, ASC)
             self.assertTrue(dlg.acts['up'].isEnabled())
             dlg.deleteLater()

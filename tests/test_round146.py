@@ -54,7 +54,9 @@ class TestLibraryDialog(unittest.TestCase):
         self.assertEqual(dlg.import_file(f2), 1)
         self.assertEqual(dlg.import_file(f1), 2)                              # réimporté : dossier distinct
         self.assertEqual(L.folders(dlg.mine), ['Datron fraises', 'Gravure TypeEdit', 'Datron fraises (2)'])
-        self.assertEqual(dlg.tree.topLevelItemCount(), 3)
+        node = dlg.tree.topLevelItem(dlg.tree.topLevelItemCount() - 1)     # 1043 : un seul arbre, Mes outils en bas
+        self.assertTrue(node.text(0).startswith('📚 '), node.text(0))
+        self.assertEqual(node.childCount(), 3)
         dlg.select_folder('Datron fraises (2)')
         self.assertTrue(dlg.merge_folder('Datron fraises'))
         self.assertEqual(L.folders(dlg.mine), ['Datron fraises', 'Gravure TypeEdit'])

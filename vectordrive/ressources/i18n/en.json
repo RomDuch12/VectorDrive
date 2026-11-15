@@ -7370,5 +7370,18 @@
  "Nom (vide : nom d’origine) :": "Name (empty: original name):",
  "Mes modèles": "My templates",
  "Renommer le dossier…": "Rename folder…",
- "Nom d’origine": "Original name"
+ "Nom d’origine": "Original name",
+ "★ Favoris": "★ Favourites",
+ "Les outils étoilés : un clic sur l’étoile d’un outil l’ajoute ou le retire ; les glisser pour les ranger": "Starred tools: click a tool’s star to add or remove it; drag them to reorder",
+ "Cylindriques": "Cylindrical",
+ "Coniques": "Conical",
+ "Boules": "Ball nose",
+ "Chamfer": "Chamfer",
+ "Thread": "Thread",
+ "Ext-Rad": "Ext-Rad",
+ "T-slot": "T-slot",
+ "Drill": "Drill",
+ "Toriques": "Bull nose",
+ "Couteaux": "Knives",
+ "Profils": "Profiles"
 }

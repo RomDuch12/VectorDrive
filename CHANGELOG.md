@@ -6851,3 +6851,20 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 ### v0.898.0 — L'auteur dans À propos seulement
 
 - La mention « Développé par RomDuch with Claude » et l'adresse de l'auteur ne sont plus dans l'onglet **Aide** du ruban. Elles restent dans **Aide › À propos**.
+### v0.899.0 — Outils : classés par famille, favoris en étoiles, filtres sur toute la largeur ; cotes des DXF affichées
+
+- **Cotes des DXF** : un DXF ouvert (le dessin d'un outil, par exemple) montre enfin ses **lignes de cote** et ses **textes**. Un trait seul, horizontal ou vertical (ligne de cote, ligne d'attache, axe), n'était pas dessiné. Les textes d'un DXF (valeurs des cotes, cartouche) ne l'étaient pas non plus : ils sont maintenant tracés au premier affichage, quand leur police est sur le poste.
+
+- **Classement par famille** : les outils des bibliothèques (Datron…) et ceux du document sont rangés dans des dossiers par famille, dans cet ordre : **Cylindriques** (un dossier par Ø : Cyl 3, Cyl 4, Cyl 6…), **Coniques** (un dossier par angle : Con 90, Con 45, Con 30…), **Boules**, **Chamfer**, **Thread**, **Ext-Rad**, **T-slot**, **Drill**. Les dossiers de Mes outils restent ceux que vous avez faits.
+- **Favoris** (fenêtre « Choisir un outil ») : une **étoile** devant chaque outil. Un clic sur l'étoile met l'outil dans le groupe **★ Favoris**, en tête de liste, ou l'en retire. Le groupe se plie et se déplie, et VectorDrive s'en souvient. On **range les favoris à la souris**, en les glissant dans le groupe. Un favori reste favori d'une ouverture à l'autre, qu'il vienne de Mes outils, d'une bibliothèque ou du document ; renommé ou recoté dans sa fiche, il le reste, à sa place (la copie d'un favori modifiée : l'original le reste aussi).
+- **Filtres** : ils se répartissent sur toute la largeur de la fenêtre ; la recherche ne prend plus toute la place. Les champs **Ø mini et maxi** n'ont plus de flèches, et une **croix** les efface. On y tape un nombre, avec une virgule ou un point.
+### v0.900.0 — Gestionnaire d'outils : un seul arbre, favoris, dernière liste
+
+- **Plus de liste « Bibliothèque »** : toutes les bibliothèques sont dans un **seul arbre**. En tête, le groupe **★ Favoris**, puis chaque bibliothèque comme un dossier : celles des plugins (Datron…), les outils du document, puis Mes outils. Mes outils garde vos dossiers ; les autres sont classées par famille (Cylindriques › Cyl 3, Coniques › Con 90…).
+- **Favoris** : une **étoile** devant chaque outil, quelle que soit sa bibliothèque. Un clic sur l'étoile met l'outil dans les favoris, en tête de l'arbre, ou l'en retire. Glisser un outil sur le groupe Favoris l'y ajoute ; glisser un favori sur un autre le range avant ou après lui, selon la marque du dépôt. Un favori renommé reste favori. Le groupe se plie et se déplie, et VectorDrive s'en souvient.
+- **La dernière liste utilisée** : la fenêtre s'ouvre sur la bibliothèque et le dossier du dernier outil choisi (par exemple Datron › Cylindriques › Cyl 6). Les autres bibliothèques restent pliées.
+- Les commandes (nouvel outil, renommer, supprimer, copier…) valent pour la bibliothèque de l'outil choisi, affichée en haut de la fenêtre. Une sélection reste dans une seule bibliothèque. Une copie dans Mes outils ou dans le document y paraît tout de suite. Les imports vont toujours dans Mes outils.
+- Dans Mes outils, un outil glissé sur un autre se place avant lui, ou après lui si la marque du dépôt est sous sa ligne ; sur « Mes outils », il sort de son dossier. Le pointeur refuse ce qui ne ferait rien : un outil d'une autre bibliothèque déposé dans Mes outils (on l'y copie), un favori glissé hors des favoris, un dossier glissé dans les favoris.
+- Un clic sur une étoile, ou un favori rangé, ne recharge plus la fiche de l'outil choisi : ce qui est tapé et pas encore enregistré reste.
+- Un outil du document dont une opération se sert ne se supprime pas, comme dans le panneau FAO.
+- Correction : un outil du document modifié dans le gestionnaire (nom, cotes, fiche) est bien enregistré dans le document ; avant, la modification était perdue.

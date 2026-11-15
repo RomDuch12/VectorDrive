@@ -127,7 +127,10 @@ def matches(rule: dict, t) -> bool:
     if typ == 'nature':
         return t.kind == v
     if typ == 'dossier':
-        return bool(getattr(t, 'folder', '')) and toollib.in_folder(t, str(v))
+        if bool(getattr(t, 'folder', '')) and toollib.in_folder(t, str(v)):
+            return True
+        old = str(getattr(t, 'plugin_folder', '') or '')   # outil d'un plugin : son dossier d'avant les familles
+        return bool(old) and (old == str(v) or old.startswith(str(v) + toollib.SEP))
     if typ == 'outil':
         if t.id == v:
             return True

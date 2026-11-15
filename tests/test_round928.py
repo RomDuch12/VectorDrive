@@ -81,8 +81,9 @@ class Library(Base):
             cp._select_row(cp.ops, 0)
             dlg = cp.edit_op(exec_dialog=False, take_selection=False)
             got = {t.name: toollib.folder_of(t) for t in dlg.library.values()}
-            self.assertEqual(got, {'Mienne 928': 'Atelier', 'Cyl 2 928': 'Copie', 'Con 30 928': 'Datron/Coniques',
-                                   'Sans dossier 928': 'Datron'})          # vu dans Mes outils : une fois
+            self.assertEqual(got, {'Mienne 928': 'Atelier', 'Cyl 2 928': 'Copie',
+                                   'Con 30 928': 'Datron/Coniques/Con 30',
+                                   'Sans dossier 928': 'Datron/Cylindriques/Cyl 1'})   # vu dans Mes outils : une fois
             dlg.reject()
         finally:
             w.modified = False

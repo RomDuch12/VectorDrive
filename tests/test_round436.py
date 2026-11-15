@@ -47,8 +47,10 @@ class TestCompact(unittest.TestCase):
     def test_filter_bar_width(self):
         from vectordrive.ui.tool_filters import FilterBar
         f = FilterBar()
-        for c in (f.kind, f.vendor, f.op):
-            self.assertLessEqual(c.maximumWidth(), 220)
+        from PySide6.QtWidgets import QSizePolicy
+        for c in (f.kind, f.vendor, f.op):                 # 1042 : réparties sur la largeur avec la recherche
+            self.assertEqual(c.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
+        self.assertLessEqual(f.text.maximumWidth(), 460)    # la recherche ne prend plus toute la place
 
     def test_no_duplicate_te_keys(self):
         src = (pathlib.Path(__file__).resolve().parents[1] / 'vectordrive/ui/shortcuts.py').read_text(encoding='utf-8')
