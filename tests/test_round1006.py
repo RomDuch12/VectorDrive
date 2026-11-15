@@ -176,8 +176,7 @@ class Dialog(unittest.TestCase):
         groups = [g for g in self.w.ribbon.findChildren(RibbonGroup)
                   if any(b.defaultAction() is a for b in g.buttons())]
         self.assertEqual(len(groups), 2)                            # CAD › Texte, et le ruban du texte (Mise en forme)
-        for g in groups:                                            # chaque fois à côté de « Caractères »
-            self.assertTrue(any(b.defaultAction() is self.w.A['char_map'] for b in g.buttons()))
+        self.assertEqual(sorted(len(g.buttons()) == 1 for g in groups), [False, True])   # 1030 : un bouton à part
 
     def test_the_fonts_compared_are_those_of_the_font_list(self):
         d = self.dialog(names=None)

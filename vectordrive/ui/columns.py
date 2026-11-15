@@ -485,7 +485,7 @@ class Columns(QObject):
         elif not self.shown(side):
             names, front = self._memory(side)
             back = [d for d in col if d.objectName() in names and not self._gated(d)] \
-                or [d for d in col if not self._gated(d)]
+                or [d for d in col if not self._gated(d) and d is not getattr(self.win, 'dock_fonts', None)]
 
             def do():
                 for d in back:

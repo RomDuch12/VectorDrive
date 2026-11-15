@@ -7338,5 +7338,10 @@
  "Panneau réservé à une autre machine que celle du dessin": "Panel kept for a machine other than the drawing one",
  "détaché": "detached",
  "colonne de gauche": "left column",
- "colonne de droite": "right column"
+ "colonne de droite": "right column",
+ "Retirer des favoris (barre du haut)": "Remove from favourites (top bar)",
+ "Ajouter aux favoris (barre du haut)": "Add to favourites (top bar)",
+ "« {0} » : ajouté aux favoris (barre du haut)": "“{0}”: added to favourites (top bar)",
+ "« {0} » : retiré des favoris": "“{0}”: removed from favourites",
+ "Favoris : clic droit sur un bouton du ruban pour l'y ajouter ou l'en retirer": "Favourites: right-click a ribbon button to add it here or remove it"
 }

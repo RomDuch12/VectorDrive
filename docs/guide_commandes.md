@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.885.0
+# Guide des commandes — VectorDrive 0.887.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -821,6 +821,11 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Commande | Raccourci | Rôle |
 |---|---|---|
 | Caractères |  | Liste des caractères d'une police : insérer un symbole (Ø, ±, °, ©…) dans le texte sélectionné |
+
+### Police
+
+| Commande | Raccourci | Rôle |
+|---|---|---|
 | Reconnaître une police… |  | Trouver les polices du poste les plus proches de lettres en courbes sélectionnées, ou d'une image : la dernière capture d'écran, le presse-papiers, un fichier |
 
 ### Position du texte

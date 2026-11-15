@@ -76,6 +76,7 @@ class TextFormat:
             g = page.group(tr('Police'))
             for w in (self.font, self.size, self.width, self.italic):
                 g.add_widget(w)
+            g.add(A['font_recognize'])                   # disposition TypeEdit 13 aussi : le bouton à part
             g = page.group(tr('Espacement'))
             for w in (self.spacing, self.line_spacing, self.spacing_mode, self.fit_width, self.fit_mode):
                 g.add_widget(w)
@@ -87,8 +88,10 @@ class TextFormat:
         g.add(A['text_back'])
         g.add(A['tool_text'])
         g = self._form_group(page, tr('Général'))
-        self._row(g, self.font, A['char_map'], A['font_recognize'], self.spacing, self.line_spacing)
+        self._row(g, self.font, A['char_map'], self.spacing, self.line_spacing)
         self._row(g, self.size, self.width, self.italic, self.spacing_mode)
+        g = page.group(tr('Police'))                     # un bouton à part : la police d'après des lettres
+        g.add(A['font_recognize'])
         g = self._form_group(page, tr('Position du texte'))
         self._row(g, *(A[k] for k in ('text_align_left', 'text_align_center', 'text_align_right', 'text_align_justify',
                                       'text_spring', 'text_vertical', 'text_rtl')))

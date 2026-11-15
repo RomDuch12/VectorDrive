@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.885.0
+# Command guide — VectorDrive 0.887.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -821,6 +821,11 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Command | Shortcut | Purpose |
 |---|---|---|
 | Characters |  | Character list of a font: insert a symbol (Ø, ±, °, ©…) into the selected text |
+
+### Font
+
+| Command | Shortcut | Purpose |
+|---|---|---|
 | Recognise a font… |  | Find the installed fonts closest to selected letters converted to curves, or to a picture: the last screenshot, the clipboard, a file |
 
 ### Text position

@@ -13,10 +13,11 @@ import os
 import pathlib
 import threading
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QStandardPaths, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSpinBox, QVBoxLayout)
+                               QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QSpinBox,
+                               QVBoxLayout)
 
 from ..i18n import tr
 
@@ -81,10 +82,15 @@ class _Relay(QObject):
 
 class FontRecognizeDialog(QDialog):
     """Reconnaître une police d'après des lettres en courbes ou une image. `win` : la fenêtre principale ; `start` : la
-    source d'emblée ('selection', 'image', 'presse-papiers')."""
+    source d'emblée ('selection', 'image', 'presse-papiers') ; `docked` : le panneau de colonne qui la porte (« Fermer »
+    le ferme ; Échap arrête seulement la reconnaissance)."""
 
-    def __init__(self, win, start: str | None = None):
+    def __init__(self, win, start: str | None = None, docked=None):
         super().__init__(win)
+        self.docked = docked
+        self.setObjectName('fontRecognize')
+        if docked is not None:
+            self.setWindowFlags(Qt.WindowType.Widget)     # dans son panneau, pas une fenêtre à part
         from ..core import fontmatch
         from .fontlist import proposal_count
         self.win = win
@@ -164,6 +170,21 @@ class FontRecognizeDialog(QDialog):
         except OSError:
             first = True
         self.explain.setStyleSheet('font-weight: bold;' if first else '')
+        if docked is not None:                            # dans une colonne : à sa largeur, pas plus large
+            self.preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            self.source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            self.source.setMinimumContentsLength(16)
+            docked.visibilityChanged.connect(lambda on: None if on or not docked.isHidden() else self.stop())
+        self.renew(start)
+        if docked is None:
+            self.resize(560, 660)
+
+    def renew(self, start: str | None = None) -> None:
+        """La source d'emblée (`start`, sinon selon ce qui est là) et l'image sur la dernière capture : à l'ouverture,
+        et chaque fois que le bouton remontre le panneau."""
+        if self._token is not None:
+            self.stop()
+        self.status.setText('')
         # le champ de l'image pointe toujours sur la dernière capture ; d'office : les lettres en courbes sélectionnées
         # s'il y en a, sinon cette capture, sinon l'image du presse-papiers
         shot = last_screenshot()
@@ -176,7 +197,6 @@ class FontRecognizeDialog(QDialog):
         self._source_changed()
         if want == 'image' and shot is None:
             self.status.setText(tr('Aucune capture d’écran trouvée : choisissez une image avec « Parcourir… »'))
-        self.resize(560, 660)
 
     # --- les sources -------------------------------------------------------------------------------------------
     def selection_paths(self) -> list:
@@ -259,7 +279,8 @@ class FontRecognizeDialog(QDialog):
             else:
                 self.preview.setText(tr('Pas d’image'))
             return
-        self.preview.setPixmap(QPixmap.fromImage(img).scaled(520, 160, Qt.AspectRatioMode.KeepAspectRatio,
+        wide = max(120, self.preview.width() - 4) if self.docked is not None else 520
+        self.preview.setPixmap(QPixmap.fromImage(img).scaled(wide, 160, Qt.AspectRatioMode.KeepAspectRatio,
                                                              Qt.TransformationMode.SmoothTransformation))
 
     # --- la reconnaissance ---------------------------------------------------------------------------------------
@@ -408,4 +429,32 @@ class FontRecognizeDialog(QDialog):
 
     def done(self, r: int) -> None:
         self.stop()
-        super().done(r)
+        if self.docked is None:
+            super().done(r)
+            return
+        cols = getattr(self.win, 'columns', None)          # dans son panneau : « Fermer » le ferme
+        if cols is not None:
+            cols.close(self.docked)
+        else:
+            self.docked.hide()
+
+    def event(self, ev) -> bool:                            # noqa: N802 (API Qt)
+        if self.docked is not None and ev.type() == QEvent.Type.ShortcutOverride \
+                and ev.key() == Qt.Key.Key_Escape:
+            ev.accept()                                     # Échap pour lui, pas pour l'outil Sélection
+            return True
+        return super().event(ev)
+
+    def keyPressEvent(self, ev) -> None:                    # noqa: N802 (API Qt)
+        if self.docked is not None and ev.key() == Qt.Key.Key_Escape:
+            if self._token is not None:                     # dans son panneau : Échap ne le ferme pas
+                self.stop()
+                self.status.setText(tr('Reconnaissance arrêtée'))
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
+    def resizeEvent(self, ev) -> None:                      # noqa: N802 (API Qt)
+        super().resizeEvent(ev)
+        if self.docked is not None and self.preview.pixmap() is not None and not self.preview.pixmap().isNull():
+            self._show_preview()                            # l'aperçu à la largeur du panneau

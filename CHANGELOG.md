@@ -6786,3 +6786,12 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 
 - Clic droit sur la barre ou l'onglet d'un panneau › **Au-dessus de ›** ou **Au-dessous de ›** un autre panneau : la colonne (de gauche comme de droite) se partage en hauteur, les deux panneaux montrés à la fois — Dimensions (F2) au-dessus de Calques, par exemple. Le choix est retenu pour les lancements suivants ; « En onglet avec › » les remet en onglets.
 - **Clic droit sur un bouton de colonne** (en haut à droite) : la fenêtre de la colonne, sous le bouton. Elle liste tout ce que les colonnes peuvent accueillir (ceux de cette colonne d'abord, les autres avec leur place) ; **un œil par panneau** l'y montre (la FAO s'ouvre pour ses panneaux) ou l'en retire. **✕**, ou un clic droit dans la fenêtre, la ferme.
+### v0.886.0 — Les favoris, tout en haut
+
+- **Clic droit sur un bouton du ruban › Ajouter aux favoris (barre du haut)** : la commande rejoint la barre des favoris, tout en haut de la fenêtre, au-dessus du ruban (la première rangée en plein écran). Avec la disposition TypeEdit 13, ils suivent sa barre d'accès rapide (pas de deuxième barre, rien en double). Retenus pour les lancements suivants ; sans favoris, pas de barre.
+- Clic droit sur un bouton des favoris : **Retirer des favoris**, et le reste du menu du ruban. Les outils de forme gardent leurs réglages au clic droit : Maj + clic droit donne ce menu.
+- Les boutons des groupes repliés du ruban (dans leur menu déroulant) ont maintenant aussi ce menu au clic droit.
+### v0.887.0 — Reconnaître une police : un bouton à part, un panneau de colonne
+
+- **Reconnaître une police…** a son bouton à part dans le ruban du texte (groupe « Police », disposition TypeEdit 13 comprise), en grand aussi dans CAD › Texte.
+- Sa fenêtre est maintenant un **panneau de colonne** : à droite d'office (en onglet avec les panneaux de la colonne), à gauche si vous l'y mettez (clic droit sur sa barre › Colonne de gauche, ou l'œil de la fenêtre de la colonne) ; le choix est retenu, il revient avec sa colonne, et le panneau peut aussi être détaché. À chaque clic sur le bouton, l'image pointe de nouveau sur la dernière capture d'écran. « Fermer » ferme le panneau et arrête la reconnaissance ; Échap l'arrête seulement. L'aperçu de l'image suit la largeur de la colonne.

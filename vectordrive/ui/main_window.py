@@ -630,9 +630,11 @@ class MainWindow(QMainWindow):
         self._te_layout = None
         self._te_actions: list = []
         self._custom_relays: list = []             # boutons des onglets à soi au libellé choisi
+        self.fav_bar = None                        # la barre des favoris (tout en haut), s'il y en a
         self._build_ribbon()
         self._build_custom_tab(restyle=False)
         self.apply_ribbon_layout(restyle=False)
+        self.refresh_favorites()                   # disposition d'office (VectorDrive) : déjà là sans elle
         self._build_docks()
         self._build_status()
         self._apply_shortcuts()
@@ -1836,7 +1838,7 @@ class MainWindow(QMainWindow):
           tip=tr('Régler chaque lettre : crénage, décalage, hauteur, largeur, rotation, exposant et indice'))
         a('char_map', tr('Caractères'), lambda _=False: self.char_map_dialog(), None, 'char_map',
           tip=tr('Liste des caractères d\'une police : insérer un symbole (Ø, ±, °, ©…) dans le texte sélectionné'))
-        a('font_recognize', tr('Reconnaître une police…'), lambda _=False: self.font_recognize_dialog(), None,
+        a('font_recognize', tr('Reconnaître une police…'), lambda _=False: self.show_font_panel(), None,
           'font_recognize', tip=tr('Trouver les polices du poste les plus proches de lettres en courbes sélectionnées, ou '
                              'd\'une image : la dernière capture d\'écran, le presse-papiers, un fichier'))
         a('text_move_on_path', tr('Déplacer sur la courbe'), lambda _=False: self.move_text_on_path_tool(), None,
@@ -2755,7 +2757,7 @@ class MainWindow(QMainWindow):
         g.add(A['text_flow'], big=False)
         g.add(A['text_move_on_path'], big=False)
         g.add(A['char_map'], big=False)
-        g.add(A['font_recognize'], big=False)
+        g.add(A['font_recognize'])                       # un grand bouton : il ouvre son panneau de colonne
         for k in ('fixed', 'prop', 'typo', 'tight_kern', 'tight'):
             g.add(A[f'spacing_{k}'], big=False)
         g.add(A['text_italic'], big=False)
@@ -3068,6 +3070,13 @@ class MainWindow(QMainWindow):
         d6.setFloating(True)
         d6.setVisible(False)
         self.dock_program = d6
+        # « Reconnaître une police » : un panneau de colonne (à droite d'office), son contenu fait la première fois
+        d7 = QDockWidget(tr('Reconnaître une police'), self)
+        d7.setObjectName('polices')
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, d7)
+        d7.setVisible(False)
+        d7.visibilityChanged.connect(lambda on: self.font_panel() if on else None)   # remis par la session aussi
+        self.dock_fonts = d7
         self.cam_panel.ops.itemSelectionChanged.connect(lambda: self.program_panel.follow_op())
         for dk in (d4, d5):                              # détachés : légèrement translucides (Options, FAO)
             dk.topLevelChanged.connect(lambda _f: self.apply_cam_opacity())
@@ -5001,8 +5010,8 @@ class MainWindow(QMainWindow):
         return m
 
     def _ribbon_button_menu(self, button, pos, exec_menu: bool = True):
-        """Clic droit sur un bouton du ruban : la commande ajoutée à un onglet
-        à soi (ou à un nouveau), retirée de l'onglet à soi où elle est."""
+        """Clic droit sur un bouton du ruban (ou des favoris) : la commande dans les favoris (barre du haut) ou
+        retirée, ajoutée à un onglet à soi (ou à un nouveau), retirée de l'onglet à soi où elle est."""
         from .ribbon_editor import load_all
         m = QMenu(self)
         key = self._action_key(button.defaultAction())
@@ -5013,6 +5022,10 @@ class MainWindow(QMainWindow):
                         lambda _=False, k=key, to=not simple: self.move_button_mode(k, to))
             m.addSeparator()
         if key is not None:
+            fav = key in self.favorite_keys()
+            m.addAction(tr('Retirer des favoris (barre du haut)') if fav else tr('Ajouter aux favoris (barre du haut)'),
+                        lambda _=False, k=key, on=not fav: self.add_favorite(k) if on else self.remove_favorite(k))
+            m.addSeparator()
             for rank, t in enumerate(load_all(self.settings)):
                 m.addAction(icon('new'), tr('Ajouter à « {0} »').format(t['titre']),
                             lambda _=False, k=rank: self.add_to_custom_tab(key, k))
@@ -5072,6 +5085,7 @@ class MainWindow(QMainWindow):
         if lay is not None:
             self._build_te_tabs(lay)
         self._build_custom_tab(restyle=restyle)
+        self.refresh_favorites()                         # dans la barre d'accès rapide de TypeEdit 13, ou la leur
         if self.layout_active:
             self.ribbon.setCurrentIndex(self._te_main_index())
         return self.layout_active
@@ -6105,6 +6119,115 @@ class MainWindow(QMainWindow):
         name = self.A[key].text().replace('&', '') if key in self.A else key
         self.statusBar().showMessage((tr('« {0} » : montré aussi en mode simple') if to_simple
                                       else tr('« {0} » : réservé au mode expert')).format(name), 6000)
+
+    #: réglage : les commandes des favoris (barre du haut), dans l'ordre
+    FAV_KEY = 'ruban/favoris'
+
+    def _stored_favorites(self) -> list:
+        """Les clés retenues, celles d'une commande absente aujourd'hui comprises (un plugin pas chargé)."""
+        v = self.settings.value(self.FAV_KEY, [])
+        if isinstance(v, str):                           # une seule : QSettings la rend seule
+            v = [v] if v else []
+        out = []
+        for k in v or []:
+            if str(k) and str(k) not in out:
+                out.append(str(k))
+        return out
+
+    def favorite_keys(self) -> list:
+        """Les commandes des favoris (clés de `self.A`), dans l'ordre où elles ont été ajoutées."""
+        return [k for k in self._stored_favorites() if k in self.A]
+
+    def _save_favorites(self, keys: list) -> None:
+        if keys:
+            self.settings.setValue(self.FAV_KEY, list(keys))
+        else:
+            self.settings.remove(self.FAV_KEY)
+        self.refresh_favorites()
+
+    def add_favorite(self, key: str) -> bool:
+        """La commande `key` au bout des favoris (barre du haut) ; False si elle y est déjà ou n'existe pas."""
+        keys = self._stored_favorites()
+        if key not in self.A or key in keys:
+            return False
+        self._save_favorites(keys + [key])
+        self.statusBar().showMessage(tr('« {0} » : ajouté aux favoris (barre du haut)').format(
+            self.A[key].text().replace('&', '')), 6000)
+        return True
+
+    def remove_favorite(self, key: str) -> bool:
+        keys = self._stored_favorites()
+        if key not in keys:
+            return False
+        self._save_favorites([k for k in keys if k != key])
+        self.statusBar().showMessage(tr('« {0} » : retiré des favoris').format(
+            self.A[key].text().replace('&', '')), 6000)
+        return True
+
+    def _is_favorite_button(self, button) -> bool:
+        """Un bouton des favoris : de leur barre, ou ajouté par eux à la barre d'accès rapide de TypeEdit 13."""
+        bar = button.parentWidget()
+        if bar is None:
+            return False
+        if bar is getattr(self, 'fav_bar', None):
+            return True
+        return bar is getattr(self, 'te_quickbar', None) and (
+            any(a is button.defaultAction() for a in getattr(self, '_fav_added', ()))
+            or self._action_key(button.defaultAction()) in self.favorite_keys())   # déjà là de TypeEdit
+
+    def refresh_favorites(self):
+        """Les favoris : à la suite de la barre d'accès rapide de TypeEdit 13 si elle est là, sinon dans leur barre,
+        tout en haut (au-dessus du ruban, la première rangée en plein écran) ; sans favoris, pas de barre. Rend la
+        barre qui les porte (ou None)."""
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QToolBar
+        from shiboken6 import isValid
+        keys = self.favorite_keys()
+        te = getattr(self, 'te_quickbar', None)
+        old = getattr(self, '_fav_host', None)
+        if old is not None and isValid(old):
+            for a in getattr(self, '_fav_added', ()):
+                if isValid(a):
+                    old.removeAction(a)
+                    if a.isSeparator():                  # le leur : défait
+                        a.deleteLater()
+        self._fav_added = []
+        self._fav_host = None
+        bar = getattr(self, 'fav_bar', None)
+        if bar is not None and (te is not None or not keys or not isValid(bar)):
+            if isValid(bar):
+                bar.setParent(None)
+                bar.deleteLater()
+            self.fav_bar = bar = None
+        if not keys:
+            return None
+        if te is not None:                               # à la suite de celle de TypeEdit 13 (rien en double)
+            have = {id(a) for a in te.actions()}
+            new = [self.A[k] for k in keys if id(self.A[k]) not in have]
+            if new:                                      # un séparateur seulement s'il y a quelque chose après
+                self._fav_added.append(te.addSeparator())
+            for a in new:
+                te.addAction(a)
+                self._fav_added.append(a)
+            self._fav_host = te
+            return te
+        if bar is None:
+            holder = self.menuWidget()
+            box = holder.layout() if holder is not None else None
+            if box is None:
+                return None
+            bar = QToolBar(tr('Favoris'))
+            bar.setObjectName('favBar')
+            bar.setIconSize(QSize(20, 20))
+            bar.setMovable(False)
+            bar.setToolTip(tr('Favoris : clic droit sur un bouton du ruban pour l\'y ajouter ou l\'en retirer'))
+            box.insertWidget(0, bar)                     # tout en haut, au-dessus du ruban
+            self.fav_bar = bar
+        else:
+            bar.clear()
+        for k in keys:
+            bar.addAction(self.A[k])
+        return bar
 
     def _machine_tip(self, m) -> str:
         kind = tr('Laser') if m.kind == 'laser' else tr('Fraiseuse')
@@ -10209,6 +10332,16 @@ class MainWindow(QMainWindow):
                 self.turns.setValue(float(s.turns))
         return None
 
+    def _in_ribbon(self, w) -> bool:
+        """`w` est-il dans le ruban, menus déroulants des groupes repliés compris (des fenêtres à part pour Qt) ?"""
+        r = getattr(self, 'ribbon', None)
+        p = w
+        while r is not None and p is not None:
+            if p is r:
+                return True
+            p = p.parentWidget()
+        return False
+
     def eventFilter(self, obj, ev):                      # noqa: N802 — API Qt
         """Clic droit sur le bouton d'un outil de forme (ruban, barres) :
         ses paramètres. Filtre posé sur toute l'application : sortie
@@ -10226,9 +10359,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QToolButton
         if isinstance(obj, QToolButton) and obj.defaultAction() is not None \
                 and obj.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:   # le sien (colonnes)
-            if r is not None and r.isAncestorOf(obj) and ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if self._in_ribbon(obj) and ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 self._ribbon_button_menu(obj, ev.globalPos())     # Maj + clic droit : le menu du ruban (modes, onglets
                 return True                                       # à soi), même pour un outil qui a ses réglages
+            if self._is_favorite_button(obj):            # un bouton des favoris : les retirer, entre autres
+                self._ribbon_button_menu(obj, ev.globalPos())
+                return True
             from .form_dialog import TOOL_KINDS
             key = next((k for k, kind in TOOL_KINDS.items() if self.A.get(k) is obj.defaultAction()), None)
             if key is not None:
@@ -10243,7 +10379,7 @@ class MainWindow(QMainWindow):
             if self.A.get('tool_boundary') is obj.defaultAction():
                 self.boundary_gap_dialog()
                 return True
-            if r is not None and r.isAncestorOf(obj):      # autre bouton du ruban : dans un onglet à soi
+            if self._in_ribbon(obj):                     # autre bouton du ruban (menus des groupes repliés compris)
                 self._ribbon_button_menu(obj, ev.globalPos())
                 return True
         return super().eventFilter(obj, ev)
@@ -13540,6 +13676,34 @@ class MainWindow(QMainWindow):
             dlg.exec()
             dlg.deleteLater()
         return dlg
+
+    def font_panel(self):
+        """Le contenu du panneau « Reconnaître une police » (`ui.font_recognize`), fait la première fois."""
+        from .font_recognize import FontRecognizeDialog
+        d = self.dock_fonts
+        w = d.widget()
+        if not isinstance(w, FontRecognizeDialog):
+            w = FontRecognizeDialog(self, docked=d)
+            d.setWidget(w)
+        return w
+
+    def show_font_panel(self, start: str | None = None):
+        """« Reconnaître une police… » : son panneau, dans la colonne choisie (clic droit sur sa barre : colonne de
+        gauche ou de droite), mis devant ; l'image pointe de nouveau sur la dernière capture. Rend son contenu."""
+        d = self.dock_fonts
+        had = d.widget() is not None
+        p = self.font_panel()
+        if had or start:                                 # déjà faite : de nouveau sur la dernière capture
+            p.renew(start)
+        cols = getattr(self, 'columns', None)
+        if cols is not None and not d.isFloating() \
+                and not self.settings.value('panneaux_colonnes/place/polices', ''):
+            cols.move(d, cols.side(d) or 'droite')       # la première fois : en onglet dans sa colonne, retenu
+        else:
+            d.setVisible(True)
+            d.raise_()
+        p.go.setFocus()                                  # Entrée : reconnaître ; Échap : arrêter
+        return p
 
     def apply_recognized_font(self, name: str) -> int:
         """La police `name` mise aux textes sélectionnés (un pas d'annulation) ; rend le nombre de textes changés.
