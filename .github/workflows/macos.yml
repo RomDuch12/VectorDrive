@@ -1,0 +1,83 @@
+# Version macOS (essai) : VectorDrive.app pour Apple Silicon (arm64) et Intel (x86_64), macOS 14 ou plus récent,
+# moteur natif compilé sur place, contrôlée par l'autotest, zippée ; jointe à la version (Release) quand elle est
+# publiée, sinon gardée comme artefact du lancement manuel. Application non signée : macOS refuse le premier
+# lancement ; Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ».
+name: macOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mac-build]       # branche de mise au point
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+      VECTORDRIVE_NO_TYPEEDIT: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller pillow
+
+      - name: Moteur natif (natif/vdpathops, Rust)
+        run: |
+          rustup update stable
+          # aucun chemin de la machine de construction dans le binaire
+          export RUSTFLAGS="--remap-path-prefix=$HOME/.cargo=cargo --remap-path-prefix=$GITHUB_WORKSPACE=."
+          cargo rustc --release --manifest-path natif/vdpathops/Cargo.toml -- -C link-arg=-undefined -C link-arg=dynamic_lookup
+          cp natif/vdpathops/target/release/libvdpathops.dylib vectordrive/vdpathops.abi3.so
+
+      - name: Le moteur natif est chargé (sinon le remplaçant en Python, plus lent, prendrait sa place sans rien dire)
+        run: python -c "from vectordrive.core import pathops; assert pathops._native, 'moteur natif non chargé'"
+
+      - name: Autotest depuis les sources
+        run: python VectorDrive.py --autotest
+
+      - name: Application
+        run: |
+          python -m PyInstaller --clean --noconfirm outils/macos/VectorDrive-macos.spec
+          find dist/VectorDrive.app -name 'vdpathops*.so' | grep -q . || { echo "moteur natif absent de l'application"; exit 1; }
+
+      - name: Autotest de l'application
+        run: dist/VectorDrive.app/Contents/MacOS/VectorDrive --autotest
+
+      - name: Zip
+        run: |
+          V=$(sed -n "s/^__version__ = '\(.*\)'.*/\1/p" vectordrive/__init__.py)
+          Z="VectorDrive-$V-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --keepParent dist/VectorDrive.app "$Z"
+          echo "ZIP=$Z" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP }}
+          path: ${{ env.ZIP }}
+
+      - name: Joindre à la version
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" "$ZIP" --clobber

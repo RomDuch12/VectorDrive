@@ -2973,6 +2973,13 @@ class MainWindow(QMainWindow):
         g.add(A['update'])
         g.add(A['news'])
         g.add(A['command_search'])
+        g = t.group(tr('Développé par'))                 # demande du 15/11, 11 h 25
+        credit = QLabel('RomDuch with Claude<br><a href="mailto:romduch@gmail.com">romduch@gmail.com</a>')
+        credit.setObjectName('creditLabel')
+        credit.setTextFormat(Qt.TextFormat.RichText)
+        credit.setOpenExternalLinks(True)
+        credit.setToolTip(tr('Écrire à l’auteur'))
+        g.add_widget(credit)
         # ordre : onglets de gauche, FAO 2D et FAO 3D les derniers (les onglets ajoutés ensuite, de plugins ou
         # contextuels, se placent avant FAO 2D) ; Options et Aide tout à droite
         pages = {r.tabText(i): r.widget(i) for i in range(r.count())}
@@ -9709,7 +9716,7 @@ class MainWindow(QMainWindow):
                          + (f' — <span style="color:#c92a2a">{tr("erreur")} : {pl.error}</span>' if pl.error else ''))
         plugs = ('<br><br><b>' + tr('Plugins') + '</b><br>' + '<br>'.join(lines + REGISTRY.about)) if lines else ''
         QMessageBox.about(self, tr('À propos de VectorDrive'), tr(
-            '<b>VectorDrive {0}</b><br>RomDuch with Claude — romduch@gmail.com<br>'
+            '<b>VectorDrive {0}</b><br>Développé par RomDuch with Claude — romduch@gmail.com<br>'
             'Dessin et FAO pour la gravure — logiciel libre (MIT ou Apache-2.0)<br><br>'
             'Python {1}, Qt {2}, PySide6 {3}<br><br>'
             'Composants tiers et licences : fichier THIRD_PARTY_NOTICES.md et dossier '

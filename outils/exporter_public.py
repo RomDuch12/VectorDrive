@@ -32,6 +32,8 @@ PRIVES = [
     '.claude/*',
     'tests/corpus_local.json',
     'tests/_sorties/*',
+    '.coverage',                # données de couverture des essais (chemins du poste)
+    'prof.out',                 # profil d'exécution (chemins du poste)
 ]
 AUTEUR = 'RomDuch <romduch@gmail.com>'
 #: programmes machine et parcours (jamais publiés : ce sont des fichiers de production)

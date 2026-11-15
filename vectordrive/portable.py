@@ -186,6 +186,11 @@ def data_dir() -> pathlib.Path:
     """Dossier des données de travail (cache, récupération)."""
     if is_portable():
         d = app_dir() / DATA
+    elif sys.platform == 'darwin':                  # macOS : le dossier des données d'application
+        d = pathlib.Path.home() / 'Library' / 'Application Support' / 'VectorDrive'
+        old = pathlib.Path.home() / 'VectorDrive'   # celui des premières versions macOS (jusqu'à 0.889.0)
+        if not d.exists() and old.is_dir():
+            d = old                                 # gardé tel quel : outils, séances, plugins y restent
     else:
         d = pathlib.Path(os.environ.get('LOCALAPPDATA') or pathlib.Path.home()) / 'VectorDrive'
     return d

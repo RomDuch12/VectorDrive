@@ -9,6 +9,13 @@ Recherche (`load`) : dossiers `plugins/` à côté de l'application et dans
 les données de l'utilisateur, puis `VECTORDRIVE_PLUGINS` (chemins séparés
 par `;`). `VECTORDRIVE_NO_PLUGINS=1` désactive tout. Un plugin en erreur
 est noté (`PluginInfo.error`) et n'empêche jamais le démarrage.
+
+Ajout (`install`, Options › Plugins › « Ajouter un plugin… ») : l'archive
+.zip d'un plugin — ses paquets à la racine, les bibliothèques Python qu'il
+apporte dans `_lib/` — est décompressée dans le dossier des plugins de
+l'utilisateur (`user_dir`) ; le plugin est chargé au démarrage suivant.
+Le dossier `_lib` d'un dossier de plugins (ou d'une archive qui y est
+rangée) est ajouté à la fin de `sys.path` avant le chargement.
 """
 from __future__ import annotations
 
@@ -358,17 +365,46 @@ def _candidates(d: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
         return [(d.parent, d.name)]
     out = []
     for c in sorted(d.iterdir()):
-        if c.is_dir() and (c / '__init__.py').is_file():
+        if c.is_dir() and c.name != LIB and (c / '__init__.py').is_file():
             out.append((d, c.name))
         elif c.suffix.lower() == '.zip':
             import zipfile
             try:
                 with zipfile.ZipFile(c) as z:
-                    names = {n.split('/')[0] for n in z.namelist() if n.count('/') == 1 and n.endswith('/__init__.py')}
-            except (OSError, zipfile.BadZipFile):
+                    names = {n.split('/')[0] for n in z.namelist() if n.count('/') == 1 and n.endswith('/__init__.py')
+                             and not n.startswith(LIB + '/')}
+            except (OSError, *_zip_errors()):                # une archive abîmée n'empêche pas le démarrage
                 continue
             out += [(c, n) for n in sorted(names)]
     return out
+
+
+#: dossier des bibliothèques Python (paquets purs : openpyxl…) qu'un plugin apporte avec lui, à la racine de son
+#: archive ou d'un dossier de plugins ; jamais pris pour un plugin
+LIB = '_lib'
+
+
+def _zip_names(archive) -> list[str]:
+    import zipfile
+    try:
+        with zipfile.ZipFile(archive) as z:
+            return z.namelist()
+    except (OSError, *_zip_errors()):
+        return []
+
+
+def _add_libs(d: pathlib.Path) -> None:
+    """Ajoute à la fin de sys.path (les bibliothèques du cœur restent prioritaires) le dossier `_lib` de `d` et celui
+    de chaque archive .zip de `d` qui en a un."""
+    if not d.is_dir():
+        return
+    libs = [d / LIB] if (d / LIB).is_dir() else []
+    for c in _zips(d):
+        if any(n.replace(chr(92), '/').startswith(LIB + '/') for n in _zip_names(c)):
+            libs.append(c / LIB)
+    for lib in libs:
+        if str(lib) not in sys.path:
+            sys.path.append(str(lib))
 
 
 def load(dirs: list | None = None, *, force: bool = False) -> list[PluginInfo]:
@@ -381,6 +417,7 @@ def load(dirs: list | None = None, *, force: bool = False) -> list[PluginInfo]:
         return REGISTRY.plugins
     seen = {p.module for p in REGISTRY.plugins}
     for d in (dirs if dirs is not None else search_dirs()):
+        _add_libs(pathlib.Path(d))
         for root, name in _candidates(pathlib.Path(d)):
             if name in seen:
                 continue
@@ -413,6 +450,198 @@ def load_module(name: str, root=None) -> PluginInfo:
         info.error = f'{type(ex).__name__} : {ex}'
         info.description = info.description or traceback.format_exc(limit=3)
     return info
+
+
+# --- ajout d'un plugin (« Ajouter un plugin… ») ---------------------------------------------------------------------
+
+class ArchiveError(ValueError):
+    """Archive de plugin refusée ; `kind` : 'illisible' (archive abîmée, chiffrée…), 'vide' (aucun plugin), 'reserve'
+    (nom du cœur), 'chemin' (un chemin sortirait du dossier), 'paquet' (un paquet de la racine qui n'est pas un plugin :
+    sa place est dans `_lib`) ; `detail` : le fichier ou le nom en cause."""
+
+    def __init__(self, kind: str, detail: str = ''):
+        super().__init__(f'{kind} : {detail}' if detail else kind)
+        self.kind = kind
+        self.detail = detail
+
+
+def user_dir() -> pathlib.Path:
+    """Le dossier où « Ajouter un plugin… » range les plugins : `plugins` des données de l'utilisateur."""
+    from .portable import data_dir
+    return data_dir() / 'plugins'
+
+
+def _zip_errors() -> tuple:
+    """Erreurs de lecture d'une archive (abîmée, chiffrée, compression inconnue, nom de membre mal encodé)."""
+    import zipfile
+    import zlib
+    return (zipfile.BadZipFile, RuntimeError, NotImplementedError, EOFError, zlib.error, UnicodeDecodeError)
+
+
+def _zips(d: pathlib.Path) -> list[pathlib.Path]:
+    """Archives .zip de `d` (« .ZIP » compris, comme `_candidates`, sous macOS aussi)."""
+    if not d.is_dir():
+        return []
+    return sorted(c for c in d.iterdir() if c.suffix.lower() == '.zip' and c.is_file())
+
+
+def _entries(z) -> list:
+    """(membre, nom) de l'archive, le nom écrit avec « / » sur tous les systèmes (une archive faite sous Windows peut
+    avoir des « \\ » : zipfile ne les change que sous Windows)."""
+    return [(info, info.filename.replace(chr(92), '/')) for info in z.infolist()]
+
+
+def _root_packages(z) -> dict:
+    """{paquet de la racine de l'archive : est un plugin (son __init__.py nomme register)}, sans `_lib`."""
+    import re
+    out = {}
+    for info, name in _entries(z):
+        parts = name.split('/')
+        if len(parts) == 2 and parts[1] == '__init__.py' and parts[0] not in ('', LIB):
+            out[parts[0]] = re.search(r'\bregister\b', z.read(info).decode('utf-8', 'replace')) is not None
+    return out
+
+
+def archive_plugins(archive) -> list[str]:
+    """Paquets de plugin d'une archive .zip : les dossiers de sa racine dont le `__init__.py` nomme `register` (pas
+    `_lib`)."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(archive) as z:
+            return sorted(n for n, plugin in _root_packages(z).items() if plugin)
+    except (OSError, *_zip_errors()) as ex:
+        raise ArchiveError('illisible', str(ex)) from ex
+
+
+def archives_with(dest, pkgs) -> list[pathlib.Path]:
+    """Archives .zip de `dest` qui apportent un des paquets `pkgs` (gardées par `install` quand elles apportent aussi
+    un autre plugin)."""
+    out = []
+    for c in _zips(pathlib.Path(dest)):
+        try:
+            if set(archive_plugins(c)) & set(pkgs):
+                out.append(c)
+        except ArchiveError:
+            continue
+    return out
+
+
+def _set_aside_name(c: pathlib.Path) -> pathlib.Path:
+    """« X.zip.ancien », ou « X.zip.ancien2 »… si une copie est déjà gardée sous ce nom."""
+    p, k = c.with_name(c.name + '.ancien'), 2
+    while p.exists():
+        p, k = c.with_name(f'{c.name}.ancien{k}'), k + 1
+    return p
+
+
+def _place(tmp: pathlib.Path, dest: pathlib.Path, pkgs: list[str]) -> None:
+    """Les paquets et `_lib` décompressés dans `tmp` prennent leur place dans `dest`, d'un bloc : chaque entrée de la
+    racine de `_lib` remplace la même (une bibliothèque, aussi ses anciens « .dist-info »), chaque paquet le même.
+    Ce qui est remplacé est d'abord mis de côté dans un dossier « .anciens_… » de `dest` (sans __init__.py : jamais pris
+    pour un plugin) ; si une pose échoue (fichier en service, antivirus…), tout est remis comme avant, et si même cela
+    échoue, rien n'est effacé : l'ancienne version reste dans ce dossier, dit par l'erreur. Lève `OSError`."""
+    import shutil
+    import tempfile
+    pairs = []                                       # (nouveau, sa place, ce qu'il remplace)
+    lib = tmp / LIB
+    if lib.is_dir():
+        (dest / LIB).mkdir(exist_ok=True)
+        for item in sorted(lib.iterdir()):
+            old = [dest / LIB / item.name]
+            if item.name.endswith('.dist-info'):
+                old += sorted((dest / LIB).glob(item.name.split('-')[0] + '-*.dist-info'))
+            pairs.append((item, dest / LIB / item.name, old))
+    pairs += [(tmp / name, dest / name, [dest / name]) for name in pkgs]
+    aside = pathlib.Path(tempfile.mkdtemp(prefix='.anciens_', dir=dest))
+    moved, placed = [], []
+    try:
+        for src, target, old in pairs:
+            for p in dict.fromkeys(old):
+                if p.exists() or p.is_symlink():
+                    keep = aside / str(len(moved))
+                    p.replace(keep)
+                    moved.append((p, keep))
+            src.replace(target)
+            placed.append((target, src))
+    except OSError as ex:
+        lost = []
+        for target, src in reversed(placed):
+            try:
+                target.replace(src)
+            except OSError:
+                lost.append(target)
+        for p, keep in reversed(moved):
+            try:
+                keep.replace(p)
+            except OSError:
+                lost.append(p)
+        if lost:
+            raise OSError(f'{ex} ; remise en place impossible ({", ".join(p.name for p in lost)}) : l’ancienne '
+                          f'version est gardée dans {aside}') from ex
+        shutil.rmtree(aside, ignore_errors=True)
+        raise
+    shutil.rmtree(aside, ignore_errors=True)
+
+
+def install(archive, dest=None) -> list[str]:
+    """Ajoute le plugin de l'archive .zip `archive` au dossier `dest` (d'office `user_dir()`) et rend les noms de ses
+    paquets. Ses paquets et son dossier `_lib` sont décompressés (rien d'autre de l'archive), puis prennent la place de
+    ceux du même nom (`_place`) ; une archive rangée dans `dest` qui n'apporte que ces paquets — celle choisie
+    comprise — est renommée en « .zip.ancien » (sinon elle serait chargée à la place ; celle qui apporte aussi un
+    autre plugin est gardée : `archives_with`). Le plugin est chargé au prochain démarrage. Lève `ArchiveError`
+    (archive refusée, rien de changé) ou `OSError` (écriture impossible, voir `_place`)."""
+    import shutil
+    import tempfile
+    import zipfile
+    archive = pathlib.Path(archive)
+    dest = pathlib.Path(dest) if dest is not None else user_dir()
+    try:
+        z = zipfile.ZipFile(archive)
+    except (OSError, *_zip_errors()) as ex:
+        raise ArchiveError('illisible', str(ex)) from ex
+    with z:
+        try:
+            roots = _root_packages(z)
+            pkgs = sorted(n for n, plugin in roots.items() if plugin)
+            if not pkgs:
+                raise ArchiveError('vide', archive.name)
+            if 'vectordrive' in roots:
+                raise ArchiveError('reserve', 'vectordrive')
+            others = sorted(n for n, plugin in roots.items() if not plugin)
+            if others:
+                raise ArchiveError('paquet', ', '.join(others))
+            keep = set(pkgs) | {LIB}
+            members = []
+            for info, name in _entries(z):
+                parts = pathlib.PurePosixPath(name).parts
+                if not parts or parts[0] not in keep:
+                    continue
+                if name.startswith('/') or '..' in parts or ':' in name:
+                    raise ArchiveError('chemin', info.filename)
+                members.append((info, parts, name.endswith('/')))
+            dest.mkdir(parents=True, exist_ok=True)
+            tmp = pathlib.Path(tempfile.mkdtemp(prefix='.ajout_', dir=dest))
+            try:
+                for info, parts, is_dir in members:      # un à un, sous le nom en « / » (pas z.extract)
+                    target = tmp.joinpath(*parts)
+                    if is_dir:
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with z.open(info) as src, open(target, 'wb') as out:
+                        shutil.copyfileobj(src, out)
+                _place(tmp, dest, pkgs)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        except _zip_errors() as ex:
+            raise ArchiveError('illisible', str(ex)) from ex
+    for c in archives_with(dest, pkgs):                  # après la fermeture de l'archive (Windows)
+        try:
+            if set(archive_plugins(c)) <= set(pkgs):
+                c.replace(_set_aside_name(c))
+        except (ArchiveError, OSError):
+            continue
+    return pkgs
 
 
 def reset() -> None:

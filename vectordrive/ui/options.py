@@ -461,6 +461,24 @@ class OptionsDialog(QDialog):
                     (label, tr(o.tip) if o.tip else '', o.label, o.tip or '', o.key)))))
             if title == 'Plugins':
                 form.addRow(QLabel(self._plugins_text()))
+                from PySide6.QtWidgets import QPushButton
+                add = QPushButton(tr('Ajouter un plugin…'))
+                add.setObjectName('addPluginButton')
+                add.setToolTip(tr('Choisir l’archive .zip d’un plugin : elle est décompressée dans le dossier des '
+                                  'plugins de VectorDrive ; le plugin est chargé au prochain démarrage'))
+                add.clicked.connect(lambda: self.add_plugin())
+                folder = QPushButton(tr('Ouvrir le dossier des plugins'))
+                folder.setObjectName('pluginFolderButton')
+                folder.clicked.connect(self.open_plugins_folder)
+                row = QHBoxLayout()
+                row.addWidget(add)
+                row.addWidget(folder)
+                row.addStretch(1)
+                form.addRow(row)
+                self.plugin_status = QLabel()
+                self.plugin_status.setObjectName('pluginStatus')
+                self.plugin_status.setWordWrap(True)
+                form.addRow(self.plugin_status)
             if title == 'Performances':
                 form.addRow(QLabel(self._gpu_text()))
                 from PySide6.QtWidgets import QPushButton
@@ -549,6 +567,68 @@ class OptionsDialog(QDialog):
         if i < 0:
             i = w.findData(o.default)
         w.setCurrentIndex(max(0, i))
+
+    def add_plugin(self, path=None) -> list[str]:
+        """« Ajouter un plugin… » : l'archive choisie (ou `path`) rangée dans le dossier des plugins ; le compte rendu
+        sous les boutons. Rend les paquets ajoutés (vide : rien d'ajouté)."""
+        from .. import plugins as PL
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, tr('Ajouter un plugin'), '', tr('Plugin VectorDrive (*.zip)'))
+            if not path:
+                return []
+        try:
+            names = PL.install(path)
+        except PL.ArchiveError as ex:
+            why = {'illisible': tr('archive illisible'),
+                   'vide': tr('aucun plugin dans cette archive (il faut à sa racine un dossier dont le __init__.py '
+                              'définit register)'),
+                   'reserve': tr('nom réservé à VectorDrive'),
+                   'chemin': tr('chemin qui sortirait du dossier des plugins'),
+                   'paquet': tr('paquet qui n’est pas un plugin : sa place est dans le dossier _lib de '
+                                'l’archive')}.get(ex.kind, ex.kind)
+            self.plugin_status.setText(tr('Plugin non ajouté : {0} ({1}).').format(why, ex.detail))
+            return []
+        except OSError as ex:                           # un fichier du plugin en service, un dossier protégé…
+            self.plugin_status.setText(tr('Plugin non ajouté : {0} ({1}).').format(tr('écriture impossible'), ex))
+            return []
+        except Exception as ex:                         # jamais d'exception jusqu'à la fenêtre
+            self.plugin_status.setText(tr('Plugin non ajouté : {0} ({1}).').format(tr('erreur inattendue'), ex))
+            return []
+        text = tr('Plugin ajouté : {0}. Il sera chargé au prochain démarrage de VectorDrive.').format(', '.join(names))
+        # seul le dossier plugins/ de la version portable passe avant celui de l'utilisateur (plugins.search_dirs)
+        from ..portable import app_dir
+
+        def loaded_from(folder):
+            folder = folder.resolve()
+            return [p for p in PL.REGISTRY.plugins if p.module in names and p.path
+                    and folder in (pathlib.Path(p.path).resolve(), pathlib.Path(p.path).resolve().parent)]
+
+        first = app_dir()
+        ahead = loaded_from(first / 'plugins') if first is not None else []
+        if ahead:
+            text += ' ' + tr('Un plugin du même nom est déjà chargé depuis un autre dossier ({0}) : il reste '
+                             'prioritaire.').format(ahead[0].path)
+        if loaded_from(PL.user_dir()):                  # ses fichiers viennent d'être remplacés sous lui
+            text += ' ' + tr('Redémarrez VectorDrive dès que possible : la version en cours lit des fichiers qui '
+                             'viennent d’être remplacés.')
+        kept = PL.archives_with(PL.user_dir(), names)
+        if kept:
+            text += ' ' + tr('L’archive {0} du dossier des plugins apporte aussi {1} avec un autre plugin : elle est '
+                             'gardée, retirez-la si besoin.').format(kept[0].name, ', '.join(names))
+        self.plugin_status.setText(text)
+        return names
+
+    def open_plugins_folder(self) -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from .. import plugins as PL
+        d = PL.user_dir()
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as ex:                           # support en lecture seule…
+            self.plugin_status.setText(tr('Dossier des plugins impossible à créer : {0}').format(ex))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
 
     def _plugins_text(self) -> str:
         from ..plugins import REGISTRY

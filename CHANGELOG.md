@@ -6795,3 +6795,21 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 
 - **Reconnaître une police…** a son bouton à part dans le ruban du texte (groupe « Police », disposition TypeEdit 13 comprise), en grand aussi dans CAD › Texte.
 - Sa fenêtre est maintenant un **panneau de colonne** : à droite d'office (en onglet avec les panneaux de la colonne), à gauche si vous l'y mettez (clic droit sur sa barre › Colonne de gauche, ou l'œil de la fenêtre de la colonne) ; le choix est retenu, il revient avec sa colonne, et le panneau peut aussi être détaché. À chaque clic sur le bouton, l'image pointe de nouveau sur la dernière capture d'écran. « Fermer » ferme le panneau et arrête la reconnaissance ; Échap l'arrête seulement. L'aperçu de l'image suit la largeur de la colonne.
+### v0.888.0 — Champs sans flèches, un clic prend toute la valeur
+
+- **Plus jamais de flèches ▲▼ dans les champs de valeur**, dans toute l'application : les touches ↑ ↓ et la molette changent toujours la valeur, la touche = ouvre toujours le calcul.
+- **Un clic dans un champ sélectionne toute sa valeur**, prête à être remplacée (un deuxième clic place le curseur ; une partie choisie en glissant est gardée).
+- Formulaires de parcours : un champ à 0 qui prend la valeur de l'outil n'affiche plus que **la valeur et son unité** (« 750 mm/min », « ≈ 1 mm », « — » si l'outil ne la donne pas, « auto » quand le parcours la calcule) ; d'où elle vient est dit dans sa bulle.
+- **Aide** : la mention « Développé par RomDuch with Claude » et l'adresse de l'auteur, dans l'onglet Aide du ruban et dans À propos.
+### v0.889.0 — Version macOS (essai)
+
+- **macOS (essai)** : `VectorDrive.app` pour Apple Silicon (arm64) et Intel (x86_64), macOS 14 ou plus récent, construite par GitHub Actions (`.github/workflows/macos.yml`, recette `outils/macos/VectorDrive-macos.spec`) et jointe à chaque version publiée sur GitHub. L'autotest y réussit en entier (104 sur 104), depuis les sources comme dans l'application. Application non signée : macOS refuse le premier lancement ; Réglages Système › Confidentialité et sécurité › « Ouvrir quand même » (une seule fois).
+- **Polices** : sous macOS, celles du système (`/System/Library/Fonts`, dont Arial) sont trouvées ; sous macOS et Linux, celles de l'utilisateur passent avant celles du système, comme dans le système.
+- Le **moteur natif** des tracés (booléens, décalages) se construit depuis le dépôt seul : vectorcraft-geom 0.11.0 (MIT OR Apache-2.0) est copié dans `natif/vendor/vectorcraft-geom`, avec ses licences. L'extension Windows est recompilée (mêmes sources) sans aucun chemin du poste ; les licences des bibliothèques Rust qu'elle contient sont dans `licences/vdpathops-crates.txt`.
+- L'export public ne contient plus les données de couverture des essais (`.coverage`) ni le profil d'exécution (`prof.out`).
+### v0.890.0 — Ajouter un plugin, sous Windows et macOS
+
+- **F10 › Plugins › « Ajouter un plugin… »** : choisir l'archive `.zip` d'un plugin ; elle est décompressée dans le dossier des plugins de VectorDrive et le plugin est chargé au démarrage suivant. Une nouvelle version remplace l'ancienne ; si le remplacement échoue (fichier en service…), l'ancienne reste entière, bibliothèques comprises. Une archive abîmée ne change rien et n'empêche jamais le démarrage. Si le plugin remplacé tourne déjà, le compte rendu conseille de redémarrer. Le compte rendu s'affiche sous le bouton ; « Ouvrir le dossier des plugins » à côté.
+- Un plugin peut apporter ses **bibliothèques Python** (dossier `_lib` de son archive) : la version portable n'a pas besoin de les contenir. Chacune remplace sa version précédente.
+- **macOS** : les données de VectorDrive (plugins compris) et le rapport des essais vont dans `~/Library/Application Support/VectorDrive` ; celles d'une première version macOS, dans `~/VectorDrive`, restent utilisées là où elles sont.
+- Les versions empaquetées (Windows, macOS) contiennent les modules Python courants dont les bibliothèques d'un plugin ont besoin.

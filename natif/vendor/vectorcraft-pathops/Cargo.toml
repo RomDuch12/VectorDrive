@@ -10,7 +10,7 @@ rust-version = "1.95"
 description = "VectorCraft path operations: booleans (Pathfinder), shape builder regions, offset, outline stroke, simplify"
 
 [dependencies]
-vectorcraft-geom = { path = "../../../../artcraft/vectorcraft/crates/geom" }
+vectorcraft-geom = { path = "../vectorcraft-geom" }
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
 linesweeper = "0.5"

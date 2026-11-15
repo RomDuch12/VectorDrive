@@ -280,7 +280,27 @@ def _num(v: float) -> str:
 
 
 def tool_value_text(name: str, tool) -> str:
-    """Ce que montre le champ `name` à 0 : la valeur prise de l'outil `tool`, avec son unité ; sans outil choisi,
+    """Ce que montre le champ `name` à 0 : la valeur prise de l'outil `tool` et son unité, rien d'autre (demande du
+    15/11 : pas de « celle de l'outil » dans le champ) ; « — » si l'outil ne la donne pas (aucun outil choisi, valeur
+    pas réglée dans l'outil) ; « auto » pour une distance entre passes que la stratégie calcule. L'explication :
+    `tool_value_tip`, dans la bulle du champ."""
+    if tool is None:
+        return '—'
+    if name == 'stepover_mm':
+        frac = float(getattr(tool, 'stepover', 0.0) or 0.0)
+        if getattr(tool, 'kind', 'fraise') != 'fraise' or frac <= 0 or not tool.diameter:
+            return tr('auto')
+        return '≈ {0} mm'.format(_num(frac * float(tool.diameter)))
+    value = float(getattr(tool, name, 0.0) or 0.0)
+    if name == 'finish_feed' and value <= 0 and float(getattr(tool, 'feed', 0.0) or 0.0) > 0:
+        return '{0} mm/min'.format(_num(float(tool.feed)))       # l'outil n'a pas d'avance de finition : d'ébauche
+    if value <= 0:
+        return '—'
+    return '{0} {1}'.format(_num(value), tr(TOOL_UNITS.get(name, '')))
+
+
+def tool_value_tip(name: str, tool) -> str:
+    """La bulle d'un champ à 0 : d'où vient sa valeur — celle de l'outil `tool`, avec son unité ; sans outil choisi,
     qu'il faut le choisir ; une valeur que l'outil n'a pas, qu'elle n'y est pas réglée. La distance entre passes
     n'est chiffrée que pour une fraise droite qui a la sienne : pour les autres outils, chaque stratégie la calcule
     à sa façon (largeur gravée d'un outil conique, rayon d'une boule…)."""
@@ -1276,6 +1296,7 @@ class FieldsDialog(QDialog):
             w.setValue(v)
             if name in ZERO_IS_TOOL and isinstance(obj, model.Operation) and v >= 0:   # négatif (gammes) : gardé
                 w.setSpecialValueText(tool_value_text(name, None))     # la valeur de l'outil : `_tool_values`
+                w.setToolTip(tr('À 0, le champ prend la valeur de l’outil : {0}').format(tool_value_tip(name, None)))
                 w.setMinimum(0)
         else:
             w = QLineEdit(str(v))
@@ -1493,11 +1514,13 @@ class FieldsDialog(QDialog):
             w = self.widgets.get(name)
             if not isinstance(w, QDoubleSpinBox) or not w.specialValueText():
                 continue
-            text = tool_value_text(name, tool)
+            text, tip = tool_value_text(name, tool), tool_value_tip(name, tool)
             rough = self.widgets.get('feed')
             if name == 'finish_feed' and tool is not None and float(getattr(tool, 'finish_feed', 0.0) or 0.0) <= 0 \
                     and isinstance(rough, QDoubleSpinBox) and rough.value() > 0:   # l'avance d'ébauche de l'opération
-                text = tr('{0} mm/min (avance d’ébauche)').format(_num(rough.value()))
+                text = '{0} mm/min'.format(_num(rough.value()))
+                tip = tr('{0} mm/min (avance d’ébauche)').format(_num(rough.value()))
+            w.setToolTip(tr('À 0, le champ prend la valeur de l’outil : {0}').format(tip))
             if text != w.specialValueText():             # Qt réécrit le champ : seulement si l'outil a changé,
                 w.setSpecialValueText(text)              # jamais pendant la frappe
 

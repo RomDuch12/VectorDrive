@@ -33,6 +33,18 @@ shapely, numpy, pypdf) ; développement et tests : `requirements-dev.txt`.
   (Inno Setup 6). Installation par utilisateur sans droits administrateur
   (ou pour tous depuis l'assistant), raccourci bureau et association `.vdz`
   au choix ; les `.vnd` restent associés à TypeEdit.
+- **macOS (essai)** : `VectorDrive.app` pour Apple Silicon et Intel,
+  macOS 14 ou plus récent, construite par GitHub Actions
+  (`.github/workflows/macos.yml`, recette `outils/macos/VectorDrive-macos.spec`,
+  moteur natif `natif/vdpathops` compilé sur place) et jointe à chaque
+  version publiée. Application non signée : macOS refuse le premier
+  lancement ; ouvrir alors Réglages Système › Confidentialité et sécurité et
+  cliquer « Ouvrir quand même » (une seule fois).
+- **Moteur natif sous Windows** (`vectordrive/vdpathops.pyd`) :
+  `cd natif/vdpathops && maturin build --release -o ../dist`, avec
+  `RUSTFLAGS="--remap-path-prefix=<dossier .cargo>=cargo --remap-path-prefix=<dossier natif>=natif"`
+  pour qu'aucun chemin du poste n'entre dans le binaire, puis copier le
+  `.pyd` de la roue dans `vectordrive/`.
 - **Publier une version** : augmenter `__version__` dans
   `vectordrive/__init__.py`, puis
   `python outils/publier.py --build --dest <dossier des mises à jour> --notes "…"`

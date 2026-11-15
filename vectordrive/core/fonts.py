@@ -42,15 +42,28 @@ def builtin_named(name: str):
 # accommode mais le signale en erreur ; sans conséquence pour le tracé
 logging.getLogger('fontTools').setLevel(logging.CRITICAL)
 
-FONT_DIRS: list[pathlib.Path] = []
-if sys.platform == 'win32':
-    FONT_DIRS.append(pathlib.Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts')
-    local = os.environ.get('LOCALAPPDATA')
-    if local:
-        FONT_DIRS.append(pathlib.Path(local) / 'Microsoft' / 'Windows' / 'Fonts')
-_WINDOWS_DIRS = tuple(FONT_DIRS)                   # les dossiers de polices de Windows (aucun ailleurs)
-FONT_DIRS += [pathlib.Path.home() / '.fonts', pathlib.Path('/usr/share/fonts'),
-              pathlib.Path('/Library/Fonts'), pathlib.Path.home() / 'Library' / 'Fonts']
+def _platform_dirs(platform: str, home: pathlib.Path, env) -> tuple[tuple, list]:
+    """(dossiers de polices de Windows, tous les dossiers où chercher) pour le système `platform` (`sys.platform`).
+    macOS et Linux : dans l'ordre du système, celles de l'utilisateur d'abord (la première trouvée d'une famille est
+    prise) — macOS : ~/Library/Fonts, /Library/Fonts, /System/Library/Fonts (Arial, sous Supplemental) ; Linux :
+    ~/.local/share/fonts, ~/.fonts, /usr/local/share/fonts, /usr/share/fonts. Windows : inchangé."""
+    win: list[pathlib.Path] = []
+    if platform == 'win32':
+        win.append(pathlib.Path(env.get('WINDIR', 'C:/Windows')) / 'Fonts')
+        local = env.get('LOCALAPPDATA')
+        if local:
+            win.append(pathlib.Path(local) / 'Microsoft' / 'Windows' / 'Fonts')
+        dirs = win + [home / '.fonts', pathlib.Path('/usr/share/fonts'),
+                      pathlib.Path('/Library/Fonts'), home / 'Library' / 'Fonts']
+    elif platform == 'darwin':
+        dirs = [home / 'Library' / 'Fonts', pathlib.Path('/Library/Fonts'), pathlib.Path('/System/Library/Fonts')]
+    else:
+        dirs = [home / '.local' / 'share' / 'fonts', home / '.fonts', pathlib.Path('/usr/local/share/fonts'),
+                pathlib.Path('/usr/share/fonts')]
+    return tuple(win), dirs
+
+
+_WINDOWS_DIRS, FONT_DIRS = _platform_dirs(sys.platform, pathlib.Path.home(), os.environ)
 #: dossiers des polices installées dans le système (sous Windows, les siens seulement), hors ceux des plugins et des
 #: réglages : les autres logiciels (TypeEdit) y trouvent les mêmes polices
 SYSTEM_FONT_DIRS: tuple = _WINDOWS_DIRS if sys.platform == 'win32' else tuple(FONT_DIRS)

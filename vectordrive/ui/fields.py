@@ -3,6 +3,10 @@ lignes de saisie numériques) :
 
 * un double-clic sélectionne TOUTE la valeur (Qt ne prenait que le mot sous
   le curseur : la partie entière ou les décimales) ;
+* le clic qui entre dans un champ sélectionne aussi toute sa valeur, prête à
+  être remplacée (sauf une partie choisie en glissant) ;
+* jamais de flèches : les champs n'ont plus leurs boutons ▲▼ (les touches
+  ↑ ↓ et la molette changent toujours la valeur) ;
 * la virgule, le point et le point du pavé numérique sont tous acceptés
   comme séparateur décimal, quelle que soit la langue du poste ;
 * la touche = ouvre un calcul (core.calc : « 25,4*3 », « (120-10)/7 »,
@@ -44,18 +48,61 @@ def decimal_point(w: QLineEdit) -> str:
     return loc.decimalPoint() or QLocale().decimalPoint()
 
 
+_POLISH, _FOCUS_IN = QEvent.Type.Polish, QEvent.Type.FocusIn
+_RELEASE, _DOUBLE, _KEY, _WHEEL = (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
+                                   QEvent.Type.KeyPress, QEvent.Type.Wheel)
+#: les seuls événements regardés (le filtre voit passer tous ceux de l'application) ; pas la sortie d'un champ, que
+#: Qt envoie aussi pendant la destruction d'une fenêtre (chaque entrée réarme ou désarme le clic)
+_WATCHED = frozenset((_POLISH, _FOCUS_IN, _RELEASE, _DOUBLE, _KEY, _WHEEL))
+_NO_BUTTONS = QAbstractSpinBox.ButtonSymbols.NoButtons
+
+
+def _select_value(le: QLineEdit) -> None:
+    """Toute la valeur : celle d'un champ numérique sans son suffixe (« mm », « ° »), comme Tab ; sinon tout le texte."""
+    p = le.parentWidget()
+    if isinstance(p, QAbstractSpinBox):
+        p.selectAll()
+    else:
+        le.selectAll()
+
+
 class NumericInputFilter(QObject):
     """Filtre d'événements de l'application (voir le module)."""
 
     def eventFilter(self, obj, ev) -> bool:                      # noqa: N802 (API Qt)
         t = ev.type()
-        if t == QEvent.Type.MouseButtonDblClick:
+        if t not in _WATCHED:
+            return False
+        if t == _POLISH:                                            # jamais de flèches (demande du 15/11)
+            if isinstance(obj, QAbstractSpinBox) and obj.buttonSymbols() != _NO_BUTTONS:
+                obj.setButtonSymbols(_NO_BUTTONS)
+            return False
+        if t == _FOCUS_IN:
+            le = numeric_editor(obj)
+            if le is not None:                                      # entré au clic : toute la valeur au relâché
+                le.setProperty('vd_click_select', ev.reason() == Qt.FocusReason.MouseFocusReason)
+            return False
+        if t == _WHEEL:                                             # la molette donne aussi le focus « souris » :
+            le = numeric_editor(obj)                                # pas un clic, rien à sélectionner ensuite
+            if le is not None:
+                le.setProperty('vd_click_select', False)
+            return False
+        if t == _RELEASE:
+            le = numeric_editor(obj)
+            if le is not None and le.property('vd_click_select'):
+                le.setProperty('vd_click_select', False)            # le clic suivant place le curseur
+                if not le.hasSelectedText():                        # une partie choisie en glissant : gardée
+                    _select_value(le)
+            return False
+        if t == _DOUBLE:
             le = numeric_editor(obj)
             if le is not None:
                 QTimer.singleShot(0, le.selectAll)              # après la sélection du mot par Qt
             return False
-        if t == QEvent.Type.KeyPress:
+        if t == _KEY:
             le = numeric_editor(obj)
+            if le is not None:
+                le.setProperty('vd_click_select', False)            # au clavier : le clic suivant place le curseur
             if le is None or le.isReadOnly():
                 return False
             if ev.key() == Qt.Key.Key_Equal or ev.text() == '=':

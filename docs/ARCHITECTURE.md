@@ -54,9 +54,29 @@ def register(api):            # api : vectordrive.plugins.Api
 Recherche, dans l'ordre :
 
 1. les dossiers `plugins/` à côté de l'exécutable et dans le dossier des
-   données de l'utilisateur (`%LOCALAPPDATA%\VectorDrive\plugins`) ;
+   données de l'utilisateur (`%LOCALAPPDATA%\VectorDrive\plugins`, sous
+   macOS `~/Library/Application Support/VectorDrive/plugins`, ou
+   `~/VectorDrive/plugins` s'il existe d'une première version macOS) ;
 2. les chemins de la variable `VECTORDRIVE_PLUGINS` (séparés par `;`) ;
 3. `VECTORDRIVE_NO_PLUGINS=1` désactive tout.
+
+**Ajouter un plugin** (F10 › Plugins › « Ajouter un plugin… », Windows et
+macOS) : on choisit l'archive `.zip` du plugin ; ses paquets (dossiers de la
+racine dont le `__init__.py` définit `register`) et son dossier `_lib` sont
+décompressés dans le dossier des plugins de l'utilisateur, et remplacent une
+version ajoutée avant ; le plugin est chargé au démarrage suivant. `_lib`
+contient les bibliothèques Python pures que le plugin apporte (openpyxl…) :
+il est ajouté à la fin de `sys.path` avant le chargement des plugins. Toute
+autre bibliothèque va dans `_lib` : un paquet de la racine qui ne nomme pas
+`register` fait refuser l'archive. Le remplacement est sans perte : ce qui
+est remplacé (paquets, entrées de `_lib`) est mis de côté dans un dossier
+`.anciens_…`, effacé une fois tout posé ; en cas d'erreur tout est remis, et
+si même cela échoue l'ancienne version reste dans ce dossier. Une archive
+rangée dans le dossier qui n'apporte que ces paquets devient `.zip.ancien`.
+Le dossier `plugins/` de la version portable passe avant celui de
+l'utilisateur : un plugin du même nom qui s'y trouve reste prioritaire. Un
+plugin destiné aussi à macOS évite ce qui n'existe que sous Windows (winreg,
+chemins `C:/`, exécutables `.exe`) ou le teste avant de s'en servir.
 
 Un plugin qui échoue au chargement n'empêche jamais VectorDrive de
 démarrer : l'erreur est affichée dans Aide > À propos.

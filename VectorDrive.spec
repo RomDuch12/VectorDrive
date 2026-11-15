@@ -54,8 +54,12 @@ a = Analysis(
         'vectordrive.core.halftone', 'vectordrive.ui.guide', 'vectordrive.core.dial', 'vectordrive.core.holes', 'vectordrive.core.check', 'vectordrive.core.nesting', 'vectordrive.core.trace', 'vectordrive.core.chain', 'vectordrive.ui.rulers', 'vectordrive.io.raster', 'vectordrive.core.fontformats', 'vectordrive.io.paragraph', 'vectordrive.core.hatch', 'vectordrive.core.shadow', 'vectordrive.core.fitcurve', 'vectordrive.core.envelope', 'vectordrive.core.stamp', 'vectordrive.core.trim', 'vectordrive.core.punch', 'vectordrive.core.parallel', 'vectordrive.core.blend', 'vectordrive.core.symmetric', 'vectordrive.ui.news', 'vectordrive.ui.command_search', 'vectordrive.portable', 'vectordrive.ui.batdialog', 'vectordrive.ui.checkdlg', 'vectordrive.core.biarc', 'vectordrive.core.clip',
         'vectordrive.ui.printing', 'PySide6.QtPrintSupport',
         'pypdf', 'ezdxf', 'fontTools', 'vectordrive.plugins', 'manifold3d',
-        # bibliothèque standard souvent utile aux plugins (chargés depuis plugins/, hors de l'analyse)
-        'decimal', 'csv',
+        # bibliothèque standard souvent utile aux plugins (chargés depuis plugins/, hors de l'analyse) et aux
+        # bibliothèques qu'ils apportent dans _lib (openpyxl : xml.etree, zipfile…)
+        'decimal', 'csv', 'xml.etree.ElementTree', 'xml.dom.minidom', 'xml.sax.saxutils', 'zipfile', 'hashlib',
+        'uuid', 'pkgutil', 'struct', 'unicodedata', 'numbers', 'fractions', 'statistics', 'difflib', 'textwrap',
+        'configparser', 'shlex', 'glob', 'base64', 'gzip', 'calendar', 'heapq', 'bisect', 'array', 'pprint',
+        'html.parser', 'logging.handlers', 'concurrent.futures', 'queue',
     ] + [m for m in os.environ.get('VECTORDRIVE_HIDDEN_IMPORTS', '').split(',') if m]
     # tout le cœur : les plugins (chargés hors de l'analyse) importent des modules que le cœur
     # n'utilise plus lui-même (ex. cam.tiling pour le post Cielle du plugin BFM)

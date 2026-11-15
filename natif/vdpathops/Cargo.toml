@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
 # copie modifiée (décalage : point profond hors des trous), voir ../vendor/vectorcraft-pathops/NOTICE
 vectorcraft-pathops = { path = "../vendor/vectorcraft-pathops" }
-vectorcraft-geom = { path = "../../../artcraft/vectorcraft/crates/geom" }
+vectorcraft-geom = { path = "../vendor/vectorcraft-geom" }
 
 [profile.release]
 opt-level = 3

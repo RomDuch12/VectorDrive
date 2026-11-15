@@ -9,6 +9,9 @@ tests/corpus/prive/
 # Sorties de tests
 tests/_sorties/
 natif/vdpathops/target/
+# moteur natif compilé sous macOS ou Linux (construit par la recette de la plateforme, jamais versionné)
+vectordrive/*.so
+vectordrive/*.dylib
 natif/dist/
 tests/corpus_local.json
 # Programmes machine, parcours et dessins de production : jamais dans le dépôt

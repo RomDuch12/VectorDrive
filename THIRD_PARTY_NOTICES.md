@@ -30,7 +30,8 @@ fermée.
   ArtCraft) — MIT OR Apache-2.0, utilisés sous **MIT**. Compilés dans
   l'extension `vectordrive/vdpathops.pyd` (sources de l'enveloppe :
   `natif/vdpathops`). Dépendances Rust : kurbo, linesweeper, pyo3 (MIT /
-  Apache-2.0).
+  Apache-2.0) ; les textes de licence des bibliothèques Rust liées dans
+  l'extension : `licences/vdpathops-crates.txt`.
   **Copie modifiée** de vectorcraft-pathops 0.11.0 dans
   `natif/vendor/vectorcraft-pathops` (licences et NOTICE d'origine
   conservées) : `src/offset.rs`, le point qui sert à reconnaître un contour
@@ -38,6 +39,9 @@ fermée.
   d'un trou) et sur le contour aplati à 1 µm au plus ; un retrait retire
   aussi la bande des tracés ouverts. Modifications signalées par le
   commentaire « VectorDrive : ».
+  **Copie** de vectorcraft-geom 0.11.0 dans `natif/vendor/vectorcraft-geom`
+  (sources inchangées, licences et NOTICE d'origine conservées) : l'extension
+  se construit depuis ce dépôt seul — sous macOS, `vectordrive/vdpathops.abi3.so`.
 - **linesweeper 0.5.0** (jneem/linesweeper) — MIT OR Apache-2.0, utilisé
   sous **MIT**. **Copie modifiée** dans `natif/vendor/linesweeper`
   (licences d'origine conservées) : `src/topology.rs`, parcours des

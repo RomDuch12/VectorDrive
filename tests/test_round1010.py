@@ -50,12 +50,12 @@ class ToolValues(unittest.TestCase):
         d = self.open()
         dp = QLocale().decimalPoint()                                           # le séparateur des champs
         self.assertIs(d.current_tool(), self.big)
-        self.assertEqual(self.shown(d, 'feed'), tr('{0} {1} (outil)').format('750', 'mm/min'))
-        self.assertEqual(self.shown(d, 'plunge'), tr('{0} {1} (outil)').format('150', 'mm/min'))
-        self.assertEqual(self.shown(d, 'spindle'), tr('{0} {1} (outil)').format('18000', tr('tr/min')))
-        self.assertEqual(self.shown(d, 'step_down'), tr('{0} {1} (outil)').format(f'0{dp}3', 'mm'))
+        self.assertEqual(self.shown(d, 'feed'), '750 mm/min')                  # round 1031 : la valeur seule
+        self.assertEqual(self.shown(d, 'plunge'), '150 mm/min')
+        self.assertEqual(self.shown(d, 'spindle'), '18000 ' + tr('tr/min'))
+        self.assertEqual(self.shown(d, 'step_down'), f'0{dp}3 mm')
         self.assertIn('1 mm', self.shown(d, 'stepover_mm'))                     # 50 % de 2 mm
-        self.assertIn('50 %', self.shown(d, 'stepover_mm'))
+        self.assertIn('50 %', d.widgets['stepover_mm'].toolTip())             # round 1031 : dans la bulle
         self.assertEqual(d.widgets['feed'].text(), self.shown(d, 'feed'))      # à 0 : c'est ce qui se lit
         tools = d.widgets['tool_id']
         tools.setCurrentIndex(tools.findData(self.small.id))                   # un autre outil : elles suivent
@@ -77,7 +77,7 @@ class ToolValues(unittest.TestCase):
             if hasattr(w, 'specialValueText'):
                 self.assertNotIn('celle de l', w.specialValueText(), name)
         self.assertFalse([k for k, v in CP.LABELS.items() if 'celle de l\'outil' in v])
-        self.assertEqual(CP.tool_value_text('feed', None), tr('d’après l’outil, à choisir'))
+        self.assertEqual(CP.tool_value_tip('feed', None), tr('d’après l’outil, à choisir'))
 
     def check_typing(self, d):
         """Relecture : le texte de l'outil n'est pas réécrit à chaque frappe (Qt réécrirait le champ)."""
@@ -94,10 +94,10 @@ class ToolValues(unittest.TestCase):
         calcule) ; une valeur absente de l'outil est dite ; une distance négative d'une gamme reste."""
         vee = model.CamTool(name='V 30', kind='conique', diameter=3.175, angle=30.0, stepover=0.4, feed=0.0,
                             number=3)
-        self.assertEqual(CP.tool_value_text('stepover_mm', vee), tr('d’après l’outil et le parcours'))
-        self.assertEqual(CP.tool_value_text('feed', vee), tr('non réglée dans l’outil'))
+        self.assertEqual(CP.tool_value_tip('stepover_mm', vee), tr('d’après l’outil et le parcours'))
+        self.assertEqual(CP.tool_value_tip('feed', vee), tr('non réglée dans l’outil'))
         flat = model.CamTool(name='Cyl 3', diameter=3.0, stepover=0.0, number=4)
-        self.assertEqual(CP.tool_value_text('stepover_mm', flat), tr('d’après l’outil et le parcours'))
+        self.assertEqual(CP.tool_value_tip('stepover_mm', flat), tr('d’après l’outil et le parcours'))
         d = self.open(stepover_mm=-1.0)
         self.assertEqual(d.widgets['stepover_mm'].value(), -1.0)
         d.apply()

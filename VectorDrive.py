@@ -1582,7 +1582,10 @@ def _report_file(beside_exe: bool):
     if beside_exe:
         base = pathlib.Path(sys.executable).parent if getattr(sys, 'frozen', False) else pathlib.Path.cwd()
         candidates.append(base / 'VectorDrive_rapport.txt')
-    local = pathlib.Path(os.environ.get('LOCALAPPDATA') or pathlib.Path.home()) / 'VectorDrive'
+    if sys.platform == 'darwin':                    # comme portable.data_dir()
+        local = pathlib.Path.home() / 'Library' / 'Application Support' / 'VectorDrive'
+    else:
+        local = pathlib.Path(os.environ.get('LOCALAPPDATA') or pathlib.Path.home()) / 'VectorDrive'
     candidates.append(local / ('VectorDrive_rapport.txt' if beside_exe else 'VectorDrive.log'))
     for f in candidates:
         try:

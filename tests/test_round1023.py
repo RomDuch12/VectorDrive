@@ -33,8 +33,13 @@ def up_rect(sb):
 
 
 def arrow_in_its_column(sb, board) -> bool:
-    """La flèche du haut entière tient-elle dans la largeur visible de sa colonne ?"""
-    r = up_rect(sb)
+    """La flèche du haut entière tient-elle dans la largeur visible de sa colonne ? Sans flèches (round 1031) : le
+    bout droit du champ, là où elles étaient."""
+    from PySide6.QtCore import QRect
+    if sb.buttonSymbols() == QAbstractSpinBox.ButtonSymbols.NoButtons:
+        r = QRect(sb.rect().right() - 15, 0, 16, sb.height())
+    else:
+        r = up_rect(sb)
     sa = next(s for s in board.scrolls if s.isAncestorOf(sb))
     vp = sa.viewport()
     left = sb.mapTo(vp, r.topLeft()).x()
@@ -140,7 +145,6 @@ class OperationForm(unittest.TestCase):
             QTest.qWait(50)
             cut = [n for n, w in dlg.widgets.items()
                    if isinstance(w, QAbstractSpinBox) and w.isVisibleTo(dlg) and dlg.board.isAncestorOf(w)
-                   and w.buttonSymbols() != QAbstractSpinBox.ButtonSymbols.NoButtons
                    and not arrow_in_its_column(w, dlg.board)]
             self.assertEqual(cut, [])                                         # avant : les vitesses coupées
 

@@ -1,0 +1,14 @@
+# VectorDrive : copie de vectorcraft-geom 0.11.0 (storytold/vectorcraft, MIT OR Apache-2.0), voir NOTICE.
+# Champs du workspace d'origine recopiés ; tests et lints du workspace non repris.
+[package]
+name = "vectorcraft-geom"
+version = "0.11.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+description = "VectorCraft geom"
+
+[dependencies]
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+thiserror = "2"
