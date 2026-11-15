@@ -78,6 +78,18 @@ l'utilisateur : un plugin du même nom qui s'y trouve reste prioritaire. Un
 plugin destiné aussi à macOS évite ce qui n'existe que sous Windows (winreg,
 chemins `C:/`, exécutables `.exe`) ou le teste avant de s'en servir.
 
+**Fabriquer l'archive d'un plugin** : `python outils/plugin_zip.py
+DOSSIER_DU_PAQUET --lib openpyxl --lib et_xmlfile -o mon_plugin.zip`
+(`plugins.build_archive`). Le paquet va à la racine, sans `__pycache__`,
+`.pyc` ni fichiers cachés ; chaque bibliothèque nommée par `--lib` (un
+module importable sur le poste) va dans `_lib`, avec ses `.dist-info`. Une
+bibliothèque compilée (`.pyd`, `.so`…) est propre à un système : elle est
+refusée, comme la bibliothèque standard (déjà dans VectorDrive), et un nom
+de fichier qui ne s'écrirait pas partout (`aux.py`, `:` ou `?` dans le nom,
+deux noms qui ne diffèrent que par la casse). L'archive est relue avant
+d'être rangée ; elle s'ajoute ensuite telle quelle sous Windows comme sous
+macOS.
+
 Un plugin qui échoue au chargement n'empêche jamais VectorDrive de
 démarrer : l'erreur est affichée dans Aide > À propos.
 

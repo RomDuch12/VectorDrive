@@ -273,6 +273,39 @@ def _check_depth(tp, tool, cotes) -> None:
                            'vérifier la tenue de l\'outil (ou régler la passe en Z de la gravure)')
 
 
+def _vcarve_op(doc, setup, op, tool, tp, em, here) -> None:
+    """La gravure 2,5D, puis sa passe de finition (case « Passe de finition », juste sous la surépaisseur XY ; demande
+    du 15/11) : avec une surépaisseur XY, la même gravure sur la forme exacte (surépaisseur nulle), liée à ce qui est
+    déjà creusé — les parcours d'avant et la gravure elle-même (`link_previous`) : les flancs repris à leur place, le
+    fond seulement où la gravure ne l'a pas vidé (la bande le long des bords, que la surépaisseur laisse plus large que
+    la pointe), les tirés d'angle jusqu'aux vrais coins ; à l'avance de finition (`Emitter.fin`). Une forme que la
+    surépaisseur a fait disparaître est gravée en entier par la finition ; en ligne médiane, la ligne médiane de la
+    forme exacte est reprise."""
+    import copy
+    import types
+    start = len(em.moves)
+    _vcarve(doc, setup, op, tool, tp, em, here)
+    if not getattr(op, 'vcarve_finish', False) or float(op.stock or 0.0) <= 0.0:
+        return
+    if tool.kind != 'conique' or not 0 < tool.angle < 180:
+        return                                            # déjà dit par la gravure
+    fin = copy.copy(op)
+    fin.stock, fin.vcarve_finish, fin.link_previous = 0.0, False, True
+    fin.gamme_rule, fin.vcarve_max_steps, fin.finish_3d_only = 0, 0, False
+    done = types.SimpleNamespace(tool_id=tool.id, moves=list(em.moves[start:]), kind=op.kind)
+    if em.pos is not None:
+        here = em.pos[:2]
+    token = S._PREVIOUS.set(list(S.previous_toolpaths()) + [done])
+    was = getattr(em, 'fin', False)
+    em.fin = True
+    try:
+        _vcarve(doc, setup, fin, tool, tp, em, here)
+    finally:
+        em.fin = was
+        S._PREVIOUS.reset(token)
+    tp.warnings[:] = list(dict.fromkeys(tp.warnings))
+
+
 def vcarve_layers(passes: list, cotes: list, rt: float, tan_h: float) -> list:
     """Gravure profonde en paliers : pour chaque cote (la dernière : le
     fond), les passes pas encore finies — celles qui s'arrêtent au-dessus de
@@ -1166,7 +1199,7 @@ def _finish25d(doc, setup, op, tool, tp, em, here) -> None:
 STRATEGIES = {
     'fer_dorer': lambda *a: _emboss(*a),
     'finition25d': _finish25d,
-    'vcarve': _vcarve,
+    'vcarve': _vcarve_op,
     'prismatique': _prismatic,
     'relief': _relief,
     'surface3d': _surface3d,

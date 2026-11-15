@@ -277,6 +277,8 @@ class Operation:
     vcarve_offset: float = 0.0      # contour 2D : décalage XY du contour (mm, + vers l'intérieur de la forme)
     vcarve_step: float = 0.0        # gravure 2,5D : passe en Z (mm) — paliers jusqu'au fond ; 0 : en une fois
     vcarve_walls: bool = True       # gravure 2,5D : passes sur les flancs avant le fond ; sans : comme TE13, le fond et le bord à chaque passe
+    vcarve_finish: bool = False     # gravure 2,5D : passe de finition — avec une surépaisseur XY, les bords et les tirés d'angle
+                                    # repris sur la forme exacte, à l'avance de finition (demande du 15/11)
     sweep_texture: bool = False     # balayage : fond texturé (coups de gouge aléatoires, TypeEdit : Texturing)
     tex_depth_min: float = 0.3      # texturing : profondeur des coups (mm)
     tex_depth_max: float = 0.6

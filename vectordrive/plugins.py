@@ -16,6 +16,9 @@ apporte dans `_lib/` — est décompressée dans le dossier des plugins de
 l'utilisateur (`user_dir`) ; le plugin est chargé au démarrage suivant.
 Le dossier `_lib` d'un dossier de plugins (ou d'une archive qui y est
 rangée) est ajouté à la fin de `sys.path` avant le chargement.
+
+Fabrication (`build_archive`, `outils/plugin_zip.py`) : l'archive ajoutable
+d'un plugin, son paquet et ses bibliothèques Python pures.
 """
 from __future__ import annotations
 
@@ -642,6 +645,205 @@ def install(archive, dest=None) -> list[str]:
         except (ArchiveError, OSError):
             continue
     return pkgs
+
+
+# --- fabrication de l'archive d'un plugin (outils/plugin_zip.py) -----------------------------------------------------
+
+#: extensions des fichiers compilés : propres à un système (Windows, macOS…), une bibliothèque qui en a ne marcherait pas
+#: partout
+COMPILED = ('.pyd', '.so', '.dylib', '.dll')
+
+
+def _skipped(rel: pathlib.PurePath) -> bool:
+    """Fichier laissé hors de l'archive : un « .pyc », un fichier caché (.DS_Store…) ou ce qui est dans `__pycache__`
+    ou un dossier caché (.git…)."""
+    return (rel.suffix.lower() in ('.pyc', '.pyo')
+            or any(part == '__pycache__' or part.startswith('.') for part in rel.parts))
+
+
+def _tree(top: pathlib.Path, arc: str) -> list:
+    """(fichier, nom dans l'archive) des fichiers du dossier `top`, rangés sous `arc`, dans l'ordre."""
+    out = []
+    for f in sorted(top.rglob('*')):
+        rel = f.relative_to(top)
+        if f.is_file() and not _skipped(rel):
+            out.append((f, f'{arc}/{rel.as_posix()}'))
+    return out
+
+
+#: noms que Windows réserve (avec ou sans extension) : un fichier de ce nom ne s'y écrit pas
+_RESERVED = {'con', 'prn', 'aux', 'nul', *(f'{d}{i}' for d in ('com', 'lpt') for i in (*range(1, 10), '¹', '²', '³'))}
+
+
+def _unportable(name: str) -> str:
+    """Pourquoi le nom `name` (chemin en « / » de l'archive) ne se décompresserait pas partout — « Ajouter un
+    plugin… » le refuserait, ou Windows ne pourrait pas l'écrire (une archive faite sous macOS ou Linux) ; '' s'il
+    le peut."""
+    for part in name.split('/'):
+        if part in ('', '.', '..'):
+            return 'chemin vide ou relatif'
+        if any(c in '<>:"|?*' + chr(92) or ord(c) < 32 for c in part):
+            return 'caractère interdit sous Windows'
+        if part[-1] in ' .':
+            return 'nom fini par un point ou une espace'
+        if part.split('.')[0].rstrip(' ').lower() in _RESERVED:      # « con .txt » aussi (l'espace est ôtée)
+            return 'nom réservé par Windows'
+    return ''
+
+
+def _case_clash(names) -> tuple:
+    """Deux chemins de `names` (fichiers, ou leurs dossiers) qui ne diffèrent que par la casse — un seul sous Windows
+    et macOS (`pkg/a` et `pkg/A/b.py` aussi) ; () s'il n'y en a pas."""
+    seen = {}
+    for name in names:
+        parts = name.split('/')
+        for k in range(1, len(parts) + 1):
+            prefix = '/'.join(parts[:k])
+            if seen.setdefault(prefix.lower(), prefix) != prefix:
+                return seen[prefix.lower()], prefix
+    return ()
+
+
+def _true_name(folder: pathlib.Path) -> str:
+    """Le nom du dossier tel qu'il est sur le disque, pas tel qu'il est tapé (Windows et macOS ignorent la casse) ;
+    un lien symbolique garde son propre nom (pas celui de sa cible)."""
+    p = pathlib.Path(os.path.abspath(folder))
+    try:
+        same = [c.name for c in p.parent.iterdir() if c.name.lower() == p.name.lower() and os.path.samefile(c, p)]
+    except OSError:
+        same = []
+    return p.name if p.name in same or not same else same[0]
+
+
+def _inside(path: pathlib.Path, folder: pathlib.Path) -> bool:
+    """`path` est rangé dans `folder` (ou un de ses sous-dossiers) — liens et casse compris (le chemin tel qu'il est
+    donné et tel que les liens le résolvent)."""
+    given = pathlib.Path(os.path.abspath(path))
+    for d in (*given.parents, *pathlib.Path(os.path.realpath(given)).parents):
+        try:
+            if d.exists() and os.path.samefile(d, folder):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _lib_files(name: str, memo: dict | None = None) -> list:
+    """(fichier, nom dans l'archive) de la bibliothèque pure `name` (un module de premier niveau importable sur ce
+    poste : openpyxl…) et de ses « .dist-info », rangés dans `_lib`. `memo` garde, le temps d'une archive, la table
+    des distributions du poste (longue à lire). Lève `ValueError` : nom invalide, introuvable, bibliothèque standard,
+    nom du cœur, bibliothèque compilée."""
+    import importlib.metadata as md
+    import importlib.util
+    if not name.isidentifier():
+        raise ValueError(f'{name} : nom de module attendu (openpyxl…)')
+    if name.lower() in ('vectordrive', LIB):
+        raise ValueError(f'{name} : nom réservé au cœur')
+    if name in sys.stdlib_module_names or name in sys.builtin_module_names:
+        raise ValueError(f'{name} : bibliothèque standard de Python, déjà dans VectorDrive')
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        spec = None
+    if spec is None:
+        raise ValueError(f'{name} : bibliothèque introuvable sur ce poste')
+
+    def refuse(f: pathlib.Path):
+        raise ValueError(f'{name} : bibliothèque compilée ({f.name}) — propre à un système, elle ne marcherait pas '
+                         f'partout')
+
+    if spec.submodule_search_locations:                      # un paquet (ou un paquet d'espace de noms)
+        tops = [pathlib.Path(loc) for loc in spec.submodule_search_locations]
+        for top in tops:
+            if not top.is_dir():
+                raise ValueError(f'{name} : bibliothèque hors d’un dossier ({top})')
+            hit = next((f for f in top.rglob('*') if f.suffix.lower() in COMPILED), None)   # dès le premier
+            if hit is not None:
+                refuse(hit)
+        out = [item for top in tops for item in _tree(top, f'{LIB}/{name}')]
+        parent = tops[0].parent
+    elif spec.origin and pathlib.Path(spec.origin).is_file():
+        f = pathlib.Path(spec.origin)
+        if f.suffix.lower() in COMPILED:
+            refuse(f)
+        out, parent = [(f, f'{LIB}/{f.name}')], f.parent
+    else:
+        raise ValueError(f'{name} : bibliothèque intégrée à Python, déjà dans VectorDrive')
+    # ses « .dist-info » : celui à son nom à côté d'elle (openpyxl-3.1.5.dist-info), sinon ceux que lui attribue
+    # importlib.metadata (PyYAML pour yaml… : plus long, toutes les bibliothèques du poste sont lues)
+    dists = [md.PathDistribution(d) for d in sorted(parent.glob('*.dist-info'))
+             if d.is_dir() and d.name.split('-')[0].lower() == name.lower()]
+    if not dists:
+        memo = {} if memo is None else memo
+        if 'distributions' not in memo:
+            memo['distributions'] = md.packages_distributions()
+        for dist_name in dict.fromkeys(memo['distributions'].get(name, [])):
+            try:
+                dists.append(md.distribution(dist_name))
+            except md.PackageNotFoundError:
+                continue
+    for dist in dists:
+        for f in dist.files or []:
+            rel = pathlib.PurePosixPath(str(f).replace(chr(92), '/'))     # RECORD aux barres inverses (certains pip)
+            if len(rel.parts) > 1 and rel.parts[0].endswith('.dist-info'):
+                p = pathlib.Path(dist.locate_file(rel.as_posix()))
+                if p.is_file():
+                    out.append((p, f'{LIB}/{rel.as_posix()}'))
+    return out
+
+
+def build_archive(package, out, libs=()) -> pathlib.Path:
+    """Écrit `out`, l'archive .zip du plugin `package` à ajouter par « Ajouter un plugin… » (`install`), sous Windows
+    comme sous macOS, et rend son chemin : le paquet (le dossier, dont le __init__.py nomme `register`) à la racine,
+    sans `__pycache__`, « .pyc » ni fichiers cachés ; dans `_lib`, chaque bibliothèque de `libs` (modules de premier
+    niveau importables sur ce poste, pures : openpyxl…) avec ses « .dist-info ». Le paquet prend le nom de son
+    dossier sur le disque ; chaque nom de l'archive y est une fois (le premier) et doit pouvoir s'écrire partout
+    (`_unportable`, casse comprise). L'archive est écrite à côté puis relue (`archive_plugins`) avant de prendre la
+    place de `out`. Lève `ValueError` (rien d'écrit) : pas un plugin, nom réservé, bibliothèque introuvable, standard
+    ou compilée (`COMPILED`), nom de fichier impossible ailleurs, sortie dans le paquet ; `OSError`."""
+    import re
+    import zipfile
+    package, out = pathlib.Path(package), pathlib.Path(out)
+    init = package / '__init__.py'
+    if not init.is_file():
+        raise ValueError(f'{package} : pas un paquet Python (pas de __init__.py)')
+    name = _true_name(package)
+    if not name.isidentifier() or name.lower() in ('vectordrive', LIB):     # « _Lib » : le même dossier ailleurs
+        raise ValueError(f'{name} : nom de paquet invalide ou réservé au cœur')
+    if re.search(r'\bregister\b', init.read_text(encoding='utf-8', errors='replace')) is None:
+        raise ValueError(f'{name} : pas un plugin (son __init__.py ne définit pas register)')
+    if _inside(out, package):
+        raise ValueError(f'{out} : l’archive ne peut pas être rangée dans le paquet')
+    files, memo = _tree(package, name), {}
+    for lib in dict.fromkeys(libs):
+        if lib == name:
+            raise ValueError(f'{lib} : c’est le plugin lui-même')
+        files += _lib_files(lib, memo)
+    first = {}
+    for f, arc in files:                                     # un nom une fois : le premier (deux bibliothèques d'une
+        first.setdefault(arc, (f, arc))                      # même distribution ont les mêmes « .dist-info »)
+    files = list(first.values())
+    for f, arc in files:
+        why = _unportable(arc)
+        if why:
+            raise ValueError(f'{arc} : {why} — l’archive ne s’ajouterait pas partout')
+    clash = _case_clash(arc for _, arc in files)
+    if clash:
+        raise ValueError(f'{clash[1]} et {clash[0]} ne diffèrent que par la casse — un seul sous Windows et macOS')
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + '.tmp')
+    try:
+        # strict_timestamps=False : un fichier daté d'avant 1980 (copié d'une archive…) prend le 1/1/1980
+        with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
+            for f, arc in files:
+                z.write(f, arc)
+        got = archive_plugins(tmp)
+        if got != [name]:
+            raise ValueError(f'{out.name} : l’archive relue apporte {got or "aucun plugin"} au lieu de {name}')
+        tmp.replace(out)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return out
 
 
 def reset() -> None:

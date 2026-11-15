@@ -78,6 +78,7 @@ LABELS = {
     'vcarve_max_steps': 'Nombre de passes limité (depuis le bord, 0 : toutes)',
     'vcarve_step': 'Passe en Z de la gravure (mm, 0 : en une fois)',
     'vcarve_walls': 'Passes sur les flancs avant le fond (sans : comme TypeEdit)',
+    'vcarve_finish': 'Passe de finition : la surépaisseur XY usinée à l’avance de finition',
     'vcarve_offset': 'Décalage XY du contour (mm, + vers l\'intérieur)',
     'contour_ref': 'Outil conique : contour respecté', 'trace_mode': 'Mode de tracé',
     'knife_mode': 'Type de découpe', 'knife_angle': 'Angle latéral minimum (°)',
@@ -383,7 +384,7 @@ OP_SECTIONS = [
     ('Outil', ('tool_id', 'ref_tool_id', 'ramp')),   # ramp : bouton « Plongée angulaire » et son angle, sous l'outil
     ('Opération', ('name', 'kind', 'instruction', 'params', 'link_previous', 'rest_previous', 'enabled')),
     ('Où usiner', ('sources', 'items', 'side', 'climb')),     # sources, items : repliés en fin de formulaire
-    ('Profondeurs', ('z_start', 'depth', 'step_down', 'pass_depths', 'pass_order', 'link_passes', 'stock', 'finish',
+    ('Profondeurs', ('z_start', 'depth', 'step_down', 'pass_depths', 'pass_order', 'link_passes', 'stock', 'vcarve_finish', 'finish',
                      'finish_skip_frame', 'finish_shut_levels',
                      'contour_ref', 'trace_mode', 'knife_mode', 'knife_angle', 'knife_angle_max',
                      'chamfer_width', 'prism_hollow', 'prism_lateral',
@@ -459,7 +460,7 @@ KIND_FIELDS = {
     'gamme': {'ref_tool_id'},
     'decoupe3d': {'side', 'climb', 'stock', 'corner_pull', 'corner_pull_angle', 'corner_pull_z', 'foot_pull', 'foot_pull_min',
                   'foot_pull_max', 'link_previous'},
-    'vcarve': {'stock', 'resolution', 'vcarve_edges_only', 'finish_3d_only', 'finish_skip_frame', 'vcarve_mode', 'vcarve_offset', 'vcarve_max_steps',
+    'vcarve': {'stock', 'vcarve_finish', 'resolution', 'vcarve_edges_only', 'finish_3d_only', 'finish_skip_frame', 'vcarve_mode', 'vcarve_offset', 'vcarve_max_steps',
                'vcarve_step', 'vcarve_walls', 'link_previous', 'stepover_mm', 'pocket_outside_in', 'corner_pull_angle', 'ramp', 'ramp_angle'},
     'prismatique': {'climb', 'extension', 'prism_hollow', 'prism_lateral'},
     'relief': {'resolution', 'invert', 'raster_dir', 'stock', 'scan_mode', 'raster_angle', 'raster_turn',
