@@ -866,26 +866,33 @@ class FieldsDialog(QDialog):
         from PySide6.QtGui import QKeySequence, QShortcut
         from .tool_filters import toggle_full_screen
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
-        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.full_button = bb.addButton(tr('Plein écran'), QDialogButtonBox.ButtonRole.ResetRole)
+        # OK et Annuler seuls, grands, colorés, au centre tout en bas (demande du 15/11) ; les autres boutons sur la
+        # ligne du dessus (`actions_box`)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        acts = self.actions_box = QDialogButtonBox()
+        self.full_button = acts.addButton(tr('Plein écran'), QDialogButtonBox.ButtonRole.ResetRole)
         self.full_button.setToolTip(tr('Plein écran (F11) ; de nouveau pour revenir'))
         self.full_button.clicked.connect(lambda: toggle_full_screen(self))
         self.fit_button = None
         if is_op and doc is not None and 'tool_id' in self.widgets:
-            self.fit_button = bb.addButton(tr('Vérifier l\'outil'), QDialogButtonBox.ButtonRole.ActionRole)
+            self.fit_button = acts.addButton(tr('Vérifier l\'outil'), QDialogButtonBox.ButtonRole.ActionRole)
             self.fit_button.setToolTip(tr('L\'outil choisi atteint-il tous les détails des formes fermées à usiner ? '
                                           'Surface hors d\'atteinte et plus gros diamètre qui passe partout'))
             self.fit_button.clicked.connect(lambda: self.check_tool())
-            self.advise_button = bb.addButton(tr('Outil conseillé'), QDialogButtonBox.ButtonRole.ActionRole)
+            self.advise_button = acts.addButton(tr('Outil conseillé'), QDialogButtonBox.ButtonRole.ActionRole)
             self.advise_button.setToolTip(tr('Choisir le plus gros outil adapté à la stratégie qui atteint tous les '
                                              'détails (outils du document et Mes outils de la machine)'))
             self.advise_button.clicked.connect(lambda: self.advise_tool())
-            self.rest_button = bb.addButton(tr('Aperçu du reste'), QDialogButtonBox.ButtonRole.ActionRole)
+            self.rest_button = acts.addButton(tr('Aperçu du reste'), QDialogButtonBox.ButtonRole.ActionRole)
             self.rest_button.setToolTip(tr('Là où l\'outil choisi ne passe pas, en rouge, sur les formes fermées à usiner'))
             self.rest_button.clicked.connect(lambda: self.rest_preview())
         QShortcut(QKeySequence('F11'), self, activated=lambda: toggle_full_screen(self))
         bb.accepted.connect(self.accept_checked)
         bb.rejected.connect(self.reject)
+        self.ok_box = bb
+        outer.addWidget(acts)
+        from .okcancel import prominent
+        prominent(bb)
         outer.addWidget(bb)
         for n, w in self.widgets.items():                # schéma à jour à chaque changement
             for sig in ('currentIndexChanged', 'valueChanged', 'toggled', 'textChanged'):

@@ -5038,6 +5038,16 @@ class MainWindow(QMainWindow):
                         lambda _=False, k=key, to=not simple: self.move_button_mode(k, to))
             m.addSeparator()
         if key is not None:
+            if self._is_favorite_button(button):         # un bouton des favoris : libellés, agencement (15/11)
+                from . import fav_bar
+                a = m.addAction(tr('Afficher les libellés'))
+                a.setCheckable(True)
+                a.setChecked(fav_bar.labels_on(self.settings))
+                a.toggled.connect(self.favorite_labels)
+                a = m.addAction(tr('Agencer les favoris à la souris'))
+                a.setCheckable(True)
+                a.setChecked(bool(getattr(self, '_fav_arranging', False)))
+                a.toggled.connect(self.arrange_favorites)
             fav = key in self.favorite_keys()
             m.addAction(tr('Retirer des favoris (barre du haut)') if fav else tr('Ajouter aux favoris (barre du haut)'),
                         lambda _=False, k=key, on=not fav: self.add_favorite(k) if on else self.remove_favorite(k))
@@ -6183,6 +6193,58 @@ class MainWindow(QMainWindow):
             self.A[key].text().replace('&', '')), 6000)
         return True
 
+    def move_favorite(self, key: str, before: str | None = None) -> bool:
+        """Le favori `key` rangé juste avant le favori `before` (None : au bout) ; l'ordre est retenu. False s'il ne
+        bouge pas."""
+        keys = self._stored_favorites()
+        if key not in keys or key == before:
+            return False
+        rest = [k for k in keys if k != key]
+        at = rest.index(before) if before in rest else len(rest)
+        new = rest[:at] + [key] + rest[at:]
+        if new == keys:
+            return False
+        self._save_favorites(new)
+        return True
+
+    def favorite_labels(self, on: bool) -> None:
+        """Les libellés à côté des icônes des favoris (toute la barre), ou les icônes seules ; retenu."""
+        from . import fav_bar
+        fav_bar.set_labels(self, bool(on))
+
+    def arrange_favorites(self, on: bool) -> None:
+        """Le mode d'agencement des favoris : on les range en les glissant à la souris ; un appui ne lance plus leur
+        commande tant qu'il dure."""
+        from . import fav_bar
+        self._fav_arranging = bool(on)
+        fav_bar.decorate(self)
+        if getattr(self, '_fav_arranging', False):
+            msg = tr('Agencement des favoris : glissez les boutons pour les ranger ; « Terminer l’agencement » au bout de la barre pour finir')
+            self.statusBar().showMessage(msg, 8000)
+        else:
+            self.statusBar().clearMessage()
+
+    def _release_favorites(self) -> None:
+        """À la fermeture : la barre des favoris (ou celle d'accès rapide de TypeEdit 13) rend les commandes de la
+        fenêtre. Détruite en même temps qu'elles, elle faisait planter Python une fois sur trois environ (fin des
+        essais, fin de l'application). Les favoris retenus ne changent pas."""
+        from shiboken6 import isValid
+        old = getattr(self, '_fav_arranger', None)
+        if old is not None:
+            old.close()
+            self._fav_arranger = None
+        self._fav_arranging = False
+        bar = getattr(self, 'fav_bar', None)
+        if bar is not None and isValid(bar):
+            bar.clear()
+        host = getattr(self, '_fav_host', None)
+        if host is not None and isValid(host):
+            for a in getattr(self, '_fav_added', ()):
+                if isValid(a):
+                    host.removeAction(a)
+        self._fav_added = []
+        self._fav_host = None
+
     def _is_favorite_button(self, button) -> bool:
         """Un bouton des favoris : de leur barre, ou ajouté par eux à la barre d'accès rapide de TypeEdit 13."""
         bar = button.parentWidget()
@@ -6197,7 +6259,19 @@ class MainWindow(QMainWindow):
     def refresh_favorites(self):
         """Les favoris : à la suite de la barre d'accès rapide de TypeEdit 13 si elle est là, sinon dans leur barre,
         tout en haut (au-dessus du ruban, la première rangée en plein écran) ; sans favoris, pas de barre. Rend la
-        barre qui les porte (ou None)."""
+        barre qui les porte (ou None). Libellés et agencement en cours reposés ensuite (`fav_bar.decorate`)."""
+        from . import fav_bar
+        host = self._fill_favorites()
+        fav_bar.decorate(self)
+        if not getattr(self, '_fav_quit_hooked', False):  # sortie sans fermeture (mise à jour, mesure) : rendues aussi
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                app.aboutToQuit.connect(self._release_favorites)
+                self._fav_quit_hooked = True
+        return host
+
+    def _fill_favorites(self):
         from PySide6.QtCore import QSize
         from PySide6.QtWidgets import QToolBar
         from shiboken6 import isValid
@@ -9509,6 +9583,7 @@ class MainWindow(QMainWindow):
                 self._session_lock = None
                 self.session_dir = None
             self.remember_window()                       # sa place et sa taille : pour le prochain lancement
+            self._release_favorites()                    # avant la destruction des commandes (plantage, 15/11)
             ev.accept()
         else:
             ev.ignore()

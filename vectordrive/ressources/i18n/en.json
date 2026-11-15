@@ -7383,5 +7383,10 @@
  "Drill": "Drill",
  "Toriques": "Bull nose",
  "Couteaux": "Knives",
- "Profils": "Profiles"
+ "Profils": "Profiles",
+ "Afficher les libellés": "Show labels",
+ "Agencer les favoris à la souris": "Arrange favourites with the mouse",
+ "Agencement des favoris : glissez les boutons pour les ranger ; « Terminer l’agencement » au bout de la barre pour finir": "Arranging favourites: drag the buttons to reorder them; “Finish arranging” at the end of the bar to finish",
+ "Terminer l’agencement": "Finish arranging",
+ "Agencement des favoris : glissez les boutons pour les ranger ; ce bouton y met fin": "Arranging favourites: drag the buttons to reorder them; this button ends it"
 }

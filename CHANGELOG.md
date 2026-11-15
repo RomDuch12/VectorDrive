@@ -6868,3 +6868,15 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Un clic sur une étoile, ou un favori rangé, ne recharge plus la fiche de l'outil choisi : ce qui est tapé et pas encore enregistré reste.
 - Un outil du document dont une opération se sert ne se supprime pas, comme dans le panneau FAO.
 - Correction : un outil du document modifié dans le gestionnaire (nom, cotes, fiche) est bien enregistré dans le document ; avant, la modification était perdue.
+### v0.901.0 — Formulaire d'une opération : OK et Annuler bien visibles
+
+- Dans la fenêtre d'une opération (et dans la fiche d'un outil, qui est la même fenêtre), **OK** et **Annuler** sont seuls sur la dernière ligne, **au centre**, **plus grands** et **colorés** : OK en vert, Annuler en rouge.
+- Les autres boutons (Plein écran, Vérifier l'outil, Outil conseillé, Aperçu du reste) passent sur la ligne juste au-dessus.
+- Rien ne change dans ce que font les boutons : OK refuse toujours une opération sans outil, Annuler et Échap ferment sans rien garder.
+### v0.902.0 — Barre des favoris : libellés et rangement à la souris
+
+- Clic droit sur un bouton des favoris (barre du haut) : **« Afficher les libellés »** met le nom de chaque commande à côté de son icône, pour toute la barre. Le réglage est retenu d'un lancement à l'autre ; décoché, les icônes reviennent seules. Le ruban n'est pas touché.
+- Le même menu garde **« Retirer des favoris (barre du haut) »**.
+- **« Agencer les favoris à la souris »** : les boutons des favoris s'entourent d'un pointillé ; on les range en les glissant sur la barre. Un bouton déposé se place devant celui sur lequel il tombe, ou au bout. Pendant l'agencement, un clic ne lance pas la commande. **« Terminer l'agencement »**, au bout de la barre, ou le même clic droit, y met fin. L'ordre est retenu.
+- Avec la disposition TypeEdit 13, les favoris suivent sa barre d'accès rapide : seuls ceux qu'ils y ont ajoutés se rangent ; les boutons de TypeEdit restent en place.
+- Correction : avec des favoris, la fermeture de VectorDrive pouvait se terminer par un plantage (environ une fois sur trois, sans perte : tout était déjà enregistré). Depuis 0.886.0.
