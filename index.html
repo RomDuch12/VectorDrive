@@ -134,9 +134,10 @@
       <a class="btn" id="dl-mac-x86_64" href="https://github.com/RomDuch12/VectorDrive/releases" hidden>Intel
         <small id="dl-mac-x86_64-info">Mac Intel — zip</small></a>
       <ol id="mac-steps" hidden>
+        <li>macOS 14 (Sonoma) ou plus récent.</li>
         <li>Décompresser le zip et glisser <code>VectorDrive.app</code> dans Applications.</li>
-        <li>Au premier lancement (application non signée) : clic droit sur l'application, « Ouvrir », puis
-          « Ouvrir » encore.</li>
+        <li>Au premier lancement, macOS refuse l'application (elle n'est pas signée) : ouvrir Réglages Système ›
+          Confidentialité et sécurité, puis cliquer « Ouvrir quand même ». Une seule fois.</li>
       </ol>
     </div>
     <div class="card">
@@ -198,7 +199,7 @@
           document.getElementById('dl-mac-' + arch + '-info').textContent =
             (arch === 'arm64' ? 'M1, M2, M3… — zip, ' : 'Mac Intel — zip, ') + mb(a.size);
           document.getElementById('mac-text').textContent =
-            'Version d’essai pour Mac (Apple Silicon et Intel).';
+            'Version d’essai pour Mac (Apple Silicon et Intel), macOS 14 ou plus récent.';
         } else if (/win|portable/.test(n) && /\.zip$/.test(n)) {
           ['dl-win', 'dl-win-top'].forEach(function (id) { document.getElementById(id).href = a.browser_download_url; });
           document.getElementById('dl-win-info').textContent = 'zip, ' + mb(a.size);
