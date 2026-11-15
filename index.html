@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VectorDrive — dessin et FAO pour la gravure, logiciel libre</title>
+<meta name="description" content="VectorDrive : logiciel libre de dessin et de FAO pour la gravure (fraisage et laser). Windows, portable, sans installation.">
+<link rel="icon" href="vectordrive.png">
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #ffffff; --text: #1d2330; --muted: #5b6475; --line: #e3e6ec;
+    --accent: #1f6feb; --accent-text: #ffffff; --soft: #eef3fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1a1e26; --text: #e6e9ef; --muted: #9aa3b2; --line: #2a303b;
+      --accent: #4c8dff; --accent-text: #0b0e13; --soft: #1c2533;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+  header { padding: 56px 0 36px; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { width: 64px; height: 64px; }
+  h1 { font-size: 2.3rem; margin: 0; letter-spacing: -0.01em; }
+  .tagline { font-size: 1.2rem; color: var(--muted); margin: 14px 0 26px; max-width: 46em; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-block; padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: 600;
+    border: 1px solid var(--line); color: var(--text); background: var(--card);
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn small { display: block; font-weight: 400; opacity: .85; font-size: .8rem; }
+  .version { color: var(--muted); font-size: .9rem; }
+  section { padding: 28px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.45rem; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .card h3 { margin: 0 0 8px; font-size: 1.05rem; }
+  .card p, .card ul { margin: 0; color: var(--muted); }
+  .card ul { padding-left: 1.1em; }
+  .dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .dl .card { display: flex; flex-direction: column; gap: 10px; }
+  .dl .card .btn { align-self: flex-start; }
+  .note { background: var(--soft); border-radius: 10px; padding: 12px 16px; color: var(--text); font-size: .95rem; }
+  ol { padding-left: 1.3em; margin: 6px 0 0; color: var(--muted); }
+  code { background: var(--soft); padding: 1px 6px; border-radius: 5px; font-size: .92em; }
+  footer { padding: 30px 0 50px; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--line); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <img src="vectordrive.png" alt="">
+    <h1>VectorDrive</h1>
+  </div>
+  <p class="tagline">Dessin et FAO pour la gravure : on dessine, on prépare les parcours d'outil, on les voit et on les
+    simule, de la plaque gravée au relief 3D. Logiciel libre, gratuit, sans installation.</p>
+  <div class="actions">
+    <a class="btn primary" id="dl-win-top" href="https://github.com/RomDuch12/VectorDrive/releases/latest">
+      Télécharger pour Windows<small id="dl-win-top-info">portable, sans installation</small></a>
+    <a class="btn" href="https://github.com/RomDuch12/VectorDrive">Code source<small>GitHub</small></a>
+    <span class="version" id="version"></span>
+  </div>
+</header>
+
+<section>
+  <h2>Ce que fait VectorDrive</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Dessin vectoriel</h3>
+      <p>Formes, textes et polices (TrueType, OpenType, polices monotrait de gravure), calques, accrochage aux nœuds et
+        intersections, cotation, alignements, décalages et opérations booléennes.</p>
+    </div>
+    <div class="card">
+      <h3>Fichiers</h3>
+      <p>DXF, SVG, PDF (lecture), IGES, STEP pour les pièces 3D, et les fichiers VND et SMB des logiciels de gravure
+        courants, ouverts et enregistrés.</p>
+    </div>
+    <div class="card">
+      <h3>Parcours d'outil 2D</h3>
+      <p>Contour, poche, gravure, V-carve, perçage, surfaçage, chanfrein, reprise de matière ; outils coniques, droits
+        ou boule ; temps d'usinage estimé.</p>
+    </div>
+    <div class="card">
+      <h3>3D et simulation</h3>
+      <p>Ébauche, finition et reliefs sur un modèle 3D ; brut matière ; simulation 2D et 3D de l'enlèvement de
+        matière avant d'usiner.</p>
+    </div>
+    <div class="card">
+      <h3>Laser</h3>
+      <p>Préparation des marquages laser : remplissages, découpe en zones pour les grands dessins, repères de
+        recalage.</p>
+    </div>
+    <div class="card">
+      <h3>Plugins</h3>
+      <p>Ce qui est propre à un atelier (post-processeurs et programmes machine, bibliothèques d'outils, gabarits,
+        devis) s'ajoute par plugin : VectorDrive calcule, montre et simule les parcours ; le programme de votre
+        machine est écrit par son plugin.</p>
+    </div>
+  </div>
+</section>
+
+<section id="telecharger">
+  <h2>Télécharger</h2>
+  <div class="dl">
+    <div class="card">
+      <h3>Windows 10 et 11 (64 bits)</h3>
+      <p class="muted">Version portable : un dossier à décompresser, rien à installer, les réglages restent à côté du
+        programme (clé USB comprise).</p>
+      <a class="btn primary" id="dl-win" href="https://github.com/RomDuch12/VectorDrive/releases/latest">Télécharger
+        <small id="dl-win-info">zip, environ 90 Mo</small></a>
+      <ol>
+        <li>Décompresser le zip où vous voulez.</li>
+        <li>Lancer <code>VectorDrive.exe</code> dans le dossier <code>VectorDrive</code>.</li>
+        <li>Au premier lancement, Windows peut afficher « Windows a protégé votre ordinateur » (programme non signé) :
+          « Informations complémentaires », puis « Exécuter quand même ».</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>macOS</h3>
+      <p class="muted" id="mac-text">En préparation : une version pour Mac (Apple Silicon et Intel) est à l'essai.
+        Elle apparaîtra ici dès qu'elle sera prête.</p>
+      <a class="btn" id="dl-mac-arm64" href="https://github.com/RomDuch12/VectorDrive/releases" hidden>Apple Silicon
+        <small id="dl-mac-arm64-info">M1, M2, M3… — zip</small></a>
+      <a class="btn" id="dl-mac-x86_64" href="https://github.com/RomDuch12/VectorDrive/releases" hidden>Intel
+        <small id="dl-mac-x86_64-info">Mac Intel — zip</small></a>
+      <ol id="mac-steps" hidden>
+        <li>Décompresser le zip et glisser <code>VectorDrive.app</code> dans Applications.</li>
+        <li>Au premier lancement (application non signée) : clic droit sur l'application, « Ouvrir », puis
+          « Ouvrir » encore.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>Depuis le code source</h3>
+      <p class="muted">Linux, Mac ou Windows, avec Python 3 (3.13 conseillé) :</p>
+      <ol>
+        <li><code>git clone https://github.com/RomDuch12/VectorDrive</code></li>
+        <li><code>pip install -r requirements.txt</code></li>
+        <li><code>python VectorDrive.py</code></li>
+      </ol>
+    </div>
+  </div>
+  <p class="note">Toutes les versions et leurs notes :
+    <a href="https://github.com/RomDuch12/VectorDrive/releases">page des versions</a>.</p>
+</section>
+
+<section>
+  <h2>Licence</h2>
+  <p>VectorDrive est un logiciel libre, sous double licence <a href="https://github.com/RomDuch12/VectorDrive/blob/main/LICENSE-MIT">MIT</a>
+    ou <a href="https://github.com/RomDuch12/VectorDrive/blob/main/LICENSE-APACHE">Apache-2.0</a>, au choix. Les
+    composants tiers et leurs licences sont listés dans
+    <a href="https://github.com/RomDuch12/VectorDrive/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>.
+    Il est fourni tel quel, sans garantie : vérifiez toujours un parcours en simulation avant d'usiner.</p>
+</section>
+
+<section lang="en">
+  <h2>In English</h2>
+  <p>VectorDrive is free, open-source drawing and CAM software for engraving (milling and laser): draw, prepare
+    toolpaths, preview and simulate them, from engraved plates to 3D reliefs. Dual-licensed MIT or Apache-2.0. The
+    Windows build is portable (unzip and run <code>VectorDrive.exe</code>). Machine programs are written by
+    post-processor plugins. The interface is in French and English.</p>
+</section>
+
+<footer>
+  <p>Développé par RomDuch with Claude — <a href="mailto:romduch@gmail.com">romduch@gmail.com</a></p>
+  <p>Les noms de logiciels et de formats cités appartiennent à leurs propriétaires ; VectorDrive n'est affilié à
+    aucun éditeur.</p>
+</footer>
+
+</div>
+<script>
+// La dernière version publiée sur GitHub : liens directs, taille et numéro (sinon, la page des versions).
+(function () {
+  var api = 'https://api.github.com/repos/RomDuch12/VectorDrive/releases/latest';
+  function mb(n) { return Math.round(n / 1048576) + ' Mo'; }
+  fetch(api, { headers: { 'Accept': 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (rel) {
+      var tag = (rel.tag_name || '').replace(/^v/, '');
+      if (tag) document.getElementById('version').textContent = 'Version ' + tag;
+      (rel.assets || []).forEach(function (a) {
+        var n = a.name.toLowerCase();
+        if (/mac|darwin/.test(n)) {
+          var arch = /x86_64|intel/.test(n) ? 'x86_64' : 'arm64';
+          var m = document.getElementById('dl-mac-' + arch);
+          m.href = a.browser_download_url;
+          m.hidden = false;
+          document.getElementById('mac-steps').hidden = false;
+          document.getElementById('dl-mac-' + arch + '-info').textContent =
+            (arch === 'arm64' ? 'M1, M2, M3… — zip, ' : 'Mac Intel — zip, ') + mb(a.size);
+          document.getElementById('mac-text').textContent =
+            'Version d’essai pour Mac (Apple Silicon et Intel).';
+        } else if (/win|portable/.test(n) && /\.zip$/.test(n)) {
+          ['dl-win', 'dl-win-top'].forEach(function (id) { document.getElementById(id).href = a.browser_download_url; });
+          document.getElementById('dl-win-info').textContent = 'zip, ' + mb(a.size);
+          document.getElementById('dl-win-top-info').textContent = 'portable, zip, ' + mb(a.size);
+        }
+      });
+    })
+    .catch(function () { /* hors ligne ou pas encore de version : la page des versions */ });
+})();
+</script>
+</body>
+</html>
