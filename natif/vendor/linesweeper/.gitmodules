@@ -1,0 +1,3 @@
+[submodule "boolean-test"]
+	path = boolean-test
+	url = https://github.com/paperjs/boolean-test

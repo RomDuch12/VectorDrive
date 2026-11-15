@@ -1,0 +1,16 @@
+# VectorDrive : copie modifiée de vectorcraft-pathops 0.11.0 (storytold/vectorcraft,
+# MIT OR Apache-2.0), voir NOTICE. Champs du workspace d'origine recopiés ; tests
+# et lints du workspace non repris.
+[package]
+name = "vectorcraft-pathops"
+version = "0.11.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+description = "VectorCraft path operations: booleans (Pathfinder), shape builder regions, offset, outline stroke, simplify"
+
+[dependencies]
+vectorcraft-geom = { path = "../../../../artcraft/vectorcraft/crates/geom" }
+kurbo = { version = "0.13", features = ["serde"] }
+thiserror = "2"
+linesweeper = "0.5"

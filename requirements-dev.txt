@@ -1,0 +1,6 @@
+-r requirements.txt
+# Outils de développement et de test — non embarqués dans l'exécutable
+pyinstaller>=6.10   # GPL-2.0 avec exception (empaquetage)
+maturin>=1.7        # MIT / Apache-2.0 (extension Rust vdpathops)
+zxing-cpp>=2.3      # Apache-2.0 — relecture des codes-barres dessinés (tests)
+pyflakes>=3.2         # MIT — analyse statique (test des noms indéfinis)

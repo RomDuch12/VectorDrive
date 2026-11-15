@@ -1,0 +1,26 @@
+[package]
+name = "vdpathops"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Opérations de tracés pour VectorDrive (booléens, offset) — enveloppe pyo3 de vectorcraft-pathops (MIT OR Apache-2.0)"
+
+[lib]
+name = "vdpathops"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
+# copie modifiée (décalage : point profond hors des trous), voir ../vendor/vectorcraft-pathops/NOTICE
+vectorcraft-pathops = { path = "../vendor/vectorcraft-pathops" }
+vectorcraft-geom = { path = "../../../artcraft/vectorcraft/crates/geom" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+
+# linesweeper 0.5.0 avec bornes de sûreté (marche de contour qui ne se
+# refermait pas : boucle sans fin) — copie modifiée dans ../vendor (MIT OR Apache-2.0)
+[patch.crates-io]
+linesweeper = { path = "../vendor/linesweeper" }

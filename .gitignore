@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+.pytest_cache/
+# Corpus lourd ou propriétaire : jamais versionné
+tests/corpus/prive/
+# Sorties de tests
+tests/_sorties/
+natif/vdpathops/target/
+natif/dist/
+tests/corpus_local.json
+# Programmes machine, parcours et dessins de production : jamais dans le dépôt
+/*.simpl
+/*.nc
+/*.cljob
+/*.iso
+/*.tap
+/*.ngc
+/*.[0-9][0-9][0-9]
+/*.vnd
+/*.vdz
+/*.gvt

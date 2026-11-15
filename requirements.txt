@@ -1,0 +1,8 @@
+PySide6>=6.7        # LGPL-3.0 — interface
+ezdxf>=1.3          # MIT — DXF
+fontTools>=4.50     # MIT — polices TTF/OTF
+shapely>=2.0        # BSD — offset, booléens
+numpy>=1.26         # BSD
+pypdf>=5.0          # BSD — structure PDF (décompression des flux)
+manifold3d>=3.0     # Apache-2.0 — volumes 3D (booléens, extrusion, révolution)
+# Interdit : PyMuPDF (AGPL) — incompatible avec une diffusion extérieure
