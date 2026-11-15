@@ -7365,5 +7365,10 @@
  "Un plugin du même nom est déjà chargé depuis un autre dossier ({0}) : il reste prioritaire.": "A plugin with the same name is already loaded from another folder ({0}): it keeps priority.",
  "Redémarrez VectorDrive dès que possible : la version en cours lit des fichiers qui viennent d’être remplacés.": "Restart VectorDrive as soon as possible: the running version reads files that have just been replaced.",
  "L’archive {0} du dossier des plugins apporte aussi {1} avec un autre plugin : elle est gardée, retirez-la si besoin.": "The archive {0} in the plugins folder also provides {1} along with another plugin: it is kept, remove it if needed.",
- "Dossier des plugins impossible à créer : {0}": "Cannot create the plugins folder: {0}"
+ "Dossier des plugins impossible à créer : {0}": "Cannot create the plugins folder: {0}",
+ "Parcours type": "Standard toolpaths",
+ "Nom (vide : nom d’origine) :": "Name (empty: original name):",
+ "Mes modèles": "My templates",
+ "Renommer le dossier…": "Rename folder…",
+ "Nom d’origine": "Original name"
 }

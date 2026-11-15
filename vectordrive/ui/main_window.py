@@ -674,6 +674,7 @@ class MainWindow(QMainWindow):
             pass
         self._toggle_layer_tabs(tabs)
         self.canvas.cursorMoved.connect(self._on_cursor)
+        self.canvas.snapMoved.connect(self._on_snap)
         self.canvas.selectionChanged.connect(self._on_selection)
         self.canvas.documentChanged.connect(self._on_doc_changed)
         self.canvas.toolFinished.connect(lambda: self.set_tool('select'))
@@ -710,6 +711,9 @@ class MainWindow(QMainWindow):
         _QA.instance().installEventFilter(self)
         from . import wheelguard
         wheelguard.install(_QA.instance())               # la molette ne change pas une liste déroulante au survol
+        from . import fullclose
+        fullclose.install(_QA.instance())                # toute fenêtre en plein écran : un « ✕ » pour la fermer
+        self.vd_own_close = True                         # (sauf celle-ci : ses boutons sont dans le ruban)
         from .. import journal
         journal.install(self)                            # une erreur inattendue : au journal et dans la barre d'état
         self.A['notes_visible'].blockSignals(True)
@@ -2972,14 +2976,7 @@ class MainWindow(QMainWindow):
         g.add(A['about'])
         g.add(A['update'])
         g.add(A['news'])
-        g.add(A['command_search'])
-        g = t.group(tr('Développé par'))                 # demande du 15/11, 11 h 25
-        credit = QLabel('RomDuch with Claude<br><a href="mailto:romduch@gmail.com">romduch@gmail.com</a>')
-        credit.setObjectName('creditLabel')
-        credit.setTextFormat(Qt.TextFormat.RichText)
-        credit.setOpenExternalLinks(True)
-        credit.setToolTip(tr('Écrire à l’auteur'))
-        g.add_widget(credit)
+        g.add(A['command_search'])                       # l'auteur et son adresse : dans À propos seulement (15/11)
         # ordre : onglets de gauche, FAO 2D et FAO 3D les derniers (les onglets ajoutés ensuite, de plugins ou
         # contextuels, se placent avant FAO 2D) ; Options et Aide tout à droite
         pages = {r.tabText(i): r.widget(i) for i in range(r.count())}
@@ -3094,7 +3091,9 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         self.lbl_sel = QLabel('')
         self.lbl_pos = QLabel(tr('X: — Y: — mm'))
-        self.lbl_pos.setMinimumWidth(240)
+        from ..core.snap import LABELS as _SNAP_LABELS  # la nature du point accroché tient à côté, sans à-coups
+        self.lbl_pos.setMinimumWidth(self.lbl_pos.fontMetrics().horizontalAdvance(
+            'X: -9999.999  Y: -9999.999 mm  ⌖ ' + max((tr(v) for v in _SNAP_LABELS.values()), key=len)) + 12)
         self.lbl_view = QLabel(tr('Vue XY'))
         self.lbl_snap = QLabel('')
         self.lbl_layer = QLabel('')
@@ -3137,8 +3136,18 @@ class MainWindow(QMainWindow):
         self._sync_tabs()
 
     def _on_cursor(self, x, y) -> None:
+        self._on_snap(x, y, '')
+
+    def _on_snap(self, x, y, kind) -> None:
+        """Le point accroché (demande du 15/11) : ses coordonnées dans la barre d'état, par rapport à l'origine du
+        dessin, et sa nature (Nœud, Milieu…) ; sans point accroché, le pointeur."""
+        from ..core.snap import LABELS
+        self._pos_raw = (x, y, kind)                     # pour une origine déplacée
         ox, oy = self.canvas.origin
-        self.lbl_pos.setText(f'X: {x - ox:9.3f}  Y: {y - oy:9.3f} mm')
+        text = f'X: {x - ox:9.3f}  Y: {y - oy:9.3f} mm'
+        if kind:
+            text += '  ⌖ ' + tr(LABELS.get(kind, kind))
+        self.lbl_pos.setText(text)
 
     def selection_length(self, limit: int | None = None) -> float | None:
         """Périmètre de la sélection (mm). Avec `limit` : None si la
@@ -5932,8 +5941,11 @@ class MainWindow(QMainWindow):
 
     def show_at_start(self, session: bool = False) -> str:
         """Montre la fenêtre au lancement : en plein écran s'il l'était la dernière fois — ou si rien n'est retenu,
-        c'est l'état d'office —, sinon à sa place et sa taille de la dernière fois (celles de la session, sinon
-        celles retenues à la fermeture), sinon agrandie. Rend 'full', 'taskbar', 'window' ou 'maximized'."""
+        c'est l'état d'office, avec la barre des tâches visible —, sinon à sa place et sa taille de la dernière fois
+        (celles de la session, sinon celles retenues à la fermeture), sinon agrandie. Rend 'full', 'taskbar',
+        'window' ou 'maximized'."""
+        if not self.settings.contains('fenetre/plein_ecran') and not self.settings.contains(self.TASKBAR_KEY):
+            self.set_keep_taskbar(True)                  # tout premier démarrage : la barre des tâches reste visible
         if self.wants_full_screen():
             if session:
                 self.restore_panels()                    # les panneaux de la session (le plein écran prend la place)
@@ -11953,6 +11965,8 @@ class MainWindow(QMainWindow):
     def _origin_changed(self) -> None:
         for r in (self.ruler_h, self.ruler_v):
             r.update()
+        if getattr(self, '_pos_raw', None):              # la barre d'état : par rapport à la nouvelle origine
+            self._on_snap(*self._pos_raw)
         if hasattr(self, 'dims'):
             self._selection_info()
         ox, oy = self.canvas.origin

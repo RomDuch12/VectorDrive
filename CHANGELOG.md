@@ -6822,3 +6822,32 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Fabriquer l'archive d'un plugin** : nouvelle commande `python outils/plugin_zip.py DOSSIER_DU_PAQUET --lib openpyxl -o mon_plugin.zip` (et `plugins.build_archive`). Elle écrit l'archive que l'on ajoute ensuite par F10 › Plugins › « Ajouter un plugin… », sous Windows comme sous macOS : le paquet du plugin à la racine, sans caches (`__pycache__`, `.pyc`) ni fichiers cachés ; dans `_lib`, chaque bibliothèque nommée par `--lib`, avec ses `.dist-info`.
 - Ce qui ne marcherait pas partout est refusé, avec la raison : une bibliothèque compilée (`.pyd`, `.so`…, propre à un système), la bibliothèque standard (déjà dans VectorDrive), une bibliothèque introuvable, un paquet qui ne définit pas `register`, un nom de fichier que Windows ne peut pas écrire (`aux.py`, `:` ou `?` dans le nom) ou deux noms qui ne diffèrent que par la casse. L'archive est relue avant de prendre la place de l'ancienne ; en cas de refus, rien n'est écrit.
 - Le paquet garde le nom de son dossier sur le disque, même tapé avec une autre casse ou atteint par un lien.
+### v0.893.0 — Palette des parcours : trois dossiers renommables
+
+- **Palette « Créer un parcours »** : trois dossiers en tête.
+  - **« Parcours type »** réunit les parcours de base : Usinage 2D, 2D-3D, 3D, Laser, Machine, et ceux des plugins. Sous chaque parcours, les modèles fournis par les plugins.
+  - **« Mes modèles »** contient tous vos modèles, en dossiers ou hors dossier ; avant, vos modèles hors dossier étaient mêlés aux parcours de base. Y déposer un modèle le sort de son dossier.
+  - **« TypeEdit »** contient les modèles importés de TypeEdit (paramètres de parcours et fichiers .ttpl) et la palette de TypeEdit. Il n'apparaît qu'une fois l'import fait ; avant l'import, la palette reste en tête de « Parcours type ». Un dossier d'import renommé ou déplacé dans « TypeEdit » y reste, et un nouvel import du même fichier se refait dedans, sans doublon.
+- **Tous ces dossiers se renomment**, familles comprises : F2 ou clic droit › « Renommer le dossier… » ; un nom vide rend le nom d'origine (« Nom d'origine » au clic droit). Les dossiers ouverts ou fermés le restent.
+- La case **« Usinage par couleur »** et son choix « Usiner : la sélection / les couleurs » sont maintenant **tout en bas** de la palette.
+### v0.894.0 — Surfaçage : le sens des passes
+
+- **Surfaçage** : nouveau champ **« Sens des passes »**, juste sous « Angle des passes » : **Aller-retour** (comme avant, d'office), **Tout en avalant** ou **Tout en opposition**. En sens unique, chaque passe part du même côté : l'outil remonte en bout de passe, revient en rapide et replonge hors de la pièce.
+- « En avalant » suppose une broche qui tourne dans le sens horaire (M3) : la matière pas encore surfacée est à droite de l'outil.
+- En sens unique, le programme contient les mouvements eux-mêmes et non le cycle de surfaçage de la machine, qui va et vient toujours.
+### v0.895.0 — Premier démarrage : plein écran, barre des tâches visible
+
+- Au **tout premier démarrage**, VectorDrive s'ouvre en plein écran **en gardant la barre des tâches** visible et utilisable. Avant, le plein écran la cachait. L'option « Garder la barre des tâches » est alors cochée.
+- Ensuite, comme avant, chaque lancement reprend l'état de la dernière fois : plein écran avec ou sans la barre (F12), ou la fenêtre à sa place. Un poste qui a déjà lancé VectorDrive garde son réglage.
+### v0.896.0 — Barre d'état : les coordonnées du point accroché
+
+- Avec l'accrochage (F3), la barre d'état montre les **coordonnées du point accroché** et non plus celles du pointeur, à côté, avec sa **nature** : Nœud, Milieu, Centre, Intersection… Les coordonnées sont celles que prendra le clic, par rapport à l'origine du dessin.
+- Sans point accroché, elle montre le pointeur, comme avant.
+### v0.897.0 — Un bouton de fermeture dans toute fenêtre en plein écran
+
+- Toute fenêtre passée en plein écran a maintenant un **« ✕ »** en haut à droite : choix d'un outil, bibliothèque d'outils, explorateur de fichiers, bibliothèque de symboles, etc. En plein écran, ces fenêtres n'ont plus de barre de titre. Un clic sur ✕ ferme la fenêtre ; pour une boîte de dialogue, c'est comme Échap : rien n'est validé.
+- Le ✕ ne couvre jamais un bouton ni un champ. Il se pose à la première place libre en haut à droite (juste à gauche d'un ⛶, par exemple). S'il n'y a pas de place, la fenêtre se resserre un peu à droite pour lui en faire. Il disparaît quand la fenêtre quitte le plein écran.
+- La fenêtre principale garde ses propres boutons en plein écran (F12), dans le ruban. La fenêtre d'un panneau garde le ✕ de sa barre.
+### v0.898.0 — L'auteur dans À propos seulement
+
+- La mention « Développé par RomDuch with Claude » et l'adresse de l'auteur ne sont plus dans l'onglet **Aide** du ruban. Elles restent dans **Aide › À propos**.

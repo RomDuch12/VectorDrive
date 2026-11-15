@@ -126,8 +126,8 @@ class TestTemplateTree(unittest.TestCase):
         with mock.patch.object(TPL, 'all_templates', return_value={tpl['name']: ('utilisateur', tpl)}):
             w.cam_palette.refresh()
         tree = w.cam_palette.tree
-        top = tree.topLevelItem(0)
-        self.assertEqual(top.text(0), 'Modèles (dossiers)')
+        top = tree.topLevelItem(1)                                           # après « Parcours type » (round 1036)
+        self.assertEqual(top.text(0), 'Mes modèles')
         alu = top.child(0)
         self.assertEqual(alu.text(0), '📁 Alu')
         plaques = alu.child(0)
@@ -136,8 +136,15 @@ class TestTemplateTree(unittest.TestCase):
         self.assertEqual(leaf.text(0), '📄 Détour 2mm')
         from vectordrive.ui.cam_palette import ROLE_KIND, ROLE_TPL
         self.assertEqual((leaf.data(0, ROLE_KIND), leaf.data(0, ROLE_TPL)), ('decoupe', tpl['name']))
-        texts = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
-        self.assertNotIn('📄 Détour 2mm', texts)             # plus sous le type de parcours
+        texts = []                                                           # plus sous le type de parcours
+
+        def walk(it):
+            texts.append(it.text(0))
+            for i in range(it.childCount()):
+                walk(it.child(i))
+        walk(tree.topLevelItem(0))                                           # « Parcours type » (round 1036)
+        self.assertGreater(len(texts), 5)
+        self.assertFalse(any(t.startswith('📄 Détour 2mm') for t in texts))
         w.modified = False
         w.close()
 

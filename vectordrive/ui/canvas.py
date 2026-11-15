@@ -194,6 +194,7 @@ def touches_rect(item: Item, rect, tol: float = 0.01) -> bool:
 
 class Canvas(QWidget):
     cursorMoved = Signal(float, float)
+    snapMoved = Signal(float, float, str)   # point accroché (sinon le pointeur) et sa nature ('' : aucune)
     selectionChanged = Signal()
     documentChanged = Signal()
     toolFinished = Signal()
@@ -356,7 +357,9 @@ class Canvas(QWidget):
             items = [it for L in self.doc.layers if self.layer_shown(L) for it in L.items if it.visible]
             hit = self._intuitive.query(x, y, self.snap_px / self.scale, items, exclude=exclude)
         self._snap_hit = hit
-        return (hit.x, hit.y) if hit else (x, y)
+        out = (hit.x, hit.y) if hit else (x, y)
+        self.snapMoved.emit(out[0], out[1], hit.kind if hit else '')   # la barre d'état montre le point accroché
+        return out
 
     def cycle_snap(self) -> bool:
         """Alt (TypeEdit : multi-accrochage) : le point d'accrochage suivant sous le curseur. Rend True s'il y en a un autre."""
@@ -2314,9 +2317,13 @@ class Canvas(QWidget):
         super().leaveEvent(ev)
 
     def _drop_snap_mark(self) -> None:
+        self._snap_at = None                             # Alt (point suivant) : pas depuis une position passée
         if self._snap_hit is not None:
             self._snap_hit = None
             self.overlay_update()
+            from PySide6.QtGui import QCursor
+            x, y = self.to_doc(QPointF(self.mapFromGlobal(QCursor.pos())))
+            self.snapMoved.emit(x, y, '')                # la barre d'état : plus de point accroché
 
     #: au-delà de ce nombre d'objets, la flèche de sélection ne cherche pas d'accroche au survol (le tracé, oui)
     HOVER_SNAP_MAX = 5000
@@ -2456,7 +2463,7 @@ class Canvas(QWidget):
             elif self.snap.enabled:
                 had = self._snap_hit
                 if self.tool == 'select' and (self._handle_cursor(pos) is not None or not self._hover_snap_ok()):
-                    self._snap_hit = None                # poignée : un glisser met à l'échelle ; gros dessin : rien au survol
+                    self._drop_snap_mark()               # poignée : un glisser met à l'échelle ; gros dessin : rien au survol
                 else:
                     self.snap_doc(pos)                   # aussi avec la flèche : le point qu'un glisser prendrait
                 if self.tool != 'select' or had is not None or self._snap_hit is not None:

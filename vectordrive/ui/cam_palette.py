@@ -1,10 +1,12 @@
 """Colonne de gauche de la FAO, comme la fenêtre « Créer un parcours » de
-TypeEdit : le bouton **Outils** (Mes outils, le tools.json en dossiers),
-« usiner la sélection ou les couleurs », et les parcours disponibles, rangés
-par familles ; sous chacun, ses modèles (les vôtres, ceux des plugins, ceux
-importés de TypeEdit). Un clic sur un parcours ouvre son formulaire pour
-les contours sélectionnés, prérempli avec ses dernières valeurs ; un clic
-sur un modèle l'ouvre déjà rempli."""
+TypeEdit : le bouton **Outils** (Mes outils, le tools.json en dossiers), puis
+trois dossiers — « Parcours type » (les parcours de base, par familles ;
+sous chacun, les modèles des plugins), « Mes modèles » (vos modèles et leurs
+dossiers), « TypeEdit » (la palette et les modèles importés de TypeEdit) —,
+tous renommables, et tout en bas « usiner la sélection ou les couleurs ». Un
+clic sur un parcours ouvre son formulaire pour les contours sélectionnés,
+prérempli avec ses dernières valeurs ; un clic sur un modèle l'ouvre déjà
+rempli."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -26,13 +28,17 @@ ROLE_KIND = Qt.ItemDataRole.UserRole           # clé du parcours
 ROLE_TPL = Qt.ItemDataRole.UserRole + 1        # nom du modèle
 ROLE_ORIGIN = Qt.ItemDataRole.UserRole + 2     # origine du modèle (utilisateur, plugin)
 ROLE_FOLDER = Qt.ItemDataRole.UserRole + 3     # chemin du dossier (« TypeEdit 13 — Meca3/Atelier »)
-ROLE_ROOT = Qt.ItemDataRole.UserRole + 4       # groupe « Modèles (dossiers) » : y déposer, c'est sortir du dossier
+ROLE_ROOT = Qt.ItemDataRole.UserRole + 4       # dossier « Mes modèles » : y déposer, c'est sortir du dossier
+ROLE_GROUP = Qt.ItemDataRole.UserRole + 5      # dossier de la palette (« type », « fam:Usinage 2D », « user », « te »…)
+ROLE_DEFAULT = Qt.ItemDataRole.UserRole + 6    # son nom d'origine
+#: noms donnés aux dossiers de la palette (JSON {dossier: nom})
+NAMES = 'fao/palette/noms'
 
 
 class TemplateTree(QTreeWidget):
     """Arbre de la palette : vos modèles et leurs dossiers se rangent par
-    glisser-déposer (sur un dossier, ou sur « Modèles (dossiers) » pour les
-    sortir de tout dossier) ; `dropped(objets, dossier)` fait le rangement."""
+    glisser-déposer (sur un dossier, ou sur « Mes modèles » pour les sortir
+    de tout dossier) ; `dropped(objets, dossier)` fait le rangement."""
 
     def __init__(self, dropped):
         super().__init__()
@@ -108,6 +114,27 @@ def preset_of(tpl: dict, kinds: dict) -> str | None:
     return kinds.get(ops[0].get('kind'))
 
 
+def top_folder(folder) -> str:
+    """Le premier dossier du chemin (« TypeEdit 13 — Meca3 » pour « TypeEdit 13 — Meca3/Atelier »)."""
+    parts = [p.strip() for p in str(folder or '').replace(' / ', '/').split('/') if p.strip()]
+    return parts[0] if parts else ''
+
+
+def from_typeedit(tpl: dict) -> bool:
+    """Modèle importé de TypeEdit (paramètres de parcours, ou fichier .ttpl) et resté dans son dossier d'import
+    (« TypeEdit 13 — Meca3… », « TypeEdit — modèles .ttpl », même renommé : `templates.import_root`) : ce dossier va
+    dans « TypeEdit » de la palette, avec tout ce qui y est rangé ; un modèle importé rangé ailleurs par l'utilisateur
+    va dans « Mes modèles »."""
+    from ..cam import templates as TPL
+    return TPL.import_root(tpl) is not None
+
+
+def te_palette() -> bool:
+    """La palette de TypeEdit (TypeEdit_User) est-elle sur ce poste ? Sinon, les favoris viennent d'un plugin."""
+    from .shortcuts import user_palette
+    return any(k.startswith('cam_') for k in user_palette())
+
+
 
 def color_enabled(settings) -> bool:
     """L'usinage par couleur est-il proposé (case cochée par l'utilisateur) ?"""
@@ -145,7 +172,6 @@ class CamPalette(QWidget):
         self.color_on.setToolTip(tr('Montrer le choix « Usiner : la sélection / les couleurs » (usinage par couleur '
                                     'de TypeEdit) ; décoché, un nouveau parcours usine la sélection'))
         self.color_on.setChecked(color_enabled(self.win.settings))
-        lay.addWidget(self.color_on)
         self.mode_row = QWidget()
         mode = QHBoxLayout(self.mode_row)
         mode.setContentsMargins(0, 0, 0, 0)
@@ -161,7 +187,6 @@ class CamPalette(QWidget):
         mode.addWidget(self.by_selection)
         mode.addWidget(self.by_color)
         mode.addStretch(1)
-        lay.addWidget(self.mode_row)
         (self.by_selection if self.mode() == 'selection' else self.by_color).setChecked(True)
         self.by_selection.toggled.connect(lambda on: self.set_mode('selection' if on else 'couleur'))
         self.mode_row.setVisible(self.color_on.isChecked())
@@ -183,6 +208,8 @@ class CamPalette(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet('color: #868e96;')
         lay.addWidget(hint)
+        lay.addWidget(self.color_on)                     # tout en bas (demande du 15/11)
+        lay.addWidget(self.mode_row)
         #: clé d'action (cam_new_…) → ligne du parcours
         self.items: dict[str, QTreeWidgetItem] = {}
         self.refresh()
@@ -220,87 +247,181 @@ class CamPalette(QWidget):
         kinds = {}
         for key, (_label, kind, _kw, _tk) in ps.items():
             kinds.setdefault(kind, key)
-        by_preset: dict[str, list] = {}
-        in_folders: list = []                            # modèles rangés en dossiers : leur arborescence est gardée
+        by_preset: dict[str, list] = {}                  # parcours → modèles des plugins, rangés sous lui
+        mine: list = []                                  # vos modèles (importés compris) : « Mes modèles », « TypeEdit »
+        te_roots: set = set()                            # dossiers d'import de TypeEdit : l'import a été fait
         for name, (origin, tpl) in sorted(TPL.all_templates().items(), key=lambda kv: kv[0].lower()):
+            if origin == 'utilisateur' and from_typeedit(tpl):
+                te_roots.add(top_folder(tpl.get('dossier')))
             key = preset_of(tpl, kinds)
             if key in ps and fits(key):
-                if str(tpl.get('dossier') or ''):
-                    in_folders.append((name, origin, tpl, key))
+                if origin == 'utilisateur':
+                    mine.append((name, origin, tpl, key))
                 else:
                     by_preset.setdefault(key, []).append((name, origin, tpl))
-        expanded = {self.tree.topLevelItem(i).text(0) for i in range(self.tree.topLevelItemCount())
-                    if self.tree.topLevelItem(i).isExpanded()}
         from PySide6.QtWidgets import QTreeWidgetItemIterator
+        was = {}                                         # dossiers de la palette ouverts ou fermés : gardés
         self._open_folders = set()                       # dossiers ouverts : rouverts après un rangement
         it = QTreeWidgetItemIterator(self.tree)
         while it.value() is not None:
-            if it.value().data(0, ROLE_FOLDER) and it.value().isExpanded():
-                self._open_folders.add(str(it.value().data(0, ROLE_FOLDER)))
+            node = it.value()
+            if node.data(0, ROLE_GROUP):
+                was[str(node.data(0, ROLE_GROUP))] = node.isExpanded()
+            if node.data(0, ROLE_FOLDER) and node.isExpanded():
+                self._open_folders.add(str(node.data(0, ROLE_FOLDER)))
             it += 1
+        self._was_open = was
         self.tree.clear()
         self.items = {}
         favs = [k[len('cam_new_'):] for k in self.win.cam_panel.favorites() if k.startswith('cam_new_')]
-        favs = [k for k in favs if fits(k)]
-        families = ([(tr('Favoris (palette TypeEdit)'), tuple(favs))] if favs else []) + \
-            [(tr(t), tuple(k for k in keys if fits(k))) for t, keys in FAMILIES]
+        favs = tuple(k for k in favs if fits(k) and k in ps)
+        families = [(t, tuple(k for k in keys if fits(k))) for t, keys in FAMILIES]
         if machine:                                      # machine connue : les familles vidées ne sont pas montrées
             families = [f for f in families if any(k in ps for k in f[1])]
         placed = {k for _t, keys in FAMILIES for k in keys}
         others = tuple(k for k in ps if k not in placed and fits(k))
         if others:
-            families.append((tr('Plugins'), others))
-        for title, keys in families:
-            g = QTreeWidgetItem([title])
-            f = g.font(0)
-            f.setBold(True)
-            g.setFont(0, f)
-            g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            self.tree.addTopLevelItem(g)
+            families.append(('Plugins', others))
+        base = self._group('type', tr('Parcours type'))   # les parcours de base réunis (demande du 15/11)
+        self.tree.addTopLevelItem(base)
+        self._by_preset = by_preset
+        # la palette de TypeEdit : dans « TypeEdit » une fois l'import fait, sinon (celle d'un plugin aussi) en tête ici
+        te_favs = favs if te_roots and te_palette() else ()
+        groups = [('favoris', 'Favoris (palette TypeEdit)', favs)] if favs and not te_favs else []
+        groups += [('fam:' + title, title, keys) for title, keys in families]
+        for gkey, title, keys in groups:
+            g = self._group(gkey, tr(title))
+            base.addChild(g)
             for key in keys:
-                if key not in ps:
-                    continue
-                act = self.win.A.get(f'cam_new_{key}')
-                it = QTreeWidgetItem([tr(ps[key][0])])
-                if act is not None:
-                    it.setIcon(0, act.icon())
-                it.setToolTip(0, self.tip(key))
-                it.setData(0, ROLE_KIND, key)
-                g.addChild(it)
-                self.items.setdefault(f'cam_new_{key}', it)
-                folders: dict[str, QTreeWidgetItem] = {}
-                for name, origin, tpl in by_preset.get(key, []):
-                    parent = it
-                    folder = str(tpl.get('dossier') or '')
-                    if folder:
-                        parent = folders.get(folder)
-                        if parent is None:
-                            parent = folders[folder] = QTreeWidgetItem(['📁 ' + folder])
-                            parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-                            it.addChild(parent)
-                    label = name.split(' / ', 1)[1] if folder and name.startswith(folder + ' / ') else name
-                    t = QTreeWidgetItem(['📄 ' + label + memo_suffix(tpl)])
-                    t.setData(0, ROLE_KIND, key)
-                    t.setData(0, ROLE_TPL, name)
-                    t.setData(0, ROLE_ORIGIN, origin)
-                    t.setToolTip(0, str(tpl.get('description') or name))
-                    parent.addChild(t)
-            g.setExpanded(not expanded or title in expanded)
-        if in_folders or TPL.empty_folders():
-            self._folder_tree(in_folders, ps, expanded)
+                if key in ps:
+                    g.addChild(self._preset_row(key, ps))
+            g.setExpanded(was.get(gkey, True))
+        base.setExpanded(was.get('type', True))
+        self._folder_tree(mine, ps, te_favs, te_roots)
 
-    def _folder_tree(self, entries: list, ps: dict, expanded: set) -> None:
-        """Modèles enregistrés en dossiers (les vôtres, ceux importés de
-        TypeEdit) : un groupe « Modèles » qui garde leur arborescence au lieu
-        de les répartir par type de parcours — comme la fenêtre de TypeEdit."""
-        title = tr('Modèles (dossiers)')
-        g = QTreeWidgetItem([title])
+    def _preset_row(self, key: str, ps: dict) -> QTreeWidgetItem:
+        """La ligne d'un parcours et, dessous, les modèles des plugins pour ce parcours (dans leurs dossiers)."""
+        it = self._preset_item(key, ps)
+        folders: dict[str, QTreeWidgetItem] = {}
+        for name, origin, tpl in getattr(self, '_by_preset', {}).get(key, []):
+            parent = it
+            folder = str(tpl.get('dossier') or '')
+            if folder:
+                parent = folders.get(folder)
+                if parent is None:
+                    parent = folders[folder] = QTreeWidgetItem(['📁 ' + folder])
+                    parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsDragEnabled)
+                    it.addChild(parent)
+            label = name.split(' / ', 1)[1] if folder and name.startswith(folder + ' / ') else name
+            t = QTreeWidgetItem(['📄 ' + label + memo_suffix(tpl)])
+            t.setData(0, ROLE_KIND, key)
+            t.setData(0, ROLE_TPL, name)
+            t.setData(0, ROLE_ORIGIN, origin)
+            t.setToolTip(0, str(tpl.get('description') or name))
+            t.setFlags(t.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
+            parent.addChild(t)
+        return it
+
+    def _group(self, key: str, default: str) -> QTreeWidgetItem:
+        """Un dossier de la palette, en gras : « Parcours type » et ses familles, « Mes modèles », « TypeEdit »,
+        « Favoris (palette TypeEdit) ». Renommable (F2, clic droit) : son nom vient des réglages (`NAMES`), sinon
+        `default`. Choisi pour F2, jamais déplacé."""
+        g = QTreeWidgetItem([self.group_name(key, default)])
         f = g.font(0)
         f.setBold(True)
         g.setFont(0, f)
-        g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsDragEnabled)
-        g.setData(0, ROLE_ROOT, True)
-        self.tree.insertTopLevelItem(0, g)
+        g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
+        g.setData(0, ROLE_GROUP, key)
+        g.setData(0, ROLE_DEFAULT, default)
+        return g
+
+    def _preset_item(self, key: str, ps: dict) -> QTreeWidgetItem:
+        """La ligne d'un parcours (clic : son formulaire)."""
+        act = self.win.A.get(f'cam_new_{key}')
+        it = QTreeWidgetItem([tr(ps[key][0])])
+        if act is not None:
+            it.setIcon(0, act.icon())
+        it.setToolTip(0, self.tip(key))
+        it.setData(0, ROLE_KIND, key)
+        self.items.setdefault(f'cam_new_{key}', it)
+        return it
+
+    def _names(self) -> dict:
+        import json
+        try:
+            d = json.loads(str(self.win.settings.value(NAMES, '') or '{}'))
+        except ValueError:
+            d = {}
+        return d if isinstance(d, dict) else {}
+
+    def group_name(self, key: str, default: str) -> str:
+        """Le nom montré du dossier `key` de la palette : celui donné par l'utilisateur, sinon `default`."""
+        return str(self._names().get(key) or default)
+
+    def rename_group(self, key: str, label: str | None = None) -> str | None:
+        """Renomme le dossier `key` de la palette (« type », « fam:Usinage 2D », « user », « te », « favoris ») ;
+        vide : son nom d'origine. Sans `label`, le demande. Rend le nom montré (None : abandon, dossier absent)."""
+        import json
+        from PySide6.QtWidgets import QInputDialog, QTreeWidgetItemIterator
+        node = None
+        it = QTreeWidgetItemIterator(self.tree)
+        while it.value() is not None:
+            if it.value().data(0, ROLE_GROUP) == key:
+                node = it.value()
+                break
+            it += 1
+        if node is None:
+            return None
+        default = str(node.data(0, ROLE_DEFAULT) or '')
+        if label is None:
+            label, ok = QInputDialog.getText(self, tr('Renommer le dossier'), tr('Nom (vide : nom d’origine) :'),
+                                             text=node.text(0))
+            if not ok:
+                return None
+        label = str(label or '').strip()
+        names = self._names()
+        if label and label != default:
+            names[key] = label
+        else:
+            names.pop(key, None)
+        self.win.settings.setValue(NAMES, json.dumps(names, ensure_ascii=False))
+        self.refresh()
+        return self.group_name(key, default)
+
+    def _folder_tree(self, entries: list, ps: dict, favs: tuple = (), te_roots: set = frozenset()) -> None:
+        """Vos modèles dans « Mes modèles », en dossiers ou hors dossier (y déposer un modèle le sort de son dossier) ;
+        ceux importés de TypeEdit (dossiers d'import `te_roots`), avec la palette de TypeEdit (`favs`), dans
+        « TypeEdit », seulement si l'import a été fait. Leur arborescence est gardée, comme la fenêtre de TypeEdit."""
+        from ..cam import templates as TPL
+        was = getattr(self, '_was_open', {})
+        user = self._group('user', tr('Mes modèles'))
+        user.setData(0, ROLE_ROOT, True)
+        self.tree.addTopLevelItem(user)
+        te_entries = [e for e in entries if top_folder(e[2].get('dossier')) in te_roots]
+        own = [e for e in entries if top_folder(e[2].get('dossier')) not in te_roots]
+        empty = [tuple(TPL.folder_parts(f)) for f in TPL.empty_folders()]   # dossiers créés, encore vides
+        te = None
+        if te_roots:
+            te = self._group('te', tr('TypeEdit'))
+            self.tree.addTopLevelItem(te)
+            if favs:
+                fav = self._group('favoris', tr('Favoris (palette TypeEdit)'))
+                te.addChild(fav)
+                for key in favs:
+                    fav.addChild(self._preset_row(key, ps))
+                fav.setExpanded(was.get('favoris', True))
+        self._fill(user, own, ps, [p for p in empty if not (te is not None and p and p[0] in te_roots)])
+        user.setExpanded(was.get('user', True))
+        if te is not None:
+            self._fill(te, te_entries, ps, [p for p in empty if p and p[0] in te_roots])
+            if te.childCount():
+                te.setExpanded(was.get('te', True))
+            else:                                        # rien pour cette machine (importés pour une autre) : caché
+                self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(te))
+
+    def _fill(self, g: QTreeWidgetItem, entries: list, ps: dict, empty: list = ()) -> None:
+        """Sous `g` : les modèles `entries` rangés dans leurs dossiers, puis les dossiers vides `empty`, puis les
+        modèles hors dossier."""
         folders: dict[tuple, QTreeWidgetItem] = {}
         open_folders = getattr(self, '_open_folders', set())
 
@@ -322,12 +443,19 @@ class CamPalette(QWidget):
                     node.setFlags(node.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
                 parent = node
             return parent
-        # ordre de TypeEdit pour les modèles importés (dossiers compris), puis par nom
-        entries = sorted(entries, key=lambda e: (e[2].get('ordre') is None, e[2].get('ordre') or 0, e[0].lower()))
-        for name, origin, tpl, key in entries:
+        # ordre de TypeEdit pour les modèles importés (dossiers compris), puis par nom ; hors dossier : à la fin
+        def parts_of(tpl):
             folder = str(tpl.get('dossier') or '')
-            parts = tuple(p.strip() for p in folder.replace(' / ', '/').split('/') if p.strip())
-            parent = node_of(parts, origin)
+            return tuple(p.strip() for p in folder.replace(' / ', '/').split('/') if p.strip())
+        entries = sorted(entries, key=lambda e: (not parts_of(e[2]), e[2].get('ordre') is None,
+                                                 e[2].get('ordre') or 0, e[0].lower()))
+        loose_from = next((i for i, e in enumerate(entries) if not parts_of(e[2])), len(entries))
+        for i, (name, origin, tpl, key) in enumerate(entries):
+            if i == loose_from:
+                for parts in empty:
+                    node_of(parts, 'utilisateur')
+            folder = str(tpl.get('dossier') or '')
+            parent = node_of(parts_of(tpl), origin)
             label = name[len(folder) + 3:] if name.startswith(folder + ' / ') else name
             t = QTreeWidgetItem(['📄 ' + label + memo_suffix(tpl)])
             t.setData(0, ROLE_KIND, key)
@@ -340,10 +468,9 @@ class CamPalette(QWidget):
             if origin != 'utilisateur':
                 t.setFlags(t.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
             parent.addChild(t)
-        from ..cam import templates as TPL
-        for folder in TPL.empty_folders():               # dossiers créés, encore vides
-            node_of(tuple(TPL.folder_parts(folder)), 'utilisateur')
-        g.setExpanded(not expanded or title in expanded)
+        if loose_from == len(entries):                   # aucun modèle hors dossier : les dossiers vides à la fin
+            for parts in empty:
+                node_of(parts, 'utilisateur')
 
     def tip(self, key: str) -> str:
         """Bulle d'un parcours : celle de sa commande, et s'il part de ses dernières valeurs."""
@@ -364,7 +491,7 @@ class CamPalette(QWidget):
             it += 1
 
     def save_last(self, key: str, name: str | None = None) -> str | None:
-        """Dernières valeurs du parcours `key` en modèle, rangé sous ce parcours."""
+        """Dernières valeurs du parcours `key` en modèle, dans « Mes modèles » (hors dossier)."""
         from ..cam import templates as TPL
         last = self.win.cam_panel.last_values(key)
         if last is None:
@@ -412,6 +539,12 @@ class CamPalette(QWidget):
         if name and item.data(0, ROLE_ORIGIN) == 'utilisateur':
             m.addAction(tr('Renommer le modèle…'), lambda: self.rename_template(name)).setShortcut(QKeySequence('F2'))
             m.addAction(tr('Ranger dans un dossier…'), lambda: self.move_template(name))
+        group = item.data(0, ROLE_GROUP) if item is not None else None
+        if group:
+            m.addAction(tr('Renommer le dossier…'), lambda: self.rename_group(str(group))).setShortcut(
+                QKeySequence('F2'))
+            if str(group) in self._names():
+                m.addAction(tr('Nom d’origine'), lambda: self.rename_group(str(group), ''))
         folder = item.data(0, ROLE_FOLDER) if item is not None else None
         if folder and item.data(0, ROLE_ORIGIN) == 'utilisateur':
             m.addAction(tr('Nouveau sous-dossier…'), lambda: self.new_folder(folder))
@@ -470,8 +603,13 @@ class CamPalette(QWidget):
         return new
 
     def rename_selected(self) -> None:
-        """F2 : renommer le modèle ou le dossier choisi."""
+        """F2 : renommer le modèle ou le dossier choisi (un dossier de la palette aussi)."""
         objs = self.tree.moving()
+        if not objs:
+            cur = self.tree.currentItem()
+            if cur is not None and cur.isSelected() and cur.data(0, ROLE_GROUP):
+                self.rename_group(str(cur.data(0, ROLE_GROUP)))
+            return
         if len(objs) != 1:
             return
         what, key = objs[0]
@@ -577,14 +715,17 @@ class CamPalette(QWidget):
                 presets = tpp.read(f)
             except OSError:
                 continue
+            src = tpp.source_name(f)
+            root = TPL.root_of_source(src)               # son dossier d'import, peut-être renommé depuis
             if presets:
-                TPL.delete_imported(tpp.source_name(f))  # import refait : l'arborescence de TypeEdit, à jour
+                TPL.delete_imported(root)                # import refait : l'arborescence de TypeEdit, à jour
             for i, p in enumerate(presets):
-                tpl = tpp.to_template(p, tpp.source_name(f))
+                tpl = tpp.to_template(p, root)
                 if tpl is None:
                     skipped += 1
                     continue
                 tpl['ordre'] = i                         # l'ordre de la fenêtre de TypeEdit
+                tpl[TPL.SOURCE_KEY], tpl[TPL.ROOT_KEY] = src, root
                 TPL.save_user(tpl)
                 n += 1
         try:

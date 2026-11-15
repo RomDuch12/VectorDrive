@@ -59,7 +59,7 @@ LABELS = {
     'thread_start_angle': 'Angle de départ (°, depuis OX)', 'thread_lead': 'Entrée et sortie',
     'thread_lead_dist': "Distance d'entrée / sortie (mm, filetage extérieur)",
     'hole_diameter': 'Ø du trou (mm, 0 = celui du cercle)',
-    'extension': 'Débordement (mm)', 'face_angle': 'Angle des passes (°)',
+    'extension': 'Débordement (mm)', 'face_angle': 'Angle des passes (°)', 'face_direction': 'Sens des passes',
     'prism_hollow': 'En creux (sinon en relief)', 'prism_lateral': 'Passes latérales',
     'instruction': 'Instruction', 'params': 'Réglages de l\'instruction',
     'finish_skip_frame': 'Finition : pas de passe sur le cadre (gravure en relief)',
@@ -262,6 +262,7 @@ FIELD_CHOICES = {
     'tab_mode': {'pont': 'Ponts (une hauteur reste)', 'pointille': 'Pointillés (parties non usinées, micro-attaches)',
                  'nettoyer': 'Nettoyer les ponts (seuls eux sont usinés)'},
     'sweep_contour': {'sans': 'Sans', 'avant': 'Avant le balayage', 'apres': 'Après le balayage'},
+    'face_direction': {'aller_retour': 'Aller-retour', 'avalant': 'Tout en avalant', 'opposition': 'Tout en opposition'},
 }
 #: valeur 0 : celle de l'outil choisi — le champ la montre, avec son unité (demande du 14/11)
 TOOL_DEFAULT = ('step_down', 'feed', 'plunge', 'spindle', 'finish_feed')
@@ -398,7 +399,7 @@ OP_SECTIONS = [
                  'sweep_contour', 'sweep_contour_stock', 'sweep_texture', 'tex_depth_min', 'tex_depth_max', 'tex_len_min', 'tex_len_max',
                  'tex_overlap', 'tex_seed')),
     ('Avancé', ('peck', 'drill_points', 'drill_mode', 'drill_feed_retract', 'thread', 'thread_left',
-                     'thread_external', 'thread_start_angle', 'thread_lead', 'thread_lead_dist', 'pitch', 'hole_diameter', 'extension', 'face_angle',
+                     'thread_external', 'thread_start_angle', 'thread_lead', 'thread_lead_dist', 'pitch', 'hole_diameter', 'extension', 'face_angle', 'face_direction',
                      'tabs', 'tab_spacing', 'tab_gap', 'tab_max', 'tab_mode', 'tab_width', 'tab_shape',
                      'tab_height', 'common_line', 'chain_cut', 'trochoidal', 'troch_width', 'troch_step',
                      'small_first', 'small_first_by', 'order_mode', 'holes_order',
@@ -487,7 +488,7 @@ KIND_FIELDS = {
                   'thread_lead_dist'},
     'percage_fraise': {'hole_diameter', 'climb'},
     'chanfrein': {'stock'},
-    'surfacage': {'extension', 'face_angle'},
+    'surfacage': {'extension', 'face_angle', 'face_direction'},
     'instruction': {'instruction', 'params'},
     'texte_machine': {'params'},
 }

@@ -189,19 +189,19 @@ def rename_template(name: str, label: str) -> str | None:
     return new
 
 
-def set_folder(name: str, folder: str) -> str | None:
-    """Range le modèle `name` dans `folder` (vide : hors dossier) ; rend son
-    nouveau nom, ou None s'il n'existe pas."""
+def set_folder(name: str, folder: str, extra: dict | None = None) -> str | None:
+    """Range le modèle `name` dans `folder` (vide : hors dossier), avec les clés
+    `extra` ; rend son nouveau nom, ou None s'il n'existe pas."""
     tpl = user_templates().get(name)
     if tpl is None:
         return None
     label = label_of(tpl)
     folder = '/'.join(folder_parts(folder))
     new = f'{folder} / {label}' if folder else label
-    if new == name:
+    if new == name and not extra:
         return name
     delete_user(name)
-    tpl = dict(tpl, name=new, dossier=folder)
+    tpl = dict(tpl, name=new, dossier=folder, **(extra or {}))
     save_user(tpl)
     return new
 
@@ -211,15 +211,62 @@ def _in(folder: str, root: str) -> bool:
     return f == r or f.startswith(r + '/')
 
 
+#: le dossier d'import d'un modèle repris de TypeEdit (« TypeEdit 13 — Meca3 »), suivi quand l'utilisateur le renomme
+#: ou le déplace ; le nom d'origine de ce dossier (celui du fichier importé), pour refaire l'import au même endroit
+ROOT_KEY, SOURCE_KEY = 'racine_import', 'source_import'
+
+
+def imported(t: dict) -> bool:
+    """Modèle repris de TypeEdit : paramètres de parcours (TPP) ou fichier .ttpl."""
+    return t.get('origine') == 'typeedit' or isinstance(t.get('typeedit'), dict)
+
+
+def _root_path(t: dict) -> str:
+    """Le chemin du dossier d'import d'un modèle repris de TypeEdit ('' : aucun). Importé avant le 15/11 (sans
+    `ROOT_KEY`) : son premier dossier, si son nom commence par « TypeEdit »."""
+    if not imported(t):
+        return ''
+    if ROOT_KEY in t:
+        return '/'.join(folder_parts(t.get(ROOT_KEY)))
+    parts = folder_parts(t.get('dossier'))
+    return parts[0] if parts and parts[0].startswith('TypeEdit') else ''
+
+
+def import_root(t: dict) -> str | None:
+    """Le dossier d'import (premier dossier) d'un modèle repris de TypeEdit et resté dedans, même renommé ; None :
+    modèle non importé, ou rangé ailleurs par l'utilisateur (son dossier d'import aussi, mis dans un autre dossier)."""
+    root = _root_path(t)
+    parts = folder_parts(t.get('dossier'))
+    return root if root and '/' not in root and parts and parts[0] == root else None
+
+
+def root_of_source(source: str) -> str:
+    """Le dossier d'import actuel du fichier `source` (« TypeEdit 13 — Meca3 », peut-être renommé depuis) : un
+    nouvel import s'y refait."""
+    for t in user_templates().values():
+        if t.get(SOURCE_KEY) == source:
+            root = import_root(t)
+            if root:
+                return root
+    return source
+
+
 def rename_folder(old: str, new: str) -> int:
     """Renomme (ou déplace, ou fusionne dans un existant) un dossier et ses
-    sous-dossiers ; rend le nombre de modèles déplacés."""
+    sous-dossiers ; rend le nombre de modèles déplacés. Un dossier d'import de
+    TypeEdit renommé le reste (`ROOT_KEY`)."""
     old_p, new_p = '/'.join(folder_parts(old)), '/'.join(folder_parts(new))
     n = 0
     for name, t in list(user_templates().items()):
         f = '/'.join(folder_parts(t.get('dossier')))
         if _in(f, old_p):
-            set_folder(name, (new_p + f[len(old_p):]).strip('/'))
+            extra = {}
+            root = _root_path(t)
+            if root and _in(root, old_p):
+                if ROOT_KEY not in t and SOURCE_KEY not in t and t.get('origine') == 'typeedit':
+                    extra[SOURCE_KEY] = root             # importé avant : le dossier porte le nom de son fichier
+                extra[ROOT_KEY] = (new_p + root[len(old_p):]).strip('/')
+            set_folder(name, (new_p + f[len(old_p):]).strip('/'), extra)
             n += 1
     empty = empty_folders()
     if any(_in(f, old_p) for f in empty):

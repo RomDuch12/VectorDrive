@@ -172,21 +172,11 @@ class ToolValueInTheField(unittest.TestCase):
 
 class DevelopedBy(unittest.TestCase):
 
-    def test_in_the_help_tab_and_about(self):
+    def test_in_the_about_box(self):
         from vectordrive.ui.main_window import MainWindow
         w = MainWindow()
         self.addCleanup(self.close, w)
-        label = w.ribbon.findChild(QLabel, 'creditLabel')
-        self.assertIsNotNone(label)                             # avant : pas de mention dans l'onglet Aide
-        self.assertIn('RomDuch with Claude', label.text())
-        self.assertIn('romduch@gmail.com', label.text())
-        page = next(w.ribbon.widget(i) for i in range(w.ribbon.count()) if w.ribbon.tabText(i) == tr('Aide'))
-        self.assertTrue(page.isAncestorOf(label))
-        from vectordrive.ui.ribbon import RibbonGroup
-        g = label.parentWidget()
-        while g is not None and not isinstance(g, RibbonGroup):
-            g = g.parentWidget()
-        self.assertEqual(g.title.text(), tr('Développé par'))
+        self.assertIsNone(w.ribbon.findChild(QLabel, 'creditLabel'))   # dans À propos seulement (round 1041)
         self.assertIn('Développé par RomDuch with Claude — romduch@gmail.com', inspect.getsource(MainWindow.about))
 
     def close(self, w):

@@ -383,6 +383,7 @@ class Operation:
     hole_diameter: float = 0.0      # perçage à la fraise : Ø du trou (0 = celui du cercle dessiné)
     extension: float = 0.0          # surfaçage : débordement autour de la zone (mm)
     face_angle: float = 0.0         # surfaçage : angle des passes (°)
+    face_direction: str = 'aller_retour'  # surfaçage : 'aller_retour', 'avalant' (toutes), 'opposition' (toutes)
     instruction: str = 'message'    # instruction machine (cam.instructions)
     params: dict = field(default_factory=dict)   # réglages de l'instruction
     #: rattachement à une surface posée en 2D (core.surface2d) : calque, et ce qui a changé pour lui

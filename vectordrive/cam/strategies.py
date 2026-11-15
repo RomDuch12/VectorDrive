@@ -4384,9 +4384,12 @@ def shape_cycles(doc, op, kind: str, depth: float, infeed: float, stepover: floa
 
 
 def _facing(doc, setup, op, tool, tp, em, here) -> None:
-    """Surfaçage : passes parallèles en aller-retour sur l'encombrement des
-    objets choisis (sinon la plaque), débordement compris, à chaque passe en
-    Z ; angle des passes réglable."""
+    """Surfaçage : passes parallèles sur l'encombrement des objets choisis
+    (sinon la plaque), débordement compris, à chaque passe en Z ; angle des
+    passes réglable. Sens des passes (`face_direction`) : aller-retour, ou
+    toutes en avalant (la matière pas encore surfacée à droite de l'outil,
+    broche en sens horaire), ou toutes en opposition (à gauche) ; alors chaque
+    passe part du même côté, après une remontée hors de la pièce."""
     from ..core.geom import bbox_union
     from ..core.holes import circle_of
     items = [it for it in source_items(doc, op) if item_geometry(it)]
@@ -4420,16 +4423,26 @@ def _facing(doc, setup, op, tool, tp, em, here) -> None:
 
     def world(u, v):
         return cx + u * ca - v * sa, cy + u * sa + v * ca
+    # les passes avancent vers +v : la matière restante est à gauche d'une passe vers +u, à droite d'une passe vers -u
+    direction = getattr(op, 'face_direction', 'aller_retour')
+    one_way = direction in ('avalant', 'opposition')
     for z in op_levels(op, tool):
         for k, v in enumerate(rows):
-            pa, pb = (world(u0, v), world(u1, v)) if k % 2 == 0 else (world(u1, v), world(u0, v))
-            if k == 0:
+            if direction == 'avalant':
+                pa, pb = world(u1, v), world(u0, v)
+            elif direction == 'opposition':
+                pa, pb = world(u0, v), world(u1, v)
+            else:
+                pa, pb = (world(u0, v), world(u1, v)) if k % 2 == 0 else (world(u1, v), world(u0, v))
+            if k == 0 or one_way:                        # sens unique : remonter, revenir au départ, replonger
                 em.travel(*pa)
                 em.plunge(z)
             else:
                 em.feed(pa[0], pa[1], z)
             em.feed(pb[0], pb[1], z)
         em.retract()
+    if one_way:                                          # les cycles des machines (RectangleFace … BothWays, CircleFace)
+        return                                           # vont et viennent : les mouvements, eux, gardent le sens
     depth = abs(op.depth)
     infeed = op.step_down or tool.step_down
     pct = int(round((tool.stepover or 0.4) * 100))

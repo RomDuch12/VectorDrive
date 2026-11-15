@@ -146,7 +146,8 @@ class TestPalette(unittest.TestCase):
         self.assertIs(w.dock_cam.widget(), w.cam_palette)
         self.assertEqual(w.dockWidgetArea(w.dock_paths), Qt.DockWidgetArea.RightDockWidgetArea)
         self.assertIs(w.dock_paths.widget().widget(), w.cam_panel)      # dans un VScroll (round 219)
-        tops = [w.cam_palette.tree.topLevelItem(i).text(0) for i in range(w.cam_palette.tree.topLevelItemCount())]
+        base = w.cam_palette.tree.topLevelItem(0)                            # « Parcours type » (round 1036)
+        tops = [base.child(i).text(0) for i in range(base.childCount())]
         for fam in ('Usinage 2D', 'Usinage 2D-3D', 'Usinage 3D', 'Laser'):
             self.assertIn(fam, tops)
         self.assertIn('cam_new_decoupe', w.cam_panel.palette_buttons)
@@ -187,9 +188,9 @@ class TestPalette(unittest.TestCase):
         tpl = dlg.save_template('Détourage 3,3 pontets')
         self.assertEqual((tpl['preset'], len(tpl['tools'])), ('decoupe', 1))
         self.assertIn('Détourage 3,3 pontets', p.templates_for('decoupe'))
-        items = w.cam_palette.items['cam_new_decoupe']
-        self.assertTrue(any(items.child(i).text(0).startswith('📄 Détourage 3,3 pontets')     # mémo de l'outil après
-                            for i in range(items.childCount())))           # sous son parcours
+        mine = w.cam_palette.tree.topLevelItem(1)                            # « Mes modèles » (round 1036)
+        self.assertTrue(any(mine.child(i).text(0).startswith('📄 Détourage 3,3 pontets')      # mémo de l'outil après
+                            for i in range(mine.childCount())))
         op2 = p.new_operation('decoupe', exec_dialog=False, template='Détourage 3,3 pontets')
         self.assertEqual((op2.depth, op2.z_start, op2.tab_spacing, op2.tool_id), (3.3, 0.1, 40.0, op.tool_id))
         dlg2 = FieldsDialog(p, 'x', model.Operation(kind='contour'), w.canvas.doc, p.setup().tools,

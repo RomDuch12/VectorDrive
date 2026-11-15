@@ -27,6 +27,7 @@ class PanelWindow(QWidget):
         self.setWindowTitle(title)
         self._content = None
         self._before_full = None                         # état de la fenêtre avant le plein écran
+        self.vd_own_close = True                         # en plein écran, sa barre a déjà son « ✕ » (ui.fullclose)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)

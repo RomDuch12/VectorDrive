@@ -60,15 +60,15 @@ class Start(unittest.TestCase):
     def test_a_first_start_is_full_screen(self):
         w = window()
         self.assertTrue(w.wants_full_screen())                       # avant : la fenêtre agrandie
-        self.assertEqual(w.show_at_start(), 'full')
+        self.assertEqual(w.show_at_start(), 'taskbar')               # barre des tâches visible (round 1038)
         self.assertTrue(w.is_full_screen())
         close(w)
         again = window()
-        self.assertEqual(again.show_at_start(), 'full')              # fermé en plein écran : rouvert en plein écran
-        again.cycle_full_screen()                                    # … avec la barre des tâches
+        self.assertEqual(again.show_at_start(), 'taskbar')           # fermé en plein écran : rouvert en plein écran
+        again.set_keep_taskbar(False)                                # … sans la barre des tâches
         close(again)
         third = window()
-        self.assertEqual(third.show_at_start(), 'taskbar')
+        self.assertEqual(third.show_at_start(), 'full')
         close(third)
 
     def test_the_last_window_comes_back(self):
