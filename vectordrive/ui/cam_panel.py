@@ -47,7 +47,7 @@ LABELS = {
     'drill_feed_retract': 'Remontée en vitesse de travail (sinon rapide)',
     'tab_width': 'Largeur des pontets (mm)', 'tab_height': 'Hauteur des pontets (mm)',
     'ramp': 'Entrée en rampe', 'safe_z': 'Dégagement (mm)', 'clear_z': 'Approche (mm)',
-    'safe_z_faced': 'Dégagement sur une zone déjà surfacée (mm, 0 : sans)',
+    'safe_z_faced': 'Dégagement sur une zone déjà usinée : surfaçage ou poche d’avant (mm, 0 : sans)',
     'ramp_angle': 'Angle de rampe (°, 0 = 5°)', 'ramp_max': 'Distance maxi de la rampe (mm, 0 = sans limite)',
     'pass_order': 'Passes multiples',
     'link_passes': 'Connecter les passes (rester dans la matière, descente en rampe)',
@@ -2611,7 +2611,13 @@ class CamPanel(QWidget):
         """Parcours qui vont au programme : ceux des opérations actives — une
         opération désactivée ou supprimée depuis le calcul n'y va plus — et
         ceux sans opération (parcours TypeEdit, programme relu)."""
-        ops = {o.id: o for o in self.setup().operations}
+        from ..cam import strategies as _strategies
+        s = self.setup()
+        ops = {o.id: o for o in s.operations}
+        tps = list(tps)
+        # les liaisons basses refaites pour CETTE liste, telle qu'elle est maintenant : une opération décochée,
+        # retirée ou déplacée depuis le calcul n'abaisse plus rien dans ce qui est écrit
+        _strategies.apply_faced_all(s, tps)
         return [tp for tp in tps if getattr(tp, 'shown', True)
                 and (not tp.op_id or (tp.op_id in ops and ops[tp.op_id].enabled))]
 

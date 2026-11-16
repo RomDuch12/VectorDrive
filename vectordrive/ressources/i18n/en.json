@@ -7468,5 +7468,8 @@
  "Flanc incliné (3D)": "Sloped wall (3D)",
  "En V": "V-shaped",
  "Relief 3D": "3D relief",
- "Gamme : ébauche et finition": "Sequence: roughing and finishing"
+ "Gamme : ébauche et finition": "Sequence: roughing and finishing",
+ "Dégagement sur une zone déjà usinée : surfaçage ou poche d’avant (mm, 0 : sans)": "Clearance over an area already machined: earlier facing or pocket (mm, 0: none)",
+ "Dégagement des nouvelles opérations sur une zone déjà usinée (0 = sans)": "Clearance of new operations over an area already machined (0 = none)",
+ "Au-dessus de ce qu’un surfaçage ou une poche d’avant a vidé, les liaisons passent à cette hauteur au lieu du dégagement : l’autre reste pour traverser ce qui n’est pas usiné": "Over what an earlier facing or pocket has cleared, the links travel at this height instead of the clearance height: the other one is kept to cross what is not machined"
 }

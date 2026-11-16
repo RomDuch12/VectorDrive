@@ -219,7 +219,9 @@ SPEC: list[tuple[str, list[Opt]]] = [
             tip='Fichier tools.json de Mes outils ; vide : outils/tools.json du dossier des données de VectorDrive'),
         Opt('fao/machines', 'Dossier des fiches machine TypeEdit (.MAH)', 'folder', ''),
         F('fao/z_degagement', 'Hauteur de dégagement des nouvelles opérations', 2.0, 0, 200, ' mm'),
-        F('fao/z_surface', 'Dégagement des nouvelles opérations sur une zone déjà surfacée (0 = sans)', 0.2, 0, 50, ' mm'),
+        F('fao/z_surface', 'Dégagement des nouvelles opérations sur une zone déjà usinée (0 = sans)', 0.2, 0, 50, ' mm',
+          tip='Au-dessus de ce qu’un surfaçage ou une poche d’avant a vidé, les liaisons passent à cette hauteur au '
+              'lieu du dégagement : l’autre reste pour traverser ce qui n’est pas usiné'),
         F('fao/z_approche', 'Hauteur d\'approche des nouvelles opérations', 0.5, 0, 100, ' mm'),
         C('fao/depart', 'Départ des contours fermés des nouvelles opérations', 'proche',
           [('proche', 'Au plus près (moins de déplacements)'), ('dessin', 'Point de départ du dessin (comme TypeEdit)')],

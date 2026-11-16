@@ -6980,3 +6980,11 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - La famille retient le dernier parcours pris : « Trous » rouvre le taraudage si c'est lui qui a servi.
 - Machine connue : une famille ne propose que ce qui va à la machine (un laser : le tracé, la découpe et la gravure au laser).
 - **Rien n'est retiré** : les 22 parcours sont sous leur famille (la flèche les déplie), avec leurs modèles ; le ruban, les favoris, les modèles et les process ne changent pas. Clic droit dans la palette › **« Parcours unifiés (9 familles) »** décoché : les cinq dossiers d'avant reviennent.
+### v0.918.0 — Dégagement bas au-dessus de ce qui est déjà usiné
+
+- Le **dégagement bas** valait au-dessus d'une zone surfacée par une opération d'avant. Il vaut maintenant aussi **au-dessus du fond d'une poche faite avant à la fraise** : les liaisons d'une opération suivante qui restent, outil entier, au-dessus de ce fond passent à cette hauteur ; le dégagement habituel reste pour traverser ce qui n'est pas usiné (un îlot, le bord de la poche, le reste de la plaque).
+- Une opération qui part du fond de la poche (Z de départ négatif) en profite aussi.
+- Jamais au-dessus d'une poche faite au cône ou à la boule, texturée, ou balayée sans tour du contour : leur fond n'est pas plat partout.
+- **Corrigé** : une liaison abaissée pouvait rester basse après que ce qui l'avait permise avait changé — surfaçage ou poche décoché, supprimé, déplacé après, ou refait autrement. Les liaisons basses sont maintenant refaites à chaque écriture du programme, d'après les opérations qui y vont vraiment, dans leur ordre.
+- Une instruction machine (palpage, repère, retournement, table à vide…) placée entre deux opérations remet le dégagement habituel pour la suite ; une opération d'une autre prise ne profite pas de ce qui est usiné ailleurs.
+- Les deux hauteurs se règlent par opération (« Dégagement », « Dégagement sur une zone déjà usinée »), et d'office dans Options (F10) › FAO ; 0 : sans.

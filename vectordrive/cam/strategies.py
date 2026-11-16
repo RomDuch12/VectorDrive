@@ -613,8 +613,11 @@ def apply_faced(tp, op, setup, zone, floor: float) -> int:
     moves = tp.unfaced if tp.unfaced is not None else tp.moves
     tp.moves, tp.unfaced = moves, None
     low = max(0.0, floor) + float(getattr(op, 'safe_z_faced', 0.0) or 0.0)
+    # le dégagement tel qu'il est dans le parcours : un Z de départ le déplace avec tout le reste (une opération qui
+    # part du fond d'une poche a ses liaisons plus bas d'autant)
+    safe = op.safe_z + float(getattr(op, 'z_start', 0.0) or 0.0)
     tool = setup.tool(tp.tool_id)
-    if tool is None or tool.kind == 'laser' or not getattr(op, 'safe_z_faced', 0.0) or low >= op.safe_z - 1e-9 \
+    if tool is None or tool.kind == 'laser' or not getattr(op, 'safe_z_faced', 0.0) or low >= safe - 1e-9 \
             or (getattr(op, 'wrap', 'none') or 'none') != 'none' or tp.cycles or tp.source != 'vectordrive':
         return 0
     if any(m.kind != 'rapid' and m.z > low - 1e-9 for m in moves):
@@ -635,7 +638,7 @@ def apply_faced(tp, op, setup, zone, floor: float) -> int:
         run = moves[i:j]
         start, end = moves[i - 1], run[-1]
         moved = abs(end.x - start.x) > 1e-9 or abs(end.y - start.y) > 1e-9
-        if j < count and moved and max(m.z for m in run) >= op.safe_z - 1e-9 and \
+        if j < count and moved and max(m.z for m in run) >= safe - 1e-9 and \
                 test.covers(LineString([(start.x, start.y), (end.x, end.y)])):
             if start.z < low - 1e-9:
                 out.append(Move('rapid', start.x, start.y, low))
@@ -651,30 +654,76 @@ def apply_faced(tp, op, setup, zone, floor: float) -> int:
     return n
 
 
+#: natures dont le fond plat, une fois fait, laisse les opérations suivantes passer plus bas au-dessus de lui : le
+#: surfaçage, et la poche (demande du 15/11 : le dégagement « où tout a été usiné sous le parcours rapide »)
+LOW_ZONE_KINDS = ('surfacage', 'poche')
+LOW_NOTES = ('dégagement bas sur la zone surfacée', 'dégagement bas sur la zone déjà usinée')
+
+
+def flat_floor(op, tool) -> bool:
+    """Le parcours de `op` laisse-t-il un fond plat, vidé partout où son outil est passé ? Un surfaçage : oui ; une
+    poche : à la fraise seulement (un cône ou une boule laissent un fond plus étroit que leur diamètre), et si elle
+    vide tout (`clears_all` : ni texture, ni balayage sans tour du contour)."""
+    if op.kind == 'surfacage':
+        return True
+    return op.kind == 'poche' and tool is not None and tool.kind == 'fraise' and clears_all(op, tool)
+
+
+def low_zone_of(tp, setup):
+    """`faced_zone(tp)`, gardée avec le parcours tant que ses mouvements sont les mêmes : la même liste, autant de
+    mouvements, la même somme de leurs cotes (un parcours déplacé ou retaillé sur place est refait)."""
+    moves = tp.moves
+    mark = (len(moves), round(sum(m.x + 2.0 * m.y + 3.0 * m.z for m in moves), 6))
+    memo = getattr(tp, '_low_zone', None)
+    if memo is None or memo[0] is not moves or memo[1] != mark:
+        memo = (moves, mark, faced_zone(tp, setup))
+        tp._low_zone = memo
+    return memo[2]
+
+
 def apply_faced_all(setup, toolpaths) -> None:
-    """Liaisons basses de chaque parcours sur ce que les surfaçages d'avant ont couvert ; puis les reprises d'usinage, qui
-    coupent le parcours complet."""
+    """Liaisons basses de chaque parcours sur ce que les surfaçages et les poches d'avant ont vidé ; puis les
+    reprises d'usinage, qui coupent le parcours complet.
+
+    Tout est d'abord remis au dégagement haut : une liaison basse ne survit jamais à ce qui l'a permise (poche
+    retirée, décochée, déplacée après, refaite au cône). Ne comptent, pour être abaissés comme pour abaisser, que
+    les parcours qui vont au programme (opération active, parcours coché), dans l'ordre de la liste, par prise
+    (face de la pièce, corps) ; une instruction machine (palpage, repère, retournement, table à vide…) remet à
+    zéro : ce qui était usiné avant elle ne l'est plus à coup sûr au même endroit."""
     from shapely import union_all
     from . import restart
     for tp in toolpaths:
         restart.restore(tp)
     ops = {o.id: o for o in setup.operations}
-    zones, floors = [], []
+    for tp in toolpaths:
+        if tp.unfaced is not None:
+            tp.moves, tp.unfaced = tp.unfaced, None
+        tp.warnings[:] = [w for w in tp.warnings if not w.startswith(LOW_NOTES)]
+    zones: dict = {}                                     # prise → [(zone, cote du fond, d'une poche ?)]
     for tp in toolpaths:
         op = ops.get(tp.op_id)
-        if op is None or not tp.moves:
+        if op is None or not op.enabled or not getattr(tp, 'shown', True):
             continue
-        if zones and op.kind != 'instruction':
-            NOTE = 'dégagement bas sur la zone surfacée'
-            tp.warnings[:] = [w for w in tp.warnings if not w.startswith(NOTE)]
-            n = apply_faced(tp, op, setup, zones[0] if len(zones) == 1 else union_all(zones), max(floors))
+        if op.kind == 'instruction':                     # (un parcours sans mouvement : vu avant le test suivant)
+            zones.clear()
+            continue
+        if not tp.moves:
+            continue
+        hold =(getattr(op, 'setup_face', '') or '', getattr(op, 'body3d', -1))
+        mine = low_zone_of(tp, setup) if op.kind in LOW_ZONE_KINDS and flat_floor(op, setup.tool(op.tool_id)) \
+            else None                                    # (d'après ses mouvements d'origine : avant de les abaisser)
+        got = zones.get(hold)
+        if got:
+            floor = max(f for _z, f, _p in got)
+            n = apply_faced(tp, op, setup, got[0][0] if len(got) == 1 else union_all([z for z, _f, _p in got]),
+                            floor)
             if n:
-                tp.warnings.append(f'{NOTE} : {n} liaison(s) à {op.safe_z_faced:g} mm, {op.safe_z:g} mm ailleurs')
-        if op.kind == 'surfacage':
-            got = faced_zone(tp, setup)
-            if got is not None:
-                zones.append(got[0])
-                floors.append(got[1])
+                low = max(0.0, floor) + float(op.safe_z_faced or 0.0)
+                safe = op.safe_z + float(getattr(op, 'z_start', 0.0) or 0.0)
+                note = LOW_NOTES[1] if any(p for _z, _f, p in got) else LOW_NOTES[0]
+                tp.warnings.append(f'{note} : {n} liaison(s) à {low:g} mm, {safe:g} mm ailleurs')
+        if mine is not None:
+            zones.setdefault(hold, []).append((mine[0], mine[1], op.kind != 'surfacage'))
     for tp in toolpaths:
         op = ops.get(tp.op_id)
         if op is not None:
