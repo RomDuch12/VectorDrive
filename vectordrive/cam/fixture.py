@@ -13,17 +13,75 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-#: filetage → plus petit trou de passage de sa vis (série fine, ISO 273) : la plaque Ø 3,2 laisse passer une M3
-CLEARANCE = (('M2', 2.2), ('M2.5', 2.7), ('M3', 3.2), ('M4', 4.3), ('M5', 5.3), ('M6', 6.4), ('M8', 8.4), ('M10', 10.5), ('M12', 13.0))
+#: un trou laisse passer la vis dont le Ø nominal ne le dépasse pas de plus que ceci (mm) : ajustement juste — les
+#: plaques de reprise sont percées Ø 4,05 pour des CHC M4 (réponse du 15/11), Ø 3,2 pour des M3
+FIT = 0.05
+#: à partir de ce Ø nominal, le taraudage est prépercé à la fraise (« drillmill si >= M6 », réponse du 16/11) ;
+#: en dessous, la fraise à fileter perce elle-même : une seule opération
+PREDRILL_FROM = 6.0
+#: profondeur taraudée d'après l'épaisseur : au plus `MAX_DEPTH`, en gardant `KEPT` sous l'usinage de la face
+MAX_DEPTH, KEPT = 6.0, 0.5
+#: deux trous sont « du même diamètre » à ceci près (mm) : 4 et 4,05
+SAME = 0.11
 
 
 def thread_for(diameter: float) -> str:
-    """Le plus gros filetage dont la vis passe dans un trou de `diameter` (mm) ; '' : aucun (trou trop petit)."""
+    """Le plus gros filetage dont la vis passe dans un trou de `diameter` (mm), même juste (M4 dans un Ø 4 ou 4,05) ;
+    '' : aucun (trou trop petit)."""
+    from .model import THREADS
     best = ''
-    for name, clear in CLEARANCE:
-        if clear <= diameter + 0.05:
+    for name, (nominal, _pitch, _pre) in THREADS.items():
+        if nominal <= diameter + FIT and (not best or nominal > THREADS[best][0]):
             best = name
     return best
+
+
+def predrilled(thread: str) -> bool:
+    """Ce filetage est prépercé à la fraise avant d'être taraudé (à partir de M6) ; sinon la fraise à fileter perce
+    elle-même."""
+    from .model import THREADS
+    return thread in THREADS and THREADS[thread][0] >= PREDRILL_FROM - 1e-9
+
+
+def depth_for(thickness: float, machined: float = 3.0) -> float:
+    """Profondeur taraudée d'après l'épaisseur du brut : ce qui reste sous l'usinage de la face (`machined`), moins
+    0,5 mm, 6 mm au plus — 3,5 mm pour 7 mm, 6 mm pour 10 mm (réponse du 15/11). 0 : épaisseur inconnue ou trop
+    mince (moins de 1 mm à tarauder)."""
+    try:
+        d = min(MAX_DEPTH, float(thickness) - float(machined) - KEPT)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(d, 3) if d >= 1.0 else 0.0
+
+
+def common(holes_: list) -> list:
+    """Les trous du diamètre le plus fréquent (à `SAME` près ; à égalité, le plus petit) : sur une plaque de reprise,
+    les trous de vis sont les plus nombreux — les autres la fixent sur la table (M6 fraisés tous les 100 mm) ou sont
+    des alésages."""
+    groups: list = []                                    # [[Ø du premier, trous…]] par Ø croissant
+    for h in sorted(holes_, key=lambda h: h.diameter):
+        if groups and h.diameter - groups[-1][0] <= SAME:
+            groups[-1].append(h)
+        else:
+            groups.append([h.diameter, h])
+    if not groups:
+        return []
+    best = max(groups, key=lambda g: (len(g), -g[0]))
+    keep = {id(h) for h in best[1:]}
+    return [h for h in holes_ if id(h) in keep]
+
+
+def _flag(v, default: bool) -> bool:
+    """Une case lue d'un réglage : vrai, faux, ou `default` pour ce qui n'est ni l'un ni l'autre."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str) and v.strip().lower() in ('true', '1', 'yes', 'oui'):
+        return True
+    if isinstance(v, str) and v.strip().lower() in ('false', '0', 'no', 'non'):
+        return False
+    return default
 
 
 @dataclass
@@ -44,10 +102,38 @@ class Spec:
     mirror: str = ''
     thread: str = ''                # '' : d'après le diamètre des trous de la plaque
     depth: float = 6.0              # profondeur taraudée
-    extra_drill: float = 2.0        # le perçage descend plus bas que le taraudage
+    extra_drill: float = 2.0        # le perçage (à partir de M6) descend plus bas que le taraudage
+    common_only: bool = True        # seulement les trous du Ø le plus fréquent (`common`)
+    auto_depth: bool = True         # profondeur d'après l'épaisseur du brut (`depth_for`)
+    machined: float = 3.0           # ce que l'usinage de la face enlève (pour `auto_depth`)
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+    def by_thickness(self, thickness) -> bool:
+        """La profondeur se calcule d'après cette épaisseur : la case est cochée et l'épaisseur connue."""
+        try:
+            return bool(self.auto_depth) and float(thickness or 0.0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def depth_on(self, thickness) -> float:
+        """La profondeur taraudée pour un brut de cette épaisseur : d'après elle si c'est demandé et qu'elle est
+        connue — 0 : brut trop mince pour être taraudé ; sinon la profondeur réglée."""
+        if self.by_thickness(thickness):
+            return depth_for(thickness, self.machined)
+        return round(float(self.depth), 3)
+
+    def drill_on(self, thickness) -> float:
+        """La profondeur du perçage à la fraise (à partir de M6) : `extra_drill` sous le taraudage — sans entrer,
+        quand l'épaisseur est connue, dans ce que l'usinage de la face enlèvera (0,5 mm gardés). 0 : trop mince."""
+        depth = self.depth_on(thickness)
+        if depth <= 0:
+            return 0.0
+        deep = depth + max(0.0, float(self.extra_drill))
+        if self.by_thickness(thickness):
+            deep = min(deep, max(depth, float(thickness) - float(self.machined) - KEPT))
+        return round(deep, 3)
 
     @classmethod
     def from_dict(cls, d) -> 'Spec':
@@ -55,7 +141,8 @@ class Spec:
         for k, v in dict(d or {}).items():
             if k in cls.__dataclass_fields__:
                 try:
-                    setattr(out, k, type(getattr(out, k))(v))
+                    was = getattr(out, k)
+                    setattr(out, k, _flag(v, was) if isinstance(was, bool) else type(was)(v))
                 except (TypeError, ValueError):
                     pass
         out.per_blank = max(0, out.per_blank)
@@ -358,6 +445,8 @@ def layout(blanks, plate_items, spec: Spec, skip=()) -> Placement:
     Une forme faite de plusieurs contours séparés compte pour autant de bruts. `skip` : objets de la plaque à laisser
     (les cercles des bruts choisis, quand ils sont sur le calque de la plaque)."""
     cand = plate_holes(plate_items, spec.min_diameter, spec.max_diameter, skip)
+    if spec.common_only:                                 # les trous de vis : les plus nombreux
+        cand = common(cand)
     out = Placement()
     used = []
     for b in blanks:

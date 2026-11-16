@@ -3,8 +3,9 @@ plaque, les bruts (formes choisies ou un calque), les trous de la plaque retenus
 filetage et sa profondeur, le brut retourné ou non pour son taraudage. Le compte des trous suit chaque réglage."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLabel, QSpinBox,
-                               QVBoxLayout)
+from PySide6.QtCore import QLocale
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLabel,
+                               QSpinBox, QVBoxLayout)
 
 from ..cam import fixture as FX
 from ..i18n import tr
@@ -14,11 +15,16 @@ MIRRORS = {'': 'Non, taraudé tel qu\'il est posé', 'x': 'Oui, retourné de gau
            'y': 'Oui, retourné de haut en bas'}
 
 
+def mm(value: float) -> str:
+    """Une cote dans la langue de l'interface (3,5 en français)."""
+    return QLocale().toString(float(value), 'g', 6)
+
+
 class FixtureDialog(QDialog):
     """`doc` : le dessin ; `spec` : le dernier réglage (`cam.fixture.Spec`) ; `selection` : les objets choisis (les
     bruts, d'office, s'il y a parmi eux des formes fermées)."""
 
-    def __init__(self, parent, doc, spec: FX.Spec, selection=(), placer=None, settings=None):
+    def __init__(self, parent, doc, spec: FX.Spec, selection=(), placer=None, settings=None, thickness=None):
         super().__init__(parent)
         self.setWindowTitle(tr('Plaque de reprise : trous de fixation des bruts'))
         self.doc = doc
@@ -79,6 +85,11 @@ class FixtureDialog(QDialog):
         self.dmin, self.dmax = self._spin(spec.min_diameter, 0.0, 100.0), self._spin(spec.max_diameter, 0.0, 100.0)
         form.addRow(QLabel(tr('Trous de la plaque : Ø de (mm)')), self.dmin)
         form.addRow(QLabel(tr('à (mm)')), self.dmax)
+        self.common = QCheckBox(tr('Seulement les trous du diamètre le plus fréquent'))
+        self.common.setToolTip(tr('Les autres trous de la plaque (sa fixation sur la table, des alésages) ne sont pas des places de vis'))
+        self.common.setChecked(bool(spec.common_only))
+        self.common.toggled.connect(lambda _on: self.refresh())
+        form.addRow(self.common)
         self.per_blank = QSpinBox()
         self.per_blank.setRange(0, 99)
         self.per_blank.setSpecialValueText(tr('tous'))
@@ -95,6 +106,20 @@ class FixtureDialog(QDialog):
         self.thread.setCurrentIndex(max(0, self.thread.findData(spec.thread)))
         self.thread.currentIndexChanged.connect(lambda _i: self.refresh())
         form.addRow(tr('Filetage'), self.thread)
+        if thickness is None:                            # sans réglage FAO : la plaque du dessin
+            plate_doc = getattr(doc, 'plate', None)
+            thickness = float(getattr(plate_doc, 'thickness', 0.0) or 0.0) if plate_doc is not None else 0.0
+        #: l'épaisseur du brut ; 0 : inconnue
+        self.thickness = max(0.0, float(thickness))
+        self.too_thin = False
+        self.auto_depth = QCheckBox(tr('Profondeur d’après l’épaisseur du brut'))
+        self.auto_depth.setToolTip(tr('Ce qui reste sous l’usinage de la face, moins 0,5 mm, 6 mm au plus : 3,5 mm pour un brut de 7 mm, 6 mm pour 10 mm. Sans effet tant que l’épaisseur du brut n’est pas connue.'))
+        self.auto_depth.setChecked(bool(spec.auto_depth))
+        self.auto_depth.toggled.connect(lambda _on: self.refresh())
+        form.addRow(self.auto_depth)
+        self.machined = self._spin(spec.machined, 0.0, 100.0)
+        form.addRow(QLabel(tr('Usiné en face (mm)')), self.machined)
+        self._depth_set = float(spec.depth)              # la profondeur réglée à la main, gardée sous la case
         self.depth = self._spin(spec.depth, 0.1, 100.0)
         form.addRow(QLabel(tr('Profondeur taraudée (mm)')), self.depth)
         self.extra = self._spin(spec.extra_drill, 0.0, 50.0)
@@ -193,12 +218,35 @@ class FixtureDialog(QDialog):
         return self._cache[key]
 
     def spec(self) -> FX.Spec:
+        depth = float(self.depth.value()) if self.depth.isEnabled() else self._depth_set
         return FX.Spec(min_diameter=float(self.dmin.value()), max_diameter=float(self.dmax.value()),
                        per_blank=int(self.per_blank.value()), margin=float(self.margin.value()),
                        mirror=self.mirror.currentData() or '', thread=self.thread.currentData() or '',
-                       depth=float(self.depth.value()), extra_drill=float(self.extra.value()))
+                       depth=depth, extra_drill=float(self.extra.value()),
+                       common_only=self.common.isChecked(), auto_depth=self.auto_depth.isChecked(),
+                       machined=float(self.machined.value()))
+
+    def _sync_depth(self) -> None:
+        """Sous la case « d'après l'épaisseur », l'épaisseur connue : la profondeur calculée, montrée, non
+        modifiable (`too_thin` : rien à tarauder) ; la profondeur réglée à la main est gardée et revient quand la
+        case est décochée."""
+        on = self.auto_depth.isChecked() and self.thickness > 0
+        auto = FX.depth_for(self.thickness, float(self.machined.value())) if on else 0.0
+        self.too_thin = on and not auto
+        self.depth.blockSignals(True)
+        if on:
+            if self.depth.isEnabled():
+                self._depth_set = float(self.depth.value())
+            if auto:
+                self.depth.setValue(auto)
+        elif not self.depth.isEnabled():
+            self.depth.setValue(self._depth_set)
+        self.depth.setEnabled(not on)
+        self.depth.blockSignals(False)
+        self.machined.setEnabled(on)
 
     def refresh(self) -> None:
+        self._sync_depth()
         plate = self.plate_layer()
         blanks = self.blanks()
         if plate is None or not blanks:
@@ -207,17 +255,29 @@ class FixtureDialog(QDialog):
                                  'calque de la plaque de reprise.'))
             self.ok.setEnabled(False)
             return
-        pl = FX.layout(blanks, plate.items, self.spec(), self.skip())
+        spec = self.spec()
+        pl = FX.layout(blanks, plate.items, spec, self.skip())
         self.placement = pl
         text = tr('{0} bruts : {1} trous de vis, filetage {2}.').format(len(pl.blanks), pl.count(),
                                                                        pl.thread or tr('aucun'))
         if pl.empty():
             text += ' ' + tr('{0} bruts sans aucun trou de la plaque dessous (trop petits, ou à déplacer).').format(
                 len(pl.empty()))
+        if not pl.count() and spec.common_only:
+            text += ' ' + tr('Si les places de vis ne sont pas les trous les plus nombreux de la plaque, décochez « Seulement les trous du diamètre le plus fréquent ».')
         if pl.count() and not pl.thread:
             text += ' ' + tr('Aucun filetage ne passe dans ces trous : choisissez-le.')
+        elif pl.count() and self.too_thin:
+            text += ' ' + tr('Le brut ({0} mm) est trop mince pour être taraudé sous {1} mm usinés en face : décochez la profondeur d’après l’épaisseur pour la régler à la main.').format(mm(self.thickness), mm(spec.machined))
+        elif pl.count() and FX.predrilled(pl.thread):
+            text += ' ' + tr('{0} : perçage à la fraise à {1} mm, puis taraudage à {2} mm.').format(
+                pl.thread, mm(spec.drill_on(self.thickness)), mm(spec.depth_on(self.thickness)))
+        elif pl.count():
+            text += ' ' + tr('{0} : une seule opération à {1} mm, la fraise à fileter perce.').format(
+                pl.thread, mm(spec.depth_on(self.thickness)))
+        self.extra.setEnabled(not pl.thread or FX.predrilled(pl.thread))     # pas de perçage à part sous M6
         self.info.setText(text)
-        self.ok.setEnabled(bool(pl.count() and pl.thread))
+        self.ok.setEnabled(bool(pl.count() and pl.thread and not self.too_thin))
 
     def _sync_place(self) -> None:
         self.place_btn.setEnabled(self.placer is not None and self.library.count() > 0)

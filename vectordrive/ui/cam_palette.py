@@ -33,6 +33,7 @@ ROLE_GROUP = Qt.ItemDataRole.UserRole + 5      # dossier de la palette (« type 
 ROLE_DEFAULT = Qt.ItemDataRole.UserRole + 6    # son nom d'origine
 ROLE_PROCESS = Qt.ItemDataRole.UserRole + 7    # un process de « Mes process » (plusieurs opérations)
 ROLE_PDIR = Qt.ItemDataRole.UserRole + 8       # un dossier de « Mes process » (à part de ceux de « Mes modèles »)
+ROLE_FAMILY = Qt.ItemDataRole.UserRole + 9     # une famille des parcours unifiés (clé de cam_panel.UNIFIED)
 #: noms donnés aux dossiers de la palette (JSON {dossier: nom})
 NAMES = 'fao/palette/noms'
 
@@ -340,6 +341,8 @@ class CamPalette(QWidget):
         for node in items(self.tree):
             if node.data(0, ROLE_GROUP):
                 was[str(node.data(0, ROLE_GROUP))] = node.isExpanded()
+            if node.data(0, ROLE_FAMILY):
+                was['uni:' + str(node.data(0, ROLE_FAMILY))] = node.isExpanded()
             if node.data(0, ROLE_FOLDER) and node.isExpanded():
                 self._open_folders.add(str(node.data(0, ROLE_FOLDER)))
         self._was_open = was
@@ -360,16 +363,64 @@ class CamPalette(QWidget):
         # la palette de TypeEdit : dans « TypeEdit » une fois l'import fait, sinon (celle d'un plugin aussi) en tête ici
         te_favs = favs if te_roots and te_palette() else ()
         groups = [('favoris', 'Favoris (palette TypeEdit)', favs)] if favs and not te_favs else []
-        groups += [('fam:' + title, title, keys) for title, keys in families]
-        for gkey, title, keys in groups:
-            g = self._group(gkey, tr(title))
-            base.addChild(g)
-            for key in keys:
-                if key in ps:
-                    g.addChild(self._preset_row(key, ps))
-            g.setExpanded(was.get(gkey, True))
+        unified_rows = []                                # parcours unifiés : [(famille, libellé, parcours offerts)]
+        if self.unified():
+            from .cam_panel import UNIFIED
+            taken = {k for _l, _w, members in UNIFIED.values() for k, _t in members}
+            for fam, (title, _list, members) in UNIFIED.items():
+                keys = tuple(k for k, _t in members if k in ps and fits(k))
+                if keys:
+                    unified_rows.append((fam, title, keys))
+            later = [('fam:Plugins', 'Plugins', tuple(k for k in ps if k not in taken and fits(k)))]
+            later = [g for g in later if g[2]]           # les parcours des plugins : à part, après les familles
+        else:
+            groups += [('fam:' + title, title, keys) for title, keys in families]
+            later = []
+
+        def add_groups(some) -> None:
+            for gkey, title, keys in some:
+                g = self._group(gkey, tr(title))
+                base.addChild(g)
+                for key in keys:
+                    if key in ps:
+                        g.addChild(self._preset_row(key, ps))
+                g.setExpanded(was.get(gkey, True))
+        add_groups(groups)
+        for fam, title, keys in unified_rows:
+            base.addChild(self._family_row(fam, title, keys, ps, was))
+        add_groups(later)
         base.setExpanded(was.get('type', True))
         self._folder_tree(mine, ps, te_favs, te_roots, procs)
+
+    def unified(self) -> bool:
+        """La palette montre les parcours unifiés (9 familles) plutôt que les 22 parcours par dossiers."""
+        from .cam_panel import unified
+        return unified(self.win.settings)
+
+    def set_unified(self, on: bool) -> None:
+        from .cam_panel import UNIFIED_KEY
+        self.win.settings.setValue(UNIFIED_KEY, bool(on))
+        self.refresh()
+
+    def _family_row(self, fam: str, title: str, keys: tuple, ps: dict, was: dict) -> QTreeWidgetItem:
+        """Parcours unifiés : la ligne d'une famille — un clic ouvre son formulaire, où une liste fait choisir le
+        parcours ; ses parcours sont dessous, repliés (un clic sur l'un d'eux ouvre le sien). Une famille d'un seul
+        parcours : la ligne de ce parcours, au nom de la famille."""
+        if len(keys) == 1:
+            it = self._preset_row(keys[0], ps)
+            it.setText(0, tr(title))
+            return it
+        g = QTreeWidgetItem([tr(title)])
+        act = self.win.A.get(f'cam_new_{keys[0]}')
+        if act is not None:
+            g.setIcon(0, act.icon())
+        g.setData(0, ROLE_FAMILY, fam)
+        g.setFlags(g.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
+        g.setToolTip(0, ', '.join(tr(ps[k][0]) for k in keys))
+        for k in keys:
+            g.addChild(self._preset_row(k, ps))
+        g.setExpanded(bool(was.get('uni:' + fam, False)))
+        return g
 
     def _preset_row(self, key: str, ps: dict) -> QTreeWidgetItem:
         """La ligne d'un parcours et, dessous, les modèles des plugins pour ce parcours (dans leurs dossiers)."""
@@ -607,6 +658,9 @@ class CamPalette(QWidget):
         if item.data(0, ROLE_PROCESS):                   # un process : ajouté au dessin
             self.apply_process(str(item.data(0, ROLE_TPL)))
             return
+        if item.data(0, ROLE_FAMILY):                    # parcours unifiés : le formulaire de la famille
+            self.win.cam_panel.new_family(str(item.data(0, ROLE_FAMILY)))
+            return
         key = item.data(0, ROLE_KIND)
         if not key:
             item.setExpanded(not item.isExpanded())
@@ -621,6 +675,8 @@ class CamPalette(QWidget):
             m.addAction(tr('Appliquer au dessin…'), lambda: self.apply_process(str(name)))
             if item.data(0, ROLE_ORIGIN) == 'utilisateur':
                 m.addAction(tr('Remplacer par les opérations du dessin'), lambda: self.update_process(str(name)))
+        if item is not None and item.data(0, ROLE_FAMILY):
+            m.addAction(tr('Nouveau parcours…'), lambda: self._clicked(item))
         if item is not None and item.data(0, ROLE_KIND):
             m.addAction(tr('Nouveau parcours…'), lambda: self._clicked(item))
             key = str(item.data(0, ROLE_KIND))
@@ -653,6 +709,10 @@ class CamPalette(QWidget):
         m.addAction(tr('Nouveau dossier…'), lambda: self.new_folder(''))
         m.addAction(tr('Importer les modèles de TypeEdit…'), lambda: self.import_typeedit())
         m.addAction(tr('Actualiser'), self.refresh)
+        uni = m.addAction(tr('Parcours unifiés (9 familles)'))
+        uni.setCheckable(True)
+        uni.setChecked(self.unified())
+        uni.toggled.connect(self.set_unified)
         m.popup(self.tree.viewport().mapToGlobal(pos))
 
     # --- process (demande du 15/11, 23 h 30) ------------------------------------------------------------------------

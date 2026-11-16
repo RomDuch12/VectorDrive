@@ -134,8 +134,11 @@ class TestPalette(unittest.TestCase):
         self._tpl = os.environ.get('VECTORDRIVE_CAM_TEMPLATES')
         os.environ['VECTORDRIVE_CAM_TEMPLATES'] = tempfile.mkdtemp()
         self.w = MainWindow()
+        self.w.settings.setValue('fao/palette/unifiee', False)   # 0.917.0 : ces essais lisent les dossiers des 22 parcours
+        self.w.cam_palette.refresh()
 
     def tearDown(self):
+        self.w.settings.remove('fao/palette/unifiee')
         os.environ['VECTORDRIVE_CAM_TEMPLATES'] = self._tpl
         self.w.close()
 

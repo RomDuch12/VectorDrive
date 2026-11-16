@@ -49,7 +49,9 @@ class Model(unittest.TestCase):
 
     def test_thread_through_the_plate_holes(self):
         from vectordrive.cam import fixture as FX
-        self.assertEqual([FX.thread_for(d) for d in (3.2, 4.0, 4.3, 6.4, 9.0, 2.0)], ['M3', 'M3', 'M4', 'M6', 'M8', ''])
+        # depuis 0.915.0 : ajustement juste (une M4 passe dans un Ø 4, une M2 dans un Ø 2)
+        self.assertEqual([FX.thread_for(d) for d in (3.2, 4.0, 4.3, 6.4, 9.0, 2.0, 1.5)],
+                         ['M3', 'M4', 'M4', 'M6', 'M8', 'M2', ''])
 
     def test_plate_holes_and_blanks(self):
         from vectordrive.cam import fixture as FX
@@ -123,7 +125,7 @@ class Model(unittest.TestCase):
         plate.items.append(bore)
         got = FX.layout([a], plate.items, FX.Spec(per_blank=0), skip={bore.id})
         self.assertNotIn((30.0, 20.0), at(got.blanks[0][1]))
-        got = FX.layout([a], plate.items, FX.Spec(per_blank=0))
+        got = FX.layout([a], plate.items, FX.Spec(per_blank=0, common_only=False))   # 0.915.0 : tous les Ø
         self.assertIn((30.0, 20.0), at(got.blanks[0][1]))
 
 
@@ -150,7 +152,8 @@ class Panel(unittest.TestCase):
         doc, plate, blanks, a, b, _eng = drawing()
         p.doc.layers.extend([plate, blanks])
         before = len(p.setup().operations)
-        pl = p.fixture_holes(exec_dialog=False, spec=FX.Spec(depth=5.0), plate_layer=plate, blanks=[a, b])
+        pl = p.fixture_holes(exec_dialog=False, spec=FX.Spec(depth=5.0, auto_depth=False), plate_layer=plate,
+                             blanks=[a, b])
         self.assertEqual(pl.count(), 4)
         layer = p.doc.layers[-1]
         self.assertEqual(layer.name, 'Fixation des bruts M3')
@@ -159,11 +162,9 @@ class Panel(unittest.TestCase):
         self.assertEqual(sorted(at([FX.Hole(*holes.circle_of(it)[:2], 0) for it in layer.items])), sorted(CORNERS))
         self.assertAlmostEqual(holes.circle_of(layer.items[0])[2] * 2, model.THREADS['M3'][2], places=3)
         ops = p.setup().operations[before:]
-        self.assertEqual([o.kind in ('percage', 'percage_fraise') for o in ops], [True, False])
-        self.assertEqual((ops[1].kind, ops[1].thread, ops[1].depth), ('taraudage', 'M3', 5.0))
-        ids = sorted(it.id for it in layer.items)
-        self.assertEqual((sorted(ops[0].items), sorted(ops[1].items)), (ids, ids))
-        self.assertEqual(ops[0].depth, 7.0)                                  # 2 mm plus bas que le taraudage
+        self.assertEqual(len(ops), 1)                                        # 0.915.0 : sous M6, une seule opération
+        self.assertEqual((ops[0].kind, ops[0].thread, ops[0].depth), ('taraudage', 'M3', 5.0))
+        self.assertEqual(sorted(ops[0].items), sorted(it.id for it in layer.items))
         self.assertEqual(json.loads(self.w.settings.value('fao/plaque_reprise'))['depth'], 5.0)
         self.assertIsNone(p.fixture_holes(exec_dialog=False, spec=FX.Spec(), plate_layer=plate, blanks=[b]))
         self.assertTrue(layer.extra.get(FX.MADE_KEY))                        # la fois suivante : jamais la plaque

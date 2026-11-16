@@ -6958,3 +6958,25 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Claude Desktop lance pour cela **`VectorDrive --mcp`** : un pont sans fenêtre, qui passe ses demandes au serveur local du VectorDrive ouvert. Le port et le jeton sont lus dans les réglages : rien à recopier, et un port changé est suivi sans rien refaire.
 - **VectorDrive fermé, ou serveur arrêté** : l'assistant voit quand même les outils, et chaque appel lui répond de demander à l'utilisateur d'ouvrir VectorDrive et de cocher le serveur.
 - Le pont n'ouvre rien sur le réseau : il ne parle qu'au serveur de cette machine.
+### v0.915.0 — Plaques de reprise : M4 dans un trou de 4,05, une seule opération sous M6
+
+- **Une vis M4 passe dans un trou de 4 ou de 4,05** : la commande « Plaque de reprise : trous de fixation des bruts » propose maintenant M4 pour ces plaques (elle proposait M3).
+- **Seuls les trous du diamètre le plus fréquent sont des places de vis** (case cochée d'office) : les trous qui fixent la plaque sur la table, ou des alésages, ne reçoivent plus de vis.
+- **Sous M6, une seule opération « Perçage-taraudage »** : la fraise à fileter perce elle-même. L'outil pris est la fraise dont le diamètre approche le plus l'avant-trou sans le dépasser ; faute d'en trouver une, une « Fraise à fileter » est créée à ce diamètre, **à vérifier** — le compte rendu la nomme.
+- **À partir de M6**, un perçage à la fraise (DrillMilling) puis le taraudage. Plus de perçage au foret.
+- **Profondeur d'après l'épaisseur du brut** (case cochée d'office) : ce qui reste sous l'usinage de la face (3 mm, réglable), moins 0,5 mm, 6 mm au plus — 3,5 mm pour 7 mm, 6 mm pour 10 mm. Le perçage à la fraise ne descend jamais dans ce qui sera usiné en face. Brut trop mince : rien n'est ajouté, la fenêtre le dit. Case décochée, ou épaisseur inconnue : la profondeur réglée à la main.
+- La fenêtre dit ce qui sera ajouté, et à quelles profondeurs, avant de valider.
+### v0.916.0 — Surépaisseur Z, distincte de celle des flancs
+
+- **Contour, Poche et Reste matière ont un champ « Surépaisseur Z : au fond (mm) »** : l'opération s'arrête à cette hauteur au-dessus de sa profondeur, et laisse le fond à une finition. La surépaisseur des flancs (XY) reste réglée à part.
+- Les passes, les pattes et les cycles de la machine suivent : tout s'arrête au-dessus du fond. L'opération garde sa profondeur dans la liste.
+- Une poche « seulement le reste » placée après une poche qui a laissé du fond refait le fond partout, et le dit.
+- La surépaisseur Z n'est pas reprise d'une opération à la suivante : la finition créée après l'ébauche part de zéro.
+- Surépaisseur Z égale ou supérieure à la profondeur : rien n'est usiné, un avertissement le dit.
+### v0.917.0 — Palette FAO : 9 familles au lieu de 22 parcours
+
+- **« Parcours type » montre 9 lignes** : Tracé, Trous, Découpe, Gravure, Reprise, Relief 3D, Gamme, Surfaçage, Machine. Un clic sur une famille ouvre son formulaire.
+- **Dans le formulaire, une liste fait la différence** : « Type de trou » (perçage, perçage à la fraise, taraudage, ébavurage), « Fond » de la gravure (plat, en V, prismatique, laser), « Type de découpe » (flanc droit, flanc incliné, laser), « Étape » du relief 3D, « Procédé » du tracé, « Type » pour la machine. Changer la liste rouvre le formulaire du parcours choisi, avec ses propres dernières valeurs.
+- La famille retient le dernier parcours pris : « Trous » rouvre le taraudage si c'est lui qui a servi.
+- Machine connue : une famille ne propose que ce qui va à la machine (un laser : le tracé, la découpe et la gravure au laser).
+- **Rien n'est retiré** : les 22 parcours sont sous leur famille (la flèche les déplie), avec leurs modèles ; le ruban, les favoris, les modèles et les process ne changent pas. Clic droit dans la palette › **« Parcours unifiés (9 familles) »** décoché : les cinq dossiers d'avant reviennent.

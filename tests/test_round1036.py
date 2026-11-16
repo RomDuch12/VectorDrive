@@ -46,12 +46,14 @@ class Base(unittest.TestCase):
         os.environ['VECTORDRIVE_CAM_TEMPLATES'] = tempfile.mkdtemp()         # vos modèles : un dossier d'essai
         self.w = MainWindow()
         self.w.settings.remove(getattr(CP, 'NAMES', 'fao/palette/noms'))
+        self.w.settings.setValue('fao/palette/unifiee', False)   # 0.917.0 : ces essais lisent les dossiers des 22 parcours
         self.pal = self.w.cam_palette
         self.te_pal = True                                                   # la palette de TypeEdit est là
         self.found, self.favs, self.empty = {}, [], []
 
     def tearDown(self):
         self.w.settings.remove(getattr(CP, 'NAMES', 'fao/palette/noms'))
+        self.w.settings.remove('fao/palette/unifiee')
         self.w.modified = False
         self.w.close()
         self.w.deleteLater()

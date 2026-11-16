@@ -35,6 +35,7 @@ LABELS = {
     'stepover': 'Recouvrement (fraction du Ø)', 'power': 'Puissance laser (%)',
     'frequency': 'Fréquence laser (kHz)', 'tool_id': 'Outil', 'sources': 'Couleurs du dessin',
     'depth': 'Profondeur (mm)', 'side': 'Côté', 'climb': 'Avalant', 'stock': 'Surépaisseur (mm)',
+    'stock_z': 'Surépaisseur Z : au fond (mm)',
     'z_start': 'Z de départ : dessus de la matière (mm)',
     'tab_spacing': "Un pontet tous les (mm, 0 = d'après le nombre)",
     'tab_gap': "Distance entre ponts (mm, 0 = d'après le nombre)",
@@ -178,6 +179,56 @@ PRESETS = {
     'instruction': ('Instruction', 'instruction', {}, 'fraise'),
     'texte_machine': ('Texte machine', 'texte_machine', {'depth': 0.25}, 'conique'),
 }
+#: parcours unifiés (question 27, réponse du 15/11) : 9 familles pour les 22 parcours de la palette.
+#: clé → (libellé, libellé de la liste qui fait la différence, ((clé du parcours, son libellé dans la liste), …))
+UNIFIED = {
+    'tracer': ('Tracé', 'Procédé', (('trace', 'Usinage'), ('laser', 'Laser'))),
+    'trous': ('Trous', 'Type de trou', (('percage', 'Perçage'), ('percage_fraise', 'Perçage à la fraise'),
+                                         ('taraudage', 'Taraudage'), ('chanfrein', 'Ébavurage'))),
+    'decouper': ('Découpe', 'Type de découpe', (('decoupe', 'Flanc droit'), ('decoupe3d', 'Flanc incliné (3D)'),
+                                                ('laser_decoupe', 'Laser'))),
+    'graver': ('Gravure', 'Fond', (('gravure', 'Plat'), ('gravure3d', 'En V'), ('prismatique', 'Prismatique'),
+                                   ('laser_gravure', 'Laser'))),
+    'reprise': ('Reprise', '', (('reste', ''),)),
+    'relief3d': ('Relief 3D', 'Étape', (('relief', 'Relief'), ('gamme_relief', 'Gamme : ébauche et finition'),
+                                        ('finition', 'Finition 3D'), ('finition25d', 'Finition 2,5D'))),
+    'gamme_te': ('Gamme', '', (('gamme', ''),)),
+    'surfacer': ('Surfaçage', '', (('surfacage', ''),)),
+    'machine': ('Machine', 'Type', (('instruction', 'Instruction'), ('texte_machine', 'Texte machine'))),
+}
+#: réglages : la palette montre les familles (d'office) ; le dernier parcours pris dans chaque famille (JSON)
+UNIFIED_KEY = 'fao/palette/unifiee'
+UNIFIED_LAST = 'fao/palette/famille_dernier'
+
+
+def unified(settings) -> bool:
+    """La palette montre les parcours unifiés (9 familles) — d'office ; sinon les 22 parcours par dossiers."""
+    return settings is None or settings.value(UNIFIED_KEY, True) not in (False, 'false', 0, '0')
+
+
+def family_of(member: str) -> str:
+    """La famille (clé de `UNIFIED`) du parcours `member` de la palette ; '' : aucune (parcours d'un plugin)."""
+    return next((f for f, (_l, _w, members) in UNIFIED.items() if any(k == member for k, _t in members)), '')
+
+
+from PySide6.QtCore import QEvent as _QEvent, QObject as _QObject  # noqa: E402 — pour `PopupOnly` seulement
+
+
+class PopupOnly(_QObject):
+    """Une liste qui ne change que par sa liste déroulée : fermée, ni les flèches ni les lettres ne choisissent
+    (Espace, Entrée, F4 ou ↓ la déroulent). Pour la liste d'une famille, dont chaque changement ferme le
+    formulaire : une touche de trop ne doit pas le faire."""
+
+    def eventFilter(self, box, ev) -> bool:
+        if ev.type() != _QEvent.Type.KeyPress or box.view().isVisible():
+            return False
+        if ev.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Escape):
+            return False
+        if ev.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_F4, Qt.Key.Key_Down):
+            box.showPopup()
+        return True
+
+
 #: outils créés quand la bibliothèque n'en a pas de la nature voulue
 DEFAULT_TOOLS = {
     'conique': dict(name='Conique 30° pointe 0,1', kind='conique', diameter=3.175, angle=30.0, tip=0.1,
@@ -385,7 +436,7 @@ OP_SECTIONS = [
     ('Outil', ('tool_id', 'ref_tool_id', 'ramp')),   # ramp : bouton « Plongée angulaire » et son angle, sous l'outil
     ('Opération', ('name', 'kind', 'instruction', 'params', 'link_previous', 'rest_previous', 'enabled')),
     ('Où usiner', ('sources', 'items', 'side', 'climb')),     # sources, items : repliés en fin de formulaire
-    ('Profondeurs', ('z_start', 'depth', 'step_down', 'pass_depths', 'pass_order', 'link_passes', 'stock', 'vcarve_finish', 'finish',
+    ('Profondeurs', ('z_start', 'depth', 'step_down', 'pass_depths', 'pass_order', 'link_passes', 'stock', 'vcarve_finish', 'stock_z', 'finish',
                      'finish_skip_frame', 'finish_shut_levels',
                      'contour_ref', 'trace_mode', 'knife_mode', 'knife_angle', 'knife_angle_max',
                      'chamfer_width', 'prism_hollow', 'prism_lateral',
@@ -442,7 +493,7 @@ KIND_FIELDS = {
                   'emboss_side', 'emboss_passes',
                   'contour_ref'},
     'contour': {'start_policy', 'pass_order', 'link_passes', 'link_previous',
-                'side', 'climb', 'stock', 'finish', 'finish_skip_frame', 'tabs', 'tab_spacing', 'tab_gap', 'tab_max', 'tab_mode', 'tab_width',
+                'side', 'climb', 'stock', 'stock_z', 'finish', 'finish_skip_frame', 'tabs', 'tab_spacing', 'tab_gap', 'tab_max', 'tab_mode', 'tab_width',
                 'tab_shape',
                 'tab_height', 'common_line', 'chain_cut', 'small_first', 'small_first_by', 'holes_order', 'lead_in', 'lead_out', 'lead_mode', 'lead_angle', 'lead_out_angle', 'lead_pierce', 'lead_transition',
                 'contour_ref', 'trochoidal', 'troch_width', 'troch_step', 'leave_uncut',
@@ -450,14 +501,15 @@ KIND_FIELDS = {
                 'loop_angle_min', 'loop_angle_max', 'loop_min_side', 'loop_length', 'loop_radius', 'loop_check',
                 'corner_round', 'offset_add'},
     'poche': {'pass_order', 'link_passes', 'link_previous', 'rest_previous',
-              'climb', 'stock', 'finish', 'finish_skip_frame', 'finish_shut_levels', 'contour_ref', 'pocket_mode',
+              'climb', 'stock', 'stock_z', 'finish', 'finish_skip_frame', 'finish_shut_levels', 'contour_ref',
+              'pocket_mode',
               'pocket_spiral',
               'ramp_helix',
               'pocket_outside_in', 'corner_opt', 'corner_opt_angle', 'stepover_mm', 'sweep_angle',
               'sweep_angle_mode', 'sweep_angle_incr', 'sweep_direction', 'sweep_by_zone', 'sweep_contour', 'sweep_contour_stock', 'sweep_texture',
               'tex_depth_min',
               'tex_depth_max', 'tex_len_min', 'tex_len_max', 'tex_overlap', 'tex_seed'},
-    'reste': {'ref_tool_id', 'climb', 'stock', 'link_previous', 'stepover_mm'},
+    'reste': {'ref_tool_id', 'climb', 'stock', 'stock_z', 'link_previous', 'stepover_mm'},
     'gamme': {'ref_tool_id'},
     'decoupe3d': {'side', 'climb', 'stock', 'corner_pull', 'corner_pull_angle', 'corner_pull_z', 'foot_pull', 'foot_pull_min',
                   'foot_pull_max', 'link_previous'},
@@ -776,11 +828,14 @@ class FieldsDialog(QDialog):
                  hidden=('id', 'geometry', 'catalog', 'drawings', 'folder', 'machines', 'surface2d', 'history',
                          'contours3d_pl', 'body3d_ref'), library=None,
                  selection=None, kind_choice: bool = False,
-                 templates=None, preset: str = '', template: str | None = None):
+                 templates=None, preset: str = '', template: str | None = None, family: str = '', members=()):
         super().__init__(parent)
         #: modèles d'usinage proposés (parcours de la palette `preset`)
         self.templates = list(templates or [])
         self.preset = preset
+        #: parcours unifiés : la famille du parcours et ceux qu'elle offre ici (clés) — une liste les fait choisir ;
+        #: `switch_to` : le parcours choisi dans la liste (ce formulaire se ferme, celui du parcours choisi s'ouvre)
+        self.family, self.members, self.switch_to = family, tuple(members), ''
         #: la stratégie est donnée par le type de parcours : pas de liste à choisir, la ligne « Type de parcours » la
         #: montre (demande du 14/11) ; seule « Nouvelle opération » la fait choisir (`kind_choice`)
         self.fixed_kind = isinstance(obj, model.Operation) and not kind_choice
@@ -986,6 +1041,18 @@ class FieldsDialog(QDialog):
                 klab = QLabel(tr('Type de parcours'))
                 form.addRow(klab, self.kind_label)
                 self.rows['kind_label'] = (klab, self.kind_label)
+                if self.family in UNIFIED and len(self.members) > 1:     # parcours unifiés : la liste de la famille
+                    labels = dict(UNIFIED[self.family][2])
+                    self.family_box = QComboBox()
+                    for k in self.members:
+                        self.family_box.addItem(tr(labels.get(k, k)), k)
+                    self.family_box.setCurrentIndex(max(0, self.family_box.findData(self.preset)))
+                    self.family_box.activated.connect(lambda _i: self.choose_member(self.family_box.currentData()))
+                    self._family_keys = PopupOnly(self.family_box)       # fermée : aucune touche ne choisit
+                    self.family_box.installEventFilter(self._family_keys)
+                    flab = QLabel(tr(UNIFIED[self.family][1]))
+                    form.addRow(flab, self.family_box)
+                    self.rows['family'] = (flab, self.family_box)
 
     def _feed_frames(self, g, fs) -> None:
         """Vitesses : le cadre Ébauche (avance, plongée, broche) à côté du cadre Finition (avance de finition). Un clic
@@ -1533,6 +1600,14 @@ class FieldsDialog(QDialog):
             if text != w.specialValueText():             # Qt réécrit le champ : seulement si l'outil a changé,
                 w.setSpecialValueText(text)              # jamais pendant la frappe
 
+    def choose_member(self, key: str) -> None:
+        """Parcours unifiés : un autre parcours de la famille choisi dans la liste — ce formulaire se ferme (rien
+        n'est ajouté) et celui du parcours choisi s'ouvre, prérempli de ses propres dernières valeurs
+        (`CamPanel.new_operation` lit `switch_to`)."""
+        if key and str(key) != self.preset and str(key) in self.members:
+            self.switch_to = str(key)
+            self.reject()
+
     def _changed(self) -> None:
         """Champs de la stratégie choisie, schéma à jour."""
         note = getattr(self, 'tool_note', None)
@@ -1562,8 +1637,10 @@ class FieldsDialog(QDialog):
                     show = ((not known) or n not in OPTIONAL or n in own)
                 if n == 'kind' and getattr(self, 'fixed_kind', False):
                     show = False
-                if n == 'kind_label':                        # le type de parcours, sans liste
-                    show = bool(getattr(self, 'fixed_kind', False))
+                if n == 'family':                            # parcours unifiés : la liste de la famille, toujours
+                    show = True
+                if n == 'kind_label':                        # le type de parcours, sans liste (ni sous celle de la famille)
+                    show = bool(getattr(self, 'fixed_kind', False)) and not hasattr(self, 'family_box')
                     ps = presets()
                     pre = ps.get(self.preset) if self.preset else None
                     w.setText(tr(pre[0]) if pre is not None and pre[1] == kind     # le parcours de la palette
@@ -4153,7 +4230,7 @@ class CamPanel(QWidget):
     #: dernières valeurs des parcours de la palette (JSON : parcours → modèle d'une opération et son outil)
     LAST_KEY = 'fao/derniers_parcours'
     #: jamais repris des dernières valeurs : le nom, la stratégie du parcours, les hauteurs de F10, ce qui tient au dessin
-    LAST_SKIP = frozenset({'name', 'kind', 'safe_z', 'safe_z_faced', 'clear_z', 'wrap_model', 'model_path', 'faces3d', 'contours3d',
+    LAST_SKIP = frozenset({'name', 'kind', 'stock_z', 'safe_z', 'safe_z_faced', 'clear_z', 'wrap_model', 'model_path', 'faces3d', 'contours3d',
                            'contours3d_pl', 'setup_face', 'body3d', 'body3d_ref', 'surface2d'})
 
     def _last_all(self) -> dict:
@@ -4320,10 +4397,43 @@ class CamPanel(QWidget):
             o.name = t_op.name or name
         return True
 
-    def new_operation(self, key: str, exec_dialog: bool = True, template: str | None = None):
+    def family_members(self, family: str) -> list:
+        """Parcours unifiés : les parcours (clés) que la famille `family` offre ici — ceux de la palette qui vont à
+        la machine du dessin (un parcours laser pour un laser, les autres pour une fraiseuse)."""
+        ps = presets()
+        machine = getattr(self.win, '_machine_kind', '')
+
+        def fits(key: str) -> bool:
+            if not machine or key == 'instruction':
+                return True
+            return (ps[key][3] == 'laser') == (machine == 'laser')
+        return [k for k, _t in UNIFIED.get(family, ('', '', ()))[2] if k in ps and fits(k)]
+
+    def _family_last(self) -> dict:
+        import json
+        try:
+            last = json.loads(str(self.win.settings.value(UNIFIED_LAST, '') or '{}'))
+        except ValueError:
+            last = {}
+        return last if isinstance(last, dict) else {}
+
+    def new_family(self, family: str, exec_dialog: bool = True, member: str = ''):
+        """Nouveau parcours d'une famille (parcours unifiés, question 27) : le parcours `member`, sinon celui pris
+        la dernière fois dans la famille, sinon le premier ; son formulaire porte la liste de la famille pour en
+        changer. None : la famille n'offre rien ici, ou rien n'est ajouté."""
+        members = self.family_members(family)
+        if not members:
+            return None
+        if member not in members:
+            member = self._family_last().get(family)
+            member = member if member in members else members[0]
+        return self.new_operation(member, exec_dialog=exec_dialog, family=family)
+
+    def new_operation(self, key: str, exec_dialog: bool = True, template: str | None = None, family: str = ''):
         """Nouveau parcours de la palette : opération réglée d'avance (ou
         d'après le modèle `template`) sur les contours sélectionnés — ou les
-        couleurs, en usinage par couleur —, son formulaire, puis son calcul."""
+        couleurs, en usinage par couleur —, son formulaire, puis son calcul.
+        `family` : il vient d'une famille (parcours unifiés), qui retient ce choix une fois le parcours ajouté."""
         scope = self._scope()
         if scope is None:
             msg = tr('Sélectionnez d\'abord les contours à usiner (ou « Usiner : les couleurs »)')
@@ -4375,14 +4485,23 @@ class CamPanel(QWidget):
         if exec_dialog:
             dlg = FieldsDialog(self, tr('Nouveau parcours : {0}').format(tr(label)), o, self.doc, s.tools,
                                library=self.pick_library(), selection=self._selected(),
-                               templates=self.templates_for(key), preset=key, template=template)
+                               templates=self.templates_for(key), preset=key, template=template,
+                               family=family, members=self.family_members(family) if family else ())
             if not dlg.exec():
+                if dlg.switch_to:                        # un autre parcours de la famille, choisi dans la liste
+                    return self.new_family(family, exec_dialog=exec_dialog, member=dlg.switch_to)
                 return None
             dlg.apply()
             s.tools.extend(dlg.new_tools)                 # outil pris dans Mes outils : copié dans le document
             if tool is None:                             # outil choisi au formulaire : ce qui se règle d'après lui
                 self._after_tool_chosen(o, s, key, old)
             self.remember(key, o, s)
+        if family and key in self.family_members(family):    # ajouté : la famille rouvrira ce parcours (jamais une
+            import json                                      # gamme, qui a sa propre fenêtre, ni un formulaire annulé)
+            last = self._family_last()
+            if last.get(family) != key:
+                last[family] = key
+                self.win.settings.setValue(UNIFIED_LAST, json.dumps(last))
         s.operations.append(o)
         self.save(s)
         self.compute_op(o)
@@ -4423,13 +4542,15 @@ class CamPanel(QWidget):
                             items=[it.id for it in items], **self._op_defaults('poche'))
         return self._finish_new_op(s, o, exec_dialog, '')
 
-    def add_drilling(self, items, depth: float, diameter: float, name: str = '', exec_dialog: bool = True):
+    def add_drilling(self, items, depth: float, diameter: float, name: str = '', exec_dialog: bool = True,
+                     mill: bool = False):
         """Perçage des cercles `items` (trous d'une pièce 3D) : au foret du
         bon diamètre s'il y en a un (document, puis Mes outils), sinon à la
-        fraise en hélice (perçage à la fraise, diamètre du trou)."""
+        fraise en hélice (perçage à la fraise, diamètre du trou). `mill` :
+        toujours à la fraise, même si un foret convient."""
         s = self.setup()
-        foret = next((t for t in list(s.tools) + list(self.library_tools())
-                      if t.kind == 'foret' and abs(t.diameter - diameter) < 0.011), None)
+        foret = None if mill else next((t for t in list(s.tools) + list(self.library_tools())
+                                        if t.kind == 'foret' and abs(t.diameter - diameter) < 0.011), None)
         if foret is not None:
             if all(t.id != foret.id for t in s.tools):
                 foret = self._copy_tool(s, foret)
@@ -4587,10 +4708,45 @@ class CamPanel(QWidget):
     #: dernier réglage des trous de fixation des bruts (`cam.fixture.Spec`, en JSON)
     FIXTURE_KEY = 'fao/plaque_reprise'
 
+    def blank_thickness(self) -> float:
+        """L'épaisseur du brut : celle du brut 2D du réglage s'il en donne une, sinon celle de la plaque du dessin ;
+        0 : inconnue."""
+        from ..core import stock2d
+        stock = stock2d.from_dict(self.setup().stock2d)
+        if stock.active() and stock.thickness > 0:
+            return float(stock.thickness)
+        plate = getattr(self.doc, 'plate', None)
+        return max(0.0, float(getattr(plate, 'thickness', 0.0) or 0.0)) if plate is not None else 0.0
+
+    def _thread_mill(self, s, thread: str):
+        """La fraise d'un taraudage sans avant-trou (sous M6 : elle perce elle-même) : l'outil proposé pour le
+        taraudage s'il est réglé (Outils proposés par opération) ; sinon la fraise du document, puis de Mes outils,
+        dont le Ø approche le plus l'avant-trou sans le dépasser — jamais moins que la moitié du filetage, qui
+        laisserait un noyau au centre ; sinon une fraise créée au Ø de l'avant-trou, à vérifier."""
+        from ..cam import toolprefs
+        nominal, _pitch, pre = model.THREADS[thread]
+        if toolprefs.customized('taraudage', toolprefs.load(self.win.settings)):
+            return self._tool_for(s, 'fraise', smallest=True, op_kind='taraudage', create=True)
+
+        def pick(tools):
+            fit = [t for t in tools if t.kind == 'fraise' and nominal / 2 + 0.05 <= t.diameter <= pre + 0.05]
+            return max(fit, key=lambda t: t.diameter) if fit else None
+        t = pick(s.tools)
+        if t is not None:
+            return t
+        lib = pick(self.library_tools())
+        if lib is not None:
+            return self._copy_tool(s, lib)
+        t = model.CamTool(name=tr('Fraise à fileter {0}').format(thread), kind='fraise', diameter=pre)
+        t.number = max([x.number for x in s.tools] + [0]) + 1
+        s.tools.append(t)
+        return t
+
     def fixture_holes(self, exec_dialog: bool = True, spec=None, plate_layer=None, blanks=None):
         """Plaque de reprise (demande du 14/11) : les bruts posés sur le dessin de la plaque, percés et taraudés aux
-        trous de la plaque qu'ils couvrent — un calque de trous TypeEdit (foret du taraudage), une opération de perçage
-        et une de taraudage sur ces trous. Rend le placement (`cam.fixture.Placement`), None si rien n'est fait."""
+        trous de la plaque qu'ils couvrent — un calque de trous TypeEdit (avant-trou du filetage) et, sous M6, UNE
+        opération « Perçage-taraudage » (la fraise à fileter perce) ; à partir de M6, un perçage à la fraise puis le
+        taraudage (réponse du 16/11). Rend le placement (`cam.fixture.Placement`), None si rien n'est fait."""
         import json
         from ..cam import fixture as FX
         from ..core import holes
@@ -4605,7 +4761,7 @@ class CamPanel(QWidget):
         if exec_dialog:
             from .fixture_dialog import FixtureDialog
             dlg = FixtureDialog(self, self.doc, spec, self._selected(), placer=self.place_fixture_plate,
-                                settings=st)
+                                settings=st, thickness=self.blank_thickness())
             if not dlg.exec():
                 return None
             spec, plate_layer, blanks, skip = dlg.spec(), dlg.plate_layer(), dlg.blanks(), dlg.skip()
@@ -4622,7 +4778,13 @@ class CamPanel(QWidget):
                               else tr('Aucun filetage ne passe dans les trous de la plaque : choisissez-le.'))
             return None
         _nominal, _pitch, drill = model.THREADS[pl.thread]
-        drilled = round(spec.depth + spec.extra_drill, 3)
+        thickness = self.blank_thickness()
+        depth = spec.depth_on(thickness)
+        if depth <= 0:                                   # d'après l'épaisseur : rien à tarauder
+            self.info.setText(tr("Le brut est trop mince pour être taraudé sous ce qui est usiné en face : rien n’est ajouté."))
+            return None
+        pre = FX.predrilled(pl.thread)                   # à partir de M6 : prépercé à la fraise
+        drilled = spec.drill_on(thickness) if pre else depth
         self.win.push_undo(tr('Trous de fixation des bruts'), with_cam=True)
         layer = Layer(name=tr('Fixation des bruts {0}').format(pl.thread))
         layer.extra[FX.MADE_KEY] = True                  # jamais pris pour la plaque à la fois suivante
@@ -4630,12 +4792,18 @@ class CamPanel(QWidget):
         made = [holes.make((round(h.x, 4), round(h.y, 4)), holes.HoleSpec(diameter=drill, depth=drilled),
                            tool=layer.tool) for _b, hs in pl.blanks for h in hs]
         layer.items.extend(made)
-        self.add_drilling(made, drilled, drill, name=tr('Perçage {0} des bruts').format(pl.thread),
-                          exec_dialog=False)
-        s = self.setup()                                  # relu : le perçage vient d'y être enregistré
-        tool = self._tool_for(s, 'fraise', smallest=True, op_kind='taraudage', create=True)
-        o = model.Operation(name=tr('Taraudage {0} des bruts').format(pl.thread), kind='taraudage',
-                            tool_id=tool.id if tool is not None else '', depth=round(spec.depth, 3),
+        if pre:
+            self.add_drilling(made, drilled, drill, name=tr('Perçage à la fraise {0} des bruts').format(pl.thread),
+                              exec_dialog=False, mill=True)
+            s = self.setup()                              # relu : le perçage vient d'y être enregistré
+            tool = self._tool_for(s, 'fraise', smallest=True, op_kind='taraudage', create=True)
+            op_name = tr('Taraudage {0} des bruts').format(pl.thread)
+        else:                                            # la fraise à fileter perce : une seule opération
+            s = self.setup()
+            tool = self._thread_mill(s, pl.thread)
+            op_name = tr('Perçage-taraudage {0} des bruts').format(pl.thread)
+        o = model.Operation(name=op_name, kind='taraudage',
+                            tool_id=tool.id if tool is not None else '', depth=depth,
                             thread=pl.thread, items=[it.id for it in made], **self._op_defaults('taraudage'))
         self._finish_new_op(s, o, False, '')
         self.win.modified = True
@@ -4645,8 +4813,13 @@ class CamPanel(QWidget):
             canvas.select(made)
         self.win._on_doc_changed()
         self.refresh()
-        text = tr('{0} trous de fixation ({1}) sur {2} bruts : perçage et taraudage ajoutés.').format(
-            len(made), pl.thread, len(pl.blanks))
+        from .fixture_dialog import mm
+        if pre:
+            text = tr('{0} trous de fixation ({1}) sur {2} bruts : perçage et taraudage ajoutés.').format(
+                len(made), pl.thread, len(pl.blanks))
+        else:
+            text = tr('{0} trous de fixation ({1}) sur {2} bruts : perçage-taraudage ajouté, à {3} mm, outil « {4} » (Ø {5}) à vérifier.').format(
+                len(made), pl.thread, len(pl.blanks), mm(depth), tool.name, mm(tool.diameter))
         if pl.empty():
             text += ' ' + tr('{0} bruts sans trou de la plaque dessous.').format(len(pl.empty()))
         self.info.setText(text)

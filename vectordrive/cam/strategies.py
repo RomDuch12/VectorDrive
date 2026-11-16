@@ -3160,8 +3160,9 @@ def _hatch_rows(reg, angle: float, pitch: float, y_ref: float | None = None):
 def pocket_bottom(op) -> float:
     """Cote du fond d'une poche : son Z de départ moins sa profondeur (celle d'origine si `compute` l'a augmentée de
     la surépaisseur du brut du dessin 2D)."""
-    return float(getattr(op, 'z_start', 0.0) or 0.0) - abs(float(op.depth or 0.0)) + \
-        float(getattr(op, '_stock_rise', 0.0) or 0.0)
+    depth = abs(float(op.depth or 0.0))
+    left = 0.0 if getattr(op, '_floor_left', False) else min(left_on_floor(op), depth)   # ce qu'elle laisse au fond
+    return float(getattr(op, 'z_start', 0.0) or 0.0) - depth + float(getattr(op, '_stock_rise', 0.0) or 0.0) + left
 
 
 def clears_all(op, tool) -> bool:
@@ -3196,6 +3197,21 @@ def previous_pockets(setup, op) -> list:
         t = setup.tool(o.tool_id)
         if o.enabled and o.kind == 'poche' and t is not None and t.kind != 'laser' and \
                 pocket_bottom(o) <= pocket_bottom(op) + 1e-6:
+            out.append(o)
+    return out
+
+
+def floor_left_before(setup, op) -> list:
+    """Les poches actives placées avant `op` qui seraient descendues assez bas, mais ont laissé une surépaisseur Z
+    au fond : leur fond reste à faire partout (`previous_pockets` ne les compte pas)."""
+    ops = list(getattr(setup, 'operations', None) or [])
+    at = next((i for i, o in enumerate(ops) if o is op or o.id == op.id), None)
+    out = []
+    for o in ops[:at] if at is not None else []:
+        t = setup.tool(o.tool_id)
+        left = left_on_floor(o)
+        if o.enabled and o.kind == 'poche' and t is not None and t.kind != 'laser' and left > 0 and \
+                pocket_bottom(o) > pocket_bottom(op) + 1e-6 >= pocket_bottom(o) - left:
             out.append(o)
     return out
 
@@ -3428,7 +3444,13 @@ def _pocket_rest(doc, setup, op, tool, tp, em, here, reg, r, step, qs, tol) -> b
         return False
     prevs = previous_pockets(setup, op)
     if not prevs:
-        tp.warnings.append('poche, seulement le reste : aucune poche active avant celle-ci, poche entière')
+        shy = floor_left_before(setup, op)
+        if shy:                                          # vidée, mais du fond laissé : il est à faire partout
+            tp.warnings.append(f'poche, seulement le reste : « {shy[-1].name or shy[-1].kind} » a laissé '
+                               f'{left_on_floor(shy[-1]):g} mm au fond (surépaisseur Z), le fond est à faire '
+                               'partout — poche entière')
+        else:
+            tp.warnings.append('poche, seulement le reste : aucune poche active avant celle-ci, poche entière')
         return False
     loose = [o for o in prevs if not clears_all(o, setup.tool(o.tool_id))]
     for o in loose:
@@ -4497,6 +4519,19 @@ STRATEGIES = {
 #: natures dont la première passe part du haut du brut du dessin 2D (réponse 20 du 14/11) ; les autres (gravure 2,5D,
 #: chanfreins, taraudage…) gardent Z 0 — leur profondeur se lit sur le dessus de la plaque — dégagements relevés
 RISE_KINDS = ('surfacage', 'gravure', 'contour', 'poche', 'percage', 'percage_fraise', 'reste')
+#: natures qui peuvent laisser une surépaisseur Z au fond (`Operation.stock_z`, réponse du 15/11 à la question 28),
+#: distincte de celle des flancs : le fond reste à une finition
+STOCK_Z_KINDS = ('contour', 'poche', 'reste')
+
+
+def left_on_floor(op) -> float:
+    """Ce que l'opération laisse au fond (mm) : sa surépaisseur Z, pour les natures qui en ont une ; 0 sinon."""
+    if getattr(op, 'kind', '') not in STOCK_Z_KINDS:
+        return 0.0
+    try:
+        return max(0.0, float(getattr(op, 'stock_z', 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def stock_top(doc, setup, op) -> float:
@@ -4576,6 +4611,16 @@ def compute(doc: Document, setup: CamSetup, op: Operation, here=(0.0, 0.0)) -> T
         tp.warnings.append('outil laser : utiliser une opération laser (marquage, découpe, gravure)')
     if op.kind.startswith('laser') and tool.kind != 'laser':
         tp.warnings.append('opération laser avec un outil d\'usinage : vérifier le choix de l\'outil')
+    leave = left_on_floor(op)
+    if leave > 0:                                        # surépaisseur Z : le fond reste à une finition
+        if leave >= abs(op.depth) - 1e-9:
+            tp.warnings.append(f'surépaisseur Z {leave:g} mm : pas moins que la profondeur ({abs(op.depth):g} mm), '
+                               'rien n’est usiné')
+            return tp
+        import copy
+        op = copy.copy(op)
+        op.depth = abs(op.depth) - leave                 # passes, pattes, cycles : tout s’arrête au-dessus du fond
+        op._floor_left = True
     top = stock_top(doc, setup, op)
     rise = top if op.kind in RISE_KINDS else 0.0
     if top > 0:                                          # brut du dessin 2D plus haut que la plaque

@@ -46,13 +46,15 @@ def tool_depths(doc) -> dict[int, float]:
     from . import model
     out: dict[int, float] = {}
     every = 0.0
+    from .strategies import left_on_floor
     for op in model.setup_of(doc).operations:
-        if not op.enabled or op.depth <= 0:
+        depth = op.depth - left_on_floor(op)             # ce qui est usiné : sans la surépaisseur Z laissée au fond
+        if not op.enabled or depth <= 0:
             continue
         if not op.sources:
-            every = max(every, op.depth)
+            every = max(every, depth)
         for s in op.sources:
-            out[int(s)] = max(out.get(int(s), 0.0), op.depth)
+            out[int(s)] = max(out.get(int(s), 0.0), depth)
     if every:
         for t in doc.tools:
             out[t.index] = max(out.get(t.index, 0.0), every)

@@ -191,6 +191,7 @@ class Operation:
     side: str = 'exterieur'         # détourage : exterieur, interieur, sur
     climb: bool = True              # avalant (sinon en opposition)
     stock: float = 0.0              # surépaisseur laissée (mm)
+    stock_z: float = 0.0            # contour, poche, reste : surépaisseur Z laissée au fond pour une finition (mm)
     finish: bool = False            # passe de finition à pleine profondeur
     peck: float = 0.0               # perçage : débourrage (mm, 0 = d'un coup)
     drill_points: str = 'cercles'   # perçage : 'cercles' (et marqueurs), 'marqueurs', 'depart', 'arrivee',
