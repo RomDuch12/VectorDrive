@@ -6988,3 +6988,8 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Corrigé** : une liaison abaissée pouvait rester basse après que ce qui l'avait permise avait changé — surfaçage ou poche décoché, supprimé, déplacé après, ou refait autrement. Les liaisons basses sont maintenant refaites à chaque écriture du programme, d'après les opérations qui y vont vraiment, dans leur ordre.
 - Une instruction machine (palpage, repère, retournement, table à vide…) placée entre deux opérations remet le dégagement habituel pour la suite ; une opération d'une autre prise ne profite pas de ce qui est usiné ailleurs.
 - Les deux hauteurs se règlent par opération (« Dégagement », « Dégagement sur une zone déjà usinée »), et d'office dans Options (F10) › FAO ; 0 : sans.
+### v0.919.0 — Panneaux : Gauche, Masqué ou Droite ; F2 rouvre les dimensions ; périmètre en barre d'état
+
+- **Un même tableau pour tous les panneaux** : une ligne par panneau, trois boutons — **Gauche**, **Masqué**, **Droite**. Il est en tête du clic droit d'un panneau (sa barre de titre, son onglet) et dans la fenêtre d'une colonne (clic droit sur son bouton). Un second clic sur la colonne où le panneau est déjà le masque. Les fonctions propres au panneau (plein écran, détacher, en onglet avec, au-dessus de…) restent dessous.
+- **F2, aucun panneau latéral ouvert** : la colonne qui contient les Dimensions revient, et le curseur est dans la largeur. Dimensions fermé seul : il revient aussi.
+- **Barre d'état** : avec la taille et le centre de la sélection, toujours le **périmètre** des contours fermés et la **longueur** des contours ouverts.

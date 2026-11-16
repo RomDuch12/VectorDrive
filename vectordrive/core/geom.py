@@ -840,6 +840,12 @@ class Path:
             n1, n2 = m.a * m.a + m.b * m.b, m.c * m.c + m.d * m.d
             if abs(n1 - n2) <= 1e-12 * max(1.0, n1) and abs(m.a * m.c + m.b * m.d) <= 1e-12 * max(1.0, n1):
                 new['length'] = (key, hit[1] * math.sqrt(n1))
+        both = memo.get('lengths')
+        if both is not None and both[0] == okey:         # (fermés, ouverts) : suivent une similitude de même
+            n1, n2 = m.a * m.a + m.b * m.b, m.c * m.c + m.d * m.d
+            if abs(n1 - n2) <= 1e-12 * max(1.0, n1) and abs(m.a * m.c + m.b * m.d) <= 1e-12 * max(1.0, n1):
+                scale = math.sqrt(n1)
+                new['lengths'] = (key, (both[1][0] * scale, both[1][1] * scale))
         hit = memo.get('bbox')
         if hit is not None and hit[0] == okey and hit[1] is not None and m.b == 0 and m.c == 0:
             x0, y0, x1, y1 = hit[1]
@@ -856,6 +862,25 @@ class Path:
             gaps = sum(c.closing_gap() for c in self.contours if c.closed)
             return sum(batch_lengths(segs)) + gaps
         return _memo(self, 'length', self._key(), compute)
+
+    def lengths(self) -> tuple:
+        """(longueur des contours fermés — leur périmètre —, longueur des contours ouverts), gardées avec le tracé.
+        Tous les segments calculés ensemble (`batch_lengths`) : des milliers de petits contours — un texte en
+        courbes — ne se calculent pas un à un."""
+        def compute():
+            segs, shut = [], []
+            for c in self.contours:
+                segs.extend(c.segments)
+                shut.extend([bool(c.closed)] * len(c.segments))
+            closed = sum(c.closing_gap() for c in self.contours if c.closed)
+            opened = 0.0
+            for length, is_closed in zip(batch_lengths(segs), shut):
+                if is_closed:
+                    closed += length
+                else:
+                    opened += length
+            return closed, opened
+        return _memo(self, 'lengths', self._key(), compute)
 
     def segment_count(self) -> int:
         return sum(len(c.segments) for c in self.contours)

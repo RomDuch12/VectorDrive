@@ -7471,5 +7471,12 @@
  "Gamme : ébauche et finition": "Sequence: roughing and finishing",
  "Dégagement sur une zone déjà usinée : surfaçage ou poche d’avant (mm, 0 : sans)": "Clearance over an area already machined: earlier facing or pocket (mm, 0: none)",
  "Dégagement des nouvelles opérations sur une zone déjà usinée (0 = sans)": "Clearance of new operations over an area already machined (0 = none)",
- "Au-dessus de ce qu’un surfaçage ou une poche d’avant a vidé, les liaisons passent à cette hauteur au lieu du dégagement : l’autre reste pour traverser ce qui n’est pas usiné": "Over what an earlier facing or pocket has cleared, the links travel at this height instead of the clearance height: the other one is kept to cross what is not machined"
+ "Au-dessus de ce qu’un surfaçage ou une poche d’avant a vidé, les liaisons passent à cette hauteur au lieu du dégagement : l’autre reste pour traverser ce qui n’est pas usiné": "Over what an earlier facing or pocket has cleared, the links travel at this height instead of the clearance height: the other one is kept to cross what is not machined",
+ "Périmètre {0:.3f} mm": "Perimeter {0:.3f} mm",
+ "Longueur {0:.3f} mm": "Length {0:.3f} mm",
+ "au centre": "in the centre",
+ "Masqué": "Hidden",
+ "Montré dans la colonne de gauche (un second clic : masqué)": "Shown in the left column (a second click: hidden)",
+ "Retiré des colonnes": "Removed from the columns",
+ "Montré dans la colonne de droite (un second clic : masqué)": "Shown in the right column (a second click: hidden)"
 }

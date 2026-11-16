@@ -3162,6 +3162,20 @@ class MainWindow(QMainWindow):
                 return None
         return sum(p.length() for p in paths)
 
+    def selection_lengths(self, limit: int | None = None):
+        """(périmètre des contours fermés, longueur des contours ouverts) de la sélection, en mm. Avec `limit` :
+        None si la sélection compte plus de segments dont les longueurs ne sont pas déjà connues."""
+        paths = [p for p in (item_path(leaf) for leaf in _leaves(self.canvas.selection)) if p]
+        if limit is not None:
+            todo = sum(p.segment_count() for p in paths if 'lengths' not in p.__dict__.get('_memo', {}))
+            if todo > limit:
+                return None
+        closed = opened = 0.0
+        for p in paths:
+            c, o = p.lengths()
+            closed, opened = closed + c, opened + o
+        return closed, opened
+
     def copy_text_format(self) -> int:
         """Reproduire la mise en forme (TypeEdit) : plusieurs textes
         sélectionnés — celle du premier va aux autres ; un seul — elle est
@@ -3494,10 +3508,19 @@ class MainWindow(QMainWindow):
             cx, cy = (bb[0] + bb[2]) / 2 - ox, (bb[1] + bb[3]) / 2 - oy
             txt = (f'{n} {kind} (L {w:.3f} mm, H {h:.3f} mm)  '
                    f'[ Cx {cx:.3f} mm  Cy {cy:.3f} mm ]')
+            short = txt                                  # le ruban garde le texte court : la place y est comptée
+            # barre d'état, toujours : le périmètre des contours fermés, la longueur des ouverts (demande du 15/11,
+            # 19 h 35)
+            closed, opened = self.selection_lengths(limit=PERIMETER_LIVE_LIMIT) or (0.0, 0.0)
+            if closed > 0:
+                txt += '  ' + tr('Périmètre {0:.3f} mm').format(closed)
+            if opened > 0:
+                txt += '  ' + tr('Longueur {0:.3f} mm').format(opened)
         else:
-            txt = ''
+            txt = short = ''
         self.lbl_sel.setText(txt)
-        self.ribbon.info.setText(txt)
+        self.lbl_sel.setToolTip(txt)                     # fenêtre étroite : le texte coupé se lit dans la bulle
+        self.ribbon.info.setText(short)
         self.dims.refresh()
 
     def _text_context(self, raise_tab: bool = False) -> None:
@@ -10718,10 +10741,26 @@ class MainWindow(QMainWindow):
 
     def focus_dimensions(self) -> None:
         dock = self.dims.parentWidget()
+        cols = getattr(self, 'columns', None)
+        revealed = isinstance(dock, QDockWidget) and dock.isHidden()
+        if cols is not None and isinstance(dock, QDockWidget) and dock.isHidden() and not dock.isFloating():
+            # aucun panneau latéral ne montre les dimensions (demande du 15/11, 19 h 35) : la colonne qui les
+            # contient revient, avec ses panneaux ; puis le panneau lui-même s'il avait été fermé
+            side = cols.side(dock) or 'droite'
+            self._docks_before_cam = None                # la disposition retenue avant la FAO ne vaut plus
+            if not cols.shown(side):
+                cols.set_shown(side, True)
+            if dock.isHidden():
+                cols.show_in(dock, side, True)
+        elif isinstance(dock, QDockWidget) and dock.isHidden():
+            dock.show()                                  # détaché et fermé : sa fenêtre revient
         if hasattr(dock, 'raise_'):                      # en onglet derrière le panneau FAO : montré
             dock.raise_()
         self.dims.fields['w'].setFocus()
         self.dims.fields['w'].selectAll()
+        if revealed:                                     # le panneau vient de reparaître : le curseur y revient
+            from PySide6.QtCore import QTimer             # une fois qu'il est montré
+            QTimer.singleShot(0, lambda: (self.dims.fields['w'].setFocus(), self.dims.fields['w'].selectAll()))
 
     def _back_to_canvas(self) -> None:
         """Entrée ou Échap dans un champ des dimensions : retour au plan de

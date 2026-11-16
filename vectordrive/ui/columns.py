@@ -697,6 +697,16 @@ class Columns(QObject):
     def menu(self, dock, parent=None) -> QMenu:
         """Le menu du clic droit d'un panneau (sa barre de titre, son onglet)."""
         m = QMenu(parent or self.win)
+        from PySide6.QtWidgets import QWidgetAction
+        table = QWidgetAction(m)                         # en tête : tous les panneaux, Gauche / Masqué / Droite
+        table.setObjectName('panneaux')
+        box = QWidget()
+        inner = QVBoxLayout(box)
+        inner.setContentsMargins(8, 4, 8, 4)
+        inner.addWidget(PanelRows(self, self.side(dock) or 'droite', done=m.close, parent=box))
+        table.setDefaultWidget(box)
+        m.addAction(table)
+        m.addSeparator()
         ov = self.overlay(dock, create=False)
         a = m.addAction(tr('Plein écran translucide'))
         a.setCheckable(True)
@@ -866,6 +876,85 @@ class Columns(QObject):
         self._quiet(do)
 
 
+#: les trois places d'un panneau (demande du 15/11, 19 h 35) : clé, libellé, bulle
+PLACES = (('gauche', 'Gauche', 'Montré dans la colonne de gauche (un second clic : masqué)'),
+          ('masque', 'Masqué', 'Retiré des colonnes'),
+          ('droite', 'Droite', 'Montré dans la colonne de droite (un second clic : masqué)'))
+
+
+class PanelRows(QWidget):
+    """Tous les panneaux que les colonnes accueillent, une ligne chacun : Gauche, Masqué, Droite — le même tableau
+    dans la fenêtre d'une colonne et en tête du clic droit d'un panneau (demande du 15/11, 19 h 35). `side` : la
+    colonne d'où il est ouvert (ses panneaux d'abord) ; `done()` : appelé après un choix."""
+
+    def __init__(self, columns, side: str = 'droite', done=None, parent=None):
+        super().__init__(parent)
+        self.columns, self.side, self.done = columns, side if side in SIDES else 'droite', done
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(1)
+        #: panneau → {place: bouton} ; `eyes` : le bouton de la colonne d'où le tableau est ouvert
+        self.choices, self.eyes = {}, {}
+        allowed = getattr(columns.win, 'plugin_dock_allowed', None)
+        for i, d in enumerate(self.rows()):
+            where, hidden = columns.side(d), d.isHidden()
+            central = self._central(d)                   # le programme machine mis au centre : ni caché, ni en colonne
+            state = 'centre' if central else 'masque' if hidden else (where or 'ailleurs')
+            barred = hidden and d.objectName().startswith('plugin_') and allowed is not None and not allowed(d)
+            grid.addWidget(QLabel(full_title(d)), i, 0)
+            row = {}
+            for col, (key, text, tip) in enumerate(PLACES, 1):
+                b = QToolButton()
+                b.setText(tr(text))
+                b.setCheckable(True)
+                b.setChecked(state == key)
+                b.setAutoRaise(True)
+                b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                b.setToolTip(tr(tip))
+                if barred and key != 'masque':
+                    b.setEnabled(False)                  # réservé à une autre machine
+                    b.setToolTip(tr('Panneau réservé à une autre machine que celle du dessin'))
+                b.clicked.connect(lambda _=False, dk=d, place=key: self.choose(dk, place))
+                row[key] = b
+                grid.addWidget(b, i, col)
+            if central or (not hidden and d.isFloating()):
+                note = QLabel(tr('au centre') if central else tr('détaché'))
+                note.setEnabled(False)
+                grid.addWidget(note, i, len(PLACES) + 1)
+            self.choices[d.objectName()] = row
+            self.eyes[d.objectName()] = row[self.side]
+
+    def _central(self, dock) -> bool:
+        w = self.columns.win
+        centered = getattr(w, 'program_centered', None)
+        return dock is getattr(w, 'dock_program', None) and callable(centered) and bool(centered())
+
+    def rows(self) -> list:
+        """Les panneaux listés : ceux de la colonne d'où le tableau est ouvert d'abord, puis les autres, par nom."""
+        c = self.columns
+        return sorted(c.docks(), key=lambda d: (c.side(d) != self.side, full_title(d).lower()))
+
+    def choose(self, dock, place: str) -> None:
+        """Le panneau `dock` mis à sa place : une colonne (la FAO ouverte pour ses panneaux), ou masqué — aussi par
+        un second clic sur la colonne où il est déjà."""
+        c = self.columns
+        central = self._central(dock)
+        if central:                                      # le programme rentre d'abord dans son panneau
+            c.win.program_center(False)
+        if place not in SIDES and dock.isHidden() and not central:
+            pass                                         # déjà masqué : rien (fermer un panneau FAO caché fermerait la FAO)
+        else:
+            c.win._docks_before_cam = None               # la disposition retenue avant la FAO ne vaut plus
+            if place not in SIDES or (c.side(dock) == place and not dock.isHidden() and not dock.isFloating()
+                                      and not central):
+                c.close(dock)
+            else:
+                c.show_in(dock, place, True)
+        if self.done is not None:
+            self.done()
+
+
 class ColumnPanel(QFrame):
     """La fenêtre d'une colonne (clic droit sur son bouton, demande du 15/11, 8 h 40) : tous les panneaux que les
     colonnes accueillent, ceux de cette colonne d'abord ; un œil chacun pour l'y montrer ou l'en retirer. « ✕ » ou un
@@ -916,36 +1005,10 @@ class ColumnPanel(QFrame):
         if self.body is not None:
             self.body.hide()
             self.body.deleteLater()
-        self.body = QWidget(self)
-        grid = QGridLayout(self.body)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(1)
-        self.eyes = {}
-        for i, d in enumerate(self.rows()):
-            on = self.shown_here(d)
-            eye = QToolButton()
-            eye.setCheckable(True)
-            eye.setChecked(on)
-            eye.setAutoRaise(True)
-            eye.setText('👁' if on else '◌')
-            eye.setToolTip(tr('Montrer ce panneau dans cette colonne, ou le retirer'))
-            allowed = getattr(self.columns.win, 'plugin_dock_allowed', None)
-            if not on and d.objectName().startswith('plugin_') and allowed is not None and not allowed(d):
-                eye.setEnabled(False)                    # réservé à une autre machine
-                eye.setToolTip(tr('Panneau réservé à une autre machine que celle du dessin'))
-            eye.toggled.connect(lambda v, dk=d: self._eye(dk, v))
-            self.eyes[d.objectName()] = eye
-            grid.addWidget(eye, i, 0)
-            grid.addWidget(QLabel(full_title(d)), i, 1)
-            where = self.columns.side(d)
-            note = '' if where == self.side or (where is None and not d.isFloating()) else (
-                tr('détaché') if d.isFloating() else tr('colonne de gauche') if where == 'gauche'
-                else tr('colonne de droite'))
-            if note:
-                lbl = QLabel(note)
-                lbl.setEnabled(False)                    # en gris : où il est aujourd'hui
-                grid.addWidget(lbl, i, 2)
+        # le tableau commun aux deux colonnes : Gauche, Masqué, Droite pour chaque panneau (pas tout de suite refait
+        # après un choix : le bouton cliqué est encore là)
+        self.body = PanelRows(self.columns, self.side, done=self.refresh_later, parent=self)
+        self.eyes, self.choices = self.body.eyes, self.body.choices
         lay.addWidget(self.body)
         self.body.show()
         lay.activate()                                   # la taille de la fenêtre d'après ses lignes neuves
