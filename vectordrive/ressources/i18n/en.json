@@ -7478,5 +7478,7 @@
  "Masqué": "Hidden",
  "Montré dans la colonne de gauche (un second clic : masqué)": "Shown in the left column (a second click: hidden)",
  "Retiré des colonnes": "Removed from the columns",
- "Montré dans la colonne de droite (un second clic : masqué)": "Shown in the right column (a second click: hidden)"
+ "Montré dans la colonne de droite (un second clic : masqué)": "Shown in the right column (a second click: hidden)",
+ "Défaire / Refaire": "Undo / Redo",
+ "Un clic sur une ligne revient à l’état d’après cette modification": "A click on a line goes back to the state after that change"
 }

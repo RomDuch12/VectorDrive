@@ -45,7 +45,7 @@ class TestSnapWindow(unittest.TestCase):
         self.assertEqual(w.A['snap_window'].shortcut().toString(), 'F3')
         self.assertEqual(w.A['snap'].shortcut().toString(), 'Shift+F3')
         sw = w.snap_window()
-        self.assertTrue(sw.isVisible())
+        self.assertFalse(w.dock_snap.isHidden())                            # 0.920.0 : un panneau de colonne
         sw.enabled.setChecked(True)
         self.assertTrue(w.canvas.snap.enabled)
         sw.boxes['quadrant'].setChecked(True)
@@ -60,7 +60,7 @@ class TestSnapWindow(unittest.TestCase):
         self.assertEqual(w.canvas.snap_px, 15)
         self.assertEqual(int(w.settings.value('accrochage/rayon')), 15)
         w.snap_window()                                                     # F3 de nouveau : refermée
-        self.assertFalse(sw.isVisible())
+        self.assertTrue(w.dock_snap.isHidden())
         w.settings.setValue('accrochage/rayon', 8)
 
 

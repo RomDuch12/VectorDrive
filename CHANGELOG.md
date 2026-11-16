@@ -6993,3 +6993,9 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Un même tableau pour tous les panneaux** : une ligne par panneau, trois boutons — **Gauche**, **Masqué**, **Droite**. Il est en tête du clic droit d'un panneau (sa barre de titre, son onglet) et dans la fenêtre d'une colonne (clic droit sur son bouton). Un second clic sur la colonne où le panneau est déjà le masque. Les fonctions propres au panneau (plein écran, détacher, en onglet avec, au-dessus de…) restent dessous.
 - **F2, aucun panneau latéral ouvert** : la colonne qui contient les Dimensions revient, et le curseur est dans la largeur. Dimensions fermé seul : il revient aussi.
 - **Barre d'état** : avec la taille et le centre de la sélection, toujours le **périmètre** des contours fermés et la **longueur** des contours ouverts.
+### v0.920.0 — Accrochages et Défaire / Refaire : des panneaux de colonne
+
+- **Accrochages (F3)** n'est plus une fenêtre à part : c'est un panneau de la colonne de droite, en onglet avec Calques et Dimensions. F3 le montre devant, F3 de nouveau le masque.
+- **Défaire / Refaire** : un panneau de la colonne de gauche montre toute la suite des modifications, celle où l'on est en avant, les modifications défaites en grisé. Un clic sur une ligne revient à cet état. La liste passagère de Ctrl+Z et Ctrl+Y reste.
+- Les deux sont masqués tant qu'on ne les demande pas ; ils se placent comme les autres (Gauche, Masqué, Droite ; en onglet, au-dessus, détaché). **Un poste déjà réglé garde sa disposition.**
+- Le panneau « Couleur » demandé avec eux attend de savoir lequel (question 46).

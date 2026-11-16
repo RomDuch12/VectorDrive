@@ -3083,6 +3083,28 @@ class MainWindow(QMainWindow):
         d7.setVisible(False)
         d7.visibilityChanged.connect(lambda on: self.font_panel() if on else None)   # remis par la session aussi
         self.dock_fonts = d7
+        # Accrochages et Défaire / Refaire : des panneaux de colonne comme les autres (demande du 15/11, 20 h 02) —
+        # Accrochages à droite, en onglet avec Calques (et Dimensions) ; Défaire / Refaire à gauche ; masqués tant
+        # qu'on ne les demande pas (F3, le tableau des panneaux). Un poste déjà réglé garde sa disposition.
+        from .snap_window import SnapWindow
+        self._snap_window = SnapWindow(self, embedded=True)
+        d8 = QDockWidget(tr('Accrochages'), self)
+        d8.setObjectName('accrochages')
+        d8.setWidget(self._snap_window)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, d8)
+        d8.setVisible(False)                             # masqué avant d'être rangé : l'onglet de devant ne change pas
+        self.tabifyDockWidget(d2, d8)
+        d8.visibilityChanged.connect(lambda on: self._snap_window.sync() if on else None)
+        self.dock_snap = d8
+        from .history_panel import HistoryPanel
+        self.history_panel = HistoryPanel(self)
+        d9 = QDockWidget(tr('Défaire / Refaire'), self)
+        d9.setObjectName('historique')
+        d9.setProperty('vd_court', tr('Défaire'))        # le libellé de son onglet
+        d9.setWidget(self.history_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, d9)
+        d9.setVisible(False)
+        self.dock_history = d9
         self.cam_panel.ops.itemSelectionChanged.connect(lambda: self.program_panel.follow_op())
         for dk in (d4, d5):                              # détachés : légèrement translucides (Options, FAO)
             dk.topLevelChanged.connect(lambda _f: self.apply_cam_opacity())
@@ -6834,17 +6856,24 @@ class MainWindow(QMainWindow):
         self.lbl_snap.setText(tr('Accrochage : ') + (', '.join(names) or tr('aucun mode')))
 
     def snap_window(self, show: bool = True):
-        """Fenêtre des accrochages (F3) : ouverte, ou refermée si elle l'est."""
-        from .snap_window import SnapWindow
-        w = getattr(self, '_snap_window', None)
-        if w is None:
-            w = self._snap_window = SnapWindow(self)
-        if show and w.isVisible():
-            w.close()
-        elif show:
+        """Les accrochages (F3) : leur panneau montré dans sa colonne, devant ; masqué s'il y est déjà. Rend son
+        contenu (`ui.snap_window.SnapWindow`) ; `show` faux : sans rien montrer ni masquer."""
+        w, dock = self._snap_window, self.dock_snap
+        cols = getattr(self, 'columns', None)
+        if not show or cols is None:
+            return w
+        self._docks_before_cam = None                    # la disposition retenue avant la FAO ne vaut plus
+        # devant ? (se lit à l'écran : fenêtre pas encore montrée, un panneau non masqué compte pour devant)
+        front = dock.isFloating() or not self.isVisible() or cols.in_front(dock)
+        if not dock.isHidden() and front:
+            cols.close(dock)
+        else:
             w.sync()
-            w.show()
-            w.raise_()
+            if dock.isFloating():
+                dock.show()
+            else:
+                cols.show_in(dock, cols.side(dock) or 'droite', True)
+            dock.raise_()
         return w
 
     def _toggle_snap(self, on: bool) -> None:
@@ -7734,6 +7763,9 @@ class MainWindow(QMainWindow):
                 hud.hide()
             else:
                 hud.stacks_changed()
+        panel = getattr(self, 'history_panel', None)
+        if panel is not None:                            # le panneau Défaire / Refaire, s'il est montré
+            panel.stacks_changed()
 
     def user_undo(self) -> None:
         """« Défaire » lancé par l'utilisateur : le pas est défait, et la liste des modifications se montre."""

@@ -6,7 +6,7 @@ commandes du ruban : cocher ici ou là, c'est la même chose."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
+from PySide6.QtWidgets import (QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton, QWidget,
                                QSpinBox, QVBoxLayout)
 
 from ..i18n import tr
@@ -26,12 +26,14 @@ TIPS = {'node': 'Extrémités et nœuds des contours', 'intersection': 'Croiseme
         'grid': 'Nœuds de la grille (si rien d\'autre n\'est proche)'}
 
 
-class SnapWindow(QDialog):
+class SnapWindow(QWidget):
     vd_keep = True                  # réemployée (gardée par la fenêtre) : pas libérée à la fermeture
 
-    def __init__(self, win):
-        super().__init__(win, Qt.WindowType.Tool)
+    def __init__(self, win, embedded: bool = False):
+        # `embedded` : dans un panneau de colonne (demande du 15/11, 20 h 02) — un simple contenu, pas une fenêtre
+        super().__init__(win, Qt.WindowType.Widget if embedded else Qt.WindowType.Tool)
         self.win = win
+        self.embedded = bool(embedded)
         self.setWindowTitle(tr('Accrochages'))
         lay = QVBoxLayout(self)
         self.enabled = QCheckBox(tr('Accrochage actif (Maj+F3)'))
@@ -76,6 +78,24 @@ class SnapWindow(QDialog):
         hint.setStyleSheet('color: #868e96;')
         lay.addWidget(hint)
         self.sync()
+
+    def reject(self) -> None:
+        """Échap : ferme la fenêtre ; dans un panneau, rien (le contenu d'un panneau ne s'en va pas d'une touche)."""
+        if not self.embedded:
+            self.close()
+
+    def closeEvent(self, ev) -> None:                    # noqa: N802 (API Qt)
+        """Fermée dans son panneau : c'est le panneau qui est masqué, le contenu y reste."""
+        if not self.embedded:
+            super().closeEvent(ev)
+            return
+        ev.ignore()
+        dock = getattr(self.win, 'dock_snap', None)
+        cols = getattr(self.win, 'columns', None)
+        if dock is not None and cols is not None:
+            cols.close(dock)
+        elif dock is not None:
+            dock.hide()
 
     def _sync_enabled(self, on: bool) -> None:
         self.enabled.blockSignals(True)

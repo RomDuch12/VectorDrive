@@ -76,6 +76,9 @@ def tab_icon(dock):
     from . import icons
     return icons.icon(TAB_ICONS.get(dock.objectName(), 'tab_panel'))
 AREAS = {'gauche': Qt.DockWidgetArea.LeftDockWidgetArea, 'droite': Qt.DockWidgetArea.RightDockWidgetArea}
+#: panneaux montrés seulement à la demande (F3, le tableau des panneaux, leur commande) : une colonne rouverte sans
+#: rien de retenu pour elle ne les fait pas paraître ; montrés puis cachés avec leur colonne, ils reviennent avec elle
+ON_DEMAND = ('polices', 'accrochages', 'historique')
 KEY = 'panneaux_colonnes'
 
 
@@ -602,7 +605,7 @@ class Columns(QObject):
         elif not self.shown(side):
             names, front = self._memory(side)
             back = [d for d in col if d.objectName() in names and not self._gated(d)] \
-                or [d for d in col if not self._gated(d) and d is not getattr(self.win, 'dock_fonts', None)]
+                or [d for d in col if not self._gated(d) and d.objectName() not in ON_DEMAND]
 
             def do():
                 for d in back:
