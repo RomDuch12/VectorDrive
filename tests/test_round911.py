@@ -101,6 +101,7 @@ class Trees(unittest.TestCase):
         lib = tools()
         toollib.set_folder(lib, 'Essai 911')
         toollib.save(lib, toollib.default_path(), [])
+        self.addCleanup(lambda: toollib.default_path().unlink(missing_ok=True))   # pas laissée aux essais suivants
 
     def test_library_sorts_inside_folders(self):
         from vectordrive.ui.main_window import MainWindow

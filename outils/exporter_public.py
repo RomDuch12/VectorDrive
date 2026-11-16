@@ -133,7 +133,7 @@ def main(argv=None) -> int:
     sys.path.insert(0, str(ROOT))
     from vectordrive import __version__
     msg = args.message or (f'VectorDrive {__version__}\n\n'
-                           'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>')
+                           'Co-Authored-By: Claude <noreply@anthropic.com>')
     return export(pathlib.Path(args.dest), words, msg)
 
 

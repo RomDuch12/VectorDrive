@@ -15,8 +15,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLabel,
-                               QLineEdit, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator,
-                               QVBoxLayout, QWidget)
+                               QLineEdit, QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ..cam import toollib
 from ..i18n import tr
@@ -161,11 +160,8 @@ class ToolImportDialog(QDialog):
         self.tree.blockSignals(False)
 
     def _tool_items(self):
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value():
-            if it.value().data(0, ROLE_TOOL):
-                yield it.value()
-            it += 1
+        from .tree_memory import items                   # (jamais de QTreeWidgetItemIterator : voir `items`)
+        return (it for it in items(self.tree) if it.data(0, ROLE_TOOL))
 
     def check_all(self, on: bool) -> None:
         state = Qt.CheckState.Checked if on else Qt.CheckState.Unchecked

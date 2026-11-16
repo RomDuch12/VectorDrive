@@ -99,13 +99,10 @@ class TestPalette(unittest.TestCase):
         self.assertEqual(self.pal.rename_template('Atelier / Trou Pz3.5', 'Trou M4'), 'Atelier / Trou M4')
         self.pal._open_folders = {'Atelier'}
         self.pal.refresh()
-        from PySide6.QtWidgets import QTreeWidgetItemIterator
-        it = QTreeWidgetItemIterator(self.pal.tree)
-        while it.value() is not None:
-            v = it.value()
+        from vectordrive.ui.tree_memory import items    # (jamais de QTreeWidgetItemIterator : voir `items`)
+        for v in items(self.pal.tree):
             if v.data(0, 0x0100 + 3) == 'Atelier':
                 v.setSelected(True)
-            it += 1
         self.assertEqual(self.pal.tree.moving(), [('dossier', 'Atelier')])
         n = self.pal.delete_selected(confirm=False)
         self.assertEqual(n, 3)                                                       # Trou M4, Ancien, Profond

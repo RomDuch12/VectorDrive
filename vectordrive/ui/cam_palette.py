@@ -246,9 +246,23 @@ class CamPalette(QWidget):
         hint = QLabel(tr('Un clic sur un parcours ouvre son formulaire pour les contours sélectionnés, prérempli '
                          'avec ses dernières valeurs ; un clic sur un modèle l\'ouvre déjà rempli. Vos modèles se '
                          'rangent par glisser-déposer ; Suppr, F2 et clic droit pour le reste.'))
-        hint.setWordWrap(True)
+        from PySide6.QtWidgets import QToolButton
+        from .fold_label import FoldLabel
+        hint = self.hint = FoldLabel(hint.text())        # une longue phrase : repliable en une ligne (demande du 15/11)
+        hint.set_always(True)
         hint.setStyleSheet('color: #868e96;')
-        lay.addWidget(hint)
+        b = self.hint_fold = QToolButton()               # ▾ replier, ▸ déplier (retenu)
+        b.setAutoRaise(True)
+        b.setFixedSize(18, 18)
+        b.setStyleSheet('QToolButton { padding: 0px; }')
+        b.clicked.connect(lambda _=False: self.set_hint_folded(not self.hint.folded()))
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        row.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(hint, 1)
+        lay.addLayout(row)
+        self.set_hint_folded(self.win.settings.value(self.HINT_FOLDED_KEY, 'false') in (True, 'true'), remember=False)
         lay.addWidget(self.color_on)                     # tout en bas (demande du 15/11)
         lay.addWidget(self.mode_row)
         #: clé d'action (cam_new_…) → ligne du parcours
@@ -256,6 +270,17 @@ class CamPalette(QWidget):
         self.refresh()
 
     # --- mode d'usinage ------------------------------------------------------------------------
+    #: le texte d'aide du bas de la palette replié en une ligne (retenu)
+    HINT_FOLDED_KEY = 'fao/palette/aide_repliee'
+
+    def set_hint_folded(self, on: bool, remember: bool = True) -> None:
+        """Le texte d'aide du bas de la palette replié en une ligne (entier en bulle), ou déplié ; retenu."""
+        self.hint.set_folded(on)
+        if remember:
+            self.win.settings.setValue(self.HINT_FOLDED_KEY, bool(on))
+        self.hint_fold.setText('▸' if on else '▾')
+        self.hint_fold.setToolTip(tr('Déplier ce texte') if on else tr('Replier ce texte en une ligne'))
+
     def mode(self) -> str:
         return machining_mode(self.win.settings)
 
@@ -309,17 +334,14 @@ class CamPalette(QWidget):
                     mine.append((name, origin, tpl, key))
                 else:
                     by_preset.setdefault(key, []).append((name, origin, tpl))
-        from PySide6.QtWidgets import QTreeWidgetItemIterator
+        from .tree_memory import items                   # (jamais de QTreeWidgetItemIterator : voir `items`)
         was = {}                                         # dossiers de la palette ouverts ou fermés : gardés
         self._open_folders = set()                       # dossiers ouverts : rouverts après un rangement
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value() is not None:
-            node = it.value()
+        for node in items(self.tree):
             if node.data(0, ROLE_GROUP):
                 was[str(node.data(0, ROLE_GROUP))] = node.isExpanded()
             if node.data(0, ROLE_FOLDER) and node.isExpanded():
                 self._open_folders.add(str(node.data(0, ROLE_FOLDER)))
-            it += 1
         self._was_open = was
         self.tree.clear()
         self.items = {}
@@ -412,14 +434,9 @@ class CamPalette(QWidget):
         """Renomme le dossier `key` de la palette (« type », « fam:Usinage 2D », « user », « te », « favoris ») ;
         vide : son nom d'origine. Sans `label`, le demande. Rend le nom montré (None : abandon, dossier absent)."""
         import json
-        from PySide6.QtWidgets import QInputDialog, QTreeWidgetItemIterator
-        node = None
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value() is not None:
-            if it.value().data(0, ROLE_GROUP) == key:
-                node = it.value()
-                break
-            it += 1
+        from PySide6.QtWidgets import QInputDialog
+        from .tree_memory import items
+        node = next((n for n in items(self.tree) if n.data(0, ROLE_GROUP) == key), None)
         if node is None:
             return None
         default = str(node.data(0, ROLE_DEFAULT) or '')
@@ -554,13 +571,10 @@ class CamPalette(QWidget):
 
     def update_tips(self) -> None:
         """Bulles des parcours à jour (dernières valeurs retenues ou oubliées)."""
-        from PySide6.QtWidgets import QTreeWidgetItemIterator
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value() is not None:
-            item = it.value()
+        from .tree_memory import items
+        for item in items(self.tree):
             if item.data(0, ROLE_KIND) and not item.data(0, ROLE_TPL):
                 item.setToolTip(0, self.tip(str(item.data(0, ROLE_KIND))))
-            it += 1
 
     def save_last(self, key: str, name: str | None = None) -> str | None:
         """Dernières valeurs du parcours `key` en modèle, dans « Mes modèles » (hors dossier)."""
@@ -689,11 +703,8 @@ class CamPalette(QWidget):
 
     def _rows(self):
         """Toutes les lignes de la palette."""
-        from PySide6.QtWidgets import QTreeWidgetItemIterator
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value() is not None:
-            yield it.value()
-            it += 1
+        from .tree_memory import items
+        return items(self.tree)
 
     def _not_proc(self, tpl: dict) -> bool:
         """Un modèle de « Mes modèles » (pas un process) : les dossiers des deux sont à part."""

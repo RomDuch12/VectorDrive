@@ -9,7 +9,7 @@ import json
 import re
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView, QTreeWidgetItemIterator
+from PySide6.QtWidgets import QAbstractItemView
 
 #: la clé d'un outil (son identifiant) sur sa ligne, dans les arbres d'outils
 ROLE = Qt.ItemDataRole.UserRole
@@ -35,11 +35,20 @@ def key_of(it) -> tuple:
     return tuple(reversed(parts))
 
 
-def _items(tree):
-    it = QTreeWidgetItemIterator(tree)
-    while it.value() is not None:
-        yield it.value()
-        it += 1
+def items(tree):
+    """Toutes les lignes de `tree`, parents avant enfants, dans l'ordre de l'arbre (lignes cachées comprises).
+    Jamais par `QTreeWidgetItemIterator` : PySide attache chaque itérateur à son arbre, pour toute la vie de l'arbre ;
+    arrêté au milieu (une recherche qui trouve sa ligne), il garde l'adresse d'une ligne que `clear()` détruit sans
+    le prévenir, et le `clear()` suivant plante une fois sur vingt (violation d'accès ; essais sous charge du 16/11).
+    Une liste d'attente de lignes : rien n'est gardé dans Qt."""
+    stack = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount() - 1, -1, -1)]
+    while stack:
+        it = stack.pop()
+        yield it
+        stack.extend(it.child(i) for i in range(it.childCount() - 1, -1, -1))
+
+
+_items = items
 
 
 def capture(tree) -> dict:

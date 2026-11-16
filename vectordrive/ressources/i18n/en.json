@@ -7407,5 +7407,7 @@
  "Nom du process": "Process name",
  "Un modèle (pas un process) porte déjà ce nom : choisissez-en un autre.": "A model (not a process) already has this name: choose another one.",
  "Remplacer le process « {0} » ?": "Replace the process “{0}”?",
- "Remplacer le process « {0} » par les {1} opération(s) du dessin ?": "Replace the process “{0}” with the {1} operation(s) of the drawing?"
+ "Remplacer le process « {0} » par les {1} opération(s) du dessin ?": "Replace the process “{0}” with the {1} operation(s) of the drawing?",
+ "Déplier ce texte": "Unfold this text",
+ "Replier ce texte en une ligne": "Fold this text into one line"
 }

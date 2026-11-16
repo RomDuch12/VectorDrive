@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator,
-                               QVBoxLayout)
+                               QHeaderView, QLabel, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 
 from ..cam import model
 
@@ -279,10 +278,8 @@ class ToolPickerDialog(QDialog):
         return it
 
     def _items(self):
-        it = QTreeWidgetItemIterator(self.tree)
-        while it.value():
-            yield it.value()
-            it += 1
+        from .tree_memory import items                   # (jamais de QTreeWidgetItemIterator : voir `items`)
+        return items(self.tree)
 
     def _filter(self, text: str) -> None:
         q = text.strip().lower()

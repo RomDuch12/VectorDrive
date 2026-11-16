@@ -2246,10 +2246,24 @@ class CamPanel(QWidget):
                 pass
         self.split.splitterMoved.connect(lambda *_a: win.settings.setValue(SPLIT_KEY, self.split.saveState()))
         self.set_tools_open(win.settings.value(self.TOOLS_OPEN_KEY, 'false') in (True, 'true'), remember=False)
-        self.info = QLabel('')
-        self.info.setWordWrap(True)
+        from .fold_label import FoldArea, FoldLabel
+        self.info = FoldLabel('')                        # le compte rendu : repliable en une ligne (demande du 15/11)
         self.info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        lay.addWidget(self.info)
+        # déplié : six lignes au plus, puis il défile — la liste des opérations garde la hauteur (demande du 16/11)
+        self.info_area = FoldArea(self.info, 6)
+        b = self.info_fold = QToolButton()               # ▾ replier, ▸ déplier ; caché quand il n'y a qu'une ligne
+        b.setAutoRaise(True)
+        b.setFixedSize(18, 18)
+        b.setStyleSheet('QToolButton { padding: 0px; }')  # (le signe entier, quelle que soit la densité du thème)
+        b.clicked.connect(lambda _=False: self.set_info_folded(not self.info.folded()))
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        row.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(self.info_area, 1)
+        lay.addLayout(row)
+        self.info.changed.connect(self._sync_info_fold)
+        self.set_info_folded(win.settings.value(self.INFO_FOLDED_KEY, 'false') in (True, 'true'), remember=False)
         self._loading = False
 
     # --- accès ----------------------------------------------------------------------
@@ -2771,6 +2785,23 @@ class CamPanel(QWidget):
     REFRESH_COL = 5
     #: liste des outils dépliée (retenu) ; repliée d'office : la hauteur du panneau va aux opérations
     TOOLS_OPEN_KEY = 'fao/outils_deplies'
+    #: le compte rendu du bas du panneau replié en une ligne (retenu)
+    INFO_FOLDED_KEY = 'fao/compte_rendu_replie'
+
+    def set_info_folded(self, on: bool, remember: bool = True) -> None:
+        """Le compte rendu du bas du panneau (une ligne par parcours, avertissements, temps estimé) replié en une
+        ligne — « ⚠ n · Temps estimé… », le texte entier en bulle —, ou déplié ; retenu."""
+        self.info.set_folded(on)
+        if remember:
+            self.win.settings.setValue(self.INFO_FOLDED_KEY, bool(on))
+        self._sync_info_fold()
+
+    def _sync_info_fold(self) -> None:
+        b = self.info_fold
+        folded = self.info.folded()
+        b.setVisible(self.info.foldable())               # une seule ligne : rien à replier
+        b.setText('▸' if folded else '▾')
+        b.setToolTip(tr('Déplier ce texte') if folded else tr('Replier ce texte en une ligne'))
 
     def op_paths(self, r: int, ops=None) -> list:
         """Rangs, dans les parcours, de ceux de l'opération de la ligne `r` (`ops` : les opérations, déjà lues)."""
@@ -5937,11 +5968,13 @@ class CamPanel(QWidget):
             lines.append(tr('Temps estimé : ~{0}, dont {1} changement(s) d\'outil (~{2})').format(
                 TM.format_duration(est['total']), est['changes'], TM.format_duration(est['change_s'])))
         self.last_estimate = est
+        total = lines[-1] if self.toolpaths else None    # replié : la ligne du temps estimé
         hidden = self.hidden_active_ops()
         if hidden:                                       # un programme partiel ne s'écrit pas sans qu'on le sache
             lines.append('⚠ ' + tr('{0} opération(s) active(s) cachée(s) : hors du programme (œil de leur ligne ; '
                                     '« Parcours 3D » sans ligne choisie les montre toutes)').format(len(hidden)))
-        self.info.setText('\n'.join(lines))
+        self.info.setText('\n'.join(lines), total)
+        self.info_area.show_end()                        # déplié et long : la fin en vue (temps estimé, avertissement)
         self._program_changed()
 
     def simulate(self, exec_dialog: bool = True):
