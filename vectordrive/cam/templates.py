@@ -191,7 +191,9 @@ def rename_template(name: str, label: str) -> str | None:
 
 def set_folder(name: str, folder: str, extra: dict | None = None) -> str | None:
     """Range le modèle `name` dans `folder` (vide : hors dossier), avec les clés
-    `extra` ; rend son nouveau nom, ou None s'il n'existe pas."""
+    `extra` ; rend son nouveau nom, ou None s'il n'existe pas ou qu'un autre
+    modèle porte déjà ce nom dans `folder` (il n'est jamais écrasé : les
+    dossiers des process et des modèles sont montrés à part)."""
     tpl = user_templates().get(name)
     if tpl is None:
         return None
@@ -200,6 +202,8 @@ def set_folder(name: str, folder: str, extra: dict | None = None) -> str | None:
     new = f'{folder} / {label}' if folder else label
     if new == name and not extra:
         return name
+    if new != name and new in user_templates():
+        return None
     delete_user(name)
     tpl = dict(tpl, name=new, dossier=folder, **(extra or {}))
     save_user(tpl)
@@ -251,34 +255,35 @@ def root_of_source(source: str) -> str:
     return source
 
 
-def rename_folder(old: str, new: str) -> int:
+def rename_folder(old: str, new: str, which=None) -> int:
     """Renomme (ou déplace, ou fusionne dans un existant) un dossier et ses
     sous-dossiers ; rend le nombre de modèles déplacés. Un dossier d'import de
-    TypeEdit renommé le reste (`ROOT_KEY`)."""
+    TypeEdit renommé le reste (`ROOT_KEY`). `which(modèle)` : ces modèles
+    seulement (les process de la palette ont leurs dossiers à part)."""
     old_p, new_p = '/'.join(folder_parts(old)), '/'.join(folder_parts(new))
     n = 0
     for name, t in list(user_templates().items()):
         f = '/'.join(folder_parts(t.get('dossier')))
-        if _in(f, old_p):
+        if _in(f, old_p) and (which is None or which(t)):
             extra = {}
             root = _root_path(t)
             if root and _in(root, old_p):
                 if ROOT_KEY not in t and SOURCE_KEY not in t and t.get('origine') == 'typeedit':
                     extra[SOURCE_KEY] = root             # importé avant : le dossier porte le nom de son fichier
                 extra[ROOT_KEY] = (new_p + root[len(old_p):]).strip('/')
-            set_folder(name, (new_p + f[len(old_p):]).strip('/'), extra)
-            n += 1
+            n += set_folder(name, (new_p + f[len(old_p):]).strip('/'), extra) is not None
     empty = empty_folders()
     if any(_in(f, old_p) for f in empty):
         _save_empty([(new_p + f[len(old_p):]).strip('/') if _in(f, old_p) else f for f in empty])
     return n
 
 
-def delete_folder(folder: str) -> int:
-    """Supprime les modèles du dossier (sous-dossiers compris) ; rend leur nombre."""
+def delete_folder(folder: str, which=None) -> int:
+    """Supprime les modèles du dossier (sous-dossiers compris) ; rend leur nombre.
+    `which(modèle)` : ces modèles seulement."""
     n = 0
     for name, t in list(user_templates().items()):
-        if _in(t.get('dossier'), folder):
+        if _in(t.get('dossier'), folder) and (which is None or which(t)):
             n += delete_user(name)
     empty = empty_folders()
     if any(_in(f, folder) for f in empty):

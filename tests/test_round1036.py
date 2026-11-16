@@ -82,8 +82,9 @@ class Base(unittest.TestCase):
             self.pal.refresh()
 
     def tops(self):
-        t = self.pal.tree
-        return [t.topLevelItem(i) for i in range(t.topLevelItemCount())]
+        t = self.pal.tree                                                    # « Mes process » (0.904.0) : à part
+        return [t.topLevelItem(i) for i in range(t.topLevelItemCount())
+                if t.topLevelItem(i).data(0, getattr(CP, 'ROLE_GROUP', 0)) != 'process']
 
     def top_texts(self):
         return [t.text(0) for t in self.tops()]

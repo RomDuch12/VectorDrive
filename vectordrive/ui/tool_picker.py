@@ -22,6 +22,9 @@ from ..i18n import tr
 
 PICK = '__choisir__'
 ROLE = Qt.ItemDataRole.UserRole
+#: l'affichage de la liste (tree_memory) et le tri : retrouvés à la prochaine ouverture (demande du 15/11, 23 h 45)
+VIEW = 'outils/choix_affichage'
+SORT = 'outils/choix_tri'
 
 
 def lib_label(t) -> str:
@@ -93,7 +96,8 @@ class ToolPickerDialog(QDialog):
         from .tool_columns import install                 # colonnes arrangeables, n° T dans la sienne (cachée)
         install(self.tree, settings, 'outils/choix_colonnes')
         from .tool_filters import sortable
-        sortable(self.tree, lambda: self._refill())     # clic sur un titre : trier ; troisième clic : l'ordre d'origine
+        sortable(self.tree, lambda: self._refill(), settings, SORT)   # clic sur un titre : trier (retenu) ;
+        # troisième clic : l'ordre d'origine
         self.tree.header().setToolTip(tr('Clic sur un titre : trier (croissant, décroissant, puis l’ordre d’origine)'))
         from PySide6.QtCore import QSize
         self.tree.setIconSize(QSize(14, 26))
@@ -120,6 +124,9 @@ class ToolPickerDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
         self.choice = None
+        from . import tree_memory as TM                   # l'affichage de la dernière fois
+        self._view = TM.load(settings, VIEW)
+        self._was_q = False                              # une recherche est tapée
         self._fill(doc_tools, current)
         self._filter('')
         self.search.setFocus()
@@ -167,6 +174,9 @@ class ToolPickerDialog(QDialog):
         from . import tool_favorites as FAV
         from .tool_filters import group_item
         self._fill_args = (list(doc_tools), current)
+        from . import tree_memory as TM
+        if self.tree.topLevelItemCount() and not self.search.text().strip():
+            self._view = TM.capture(self.tree)           # l'affichage d'avant : gardé quand la liste se refait
         self.tree.clear()
         cur_item = None
         self._fav_keys = set(FAV.load(self.settings))
@@ -239,6 +249,15 @@ class ToolPickerDialog(QDialog):
                 p.setExpanded(True)
                 p = p.parent()
             self.tree.setCurrentItem(cur_item)
+        first = not getattr(self, '_filled', False)
+        self._filled = True
+        view = getattr(self, '_view', None)
+        if view:                                         # l'affichage d'avant (ou de la dernière fois) par-dessus ;
+            self._opening = True                         # l'outil de l'opération reste choisi, et en vue
+            try:
+                TM.restore(self.tree, view, current=first and current is None, reveal=current is not None)
+            finally:
+                self._opening = False
         # seuls les favoris se glissent, et seulement dans leur groupe (pas quand la liste est triée par une colonne)
         FAV.lock_drops(self.tree, fav_group, fav_rows, draggable=self.tree.sortColumn() < 0)
 
@@ -267,6 +286,11 @@ class ToolPickerDialog(QDialog):
 
     def _filter(self, text: str) -> None:
         q = text.strip().lower()
+        was = getattr(self, '_was_q', False)
+        self._was_q = bool(q)
+        if q and not was and self.tree.topLevelItemCount():
+            from . import tree_memory as TM               # avant la recherche : l'affichage à remettre après elle
+            self._view = TM.capture(self.tree)
         shown = set()
         prefs = toolprefs.load(self.settings)
         only = bool(self.op_kind) and not self.only.isHidden() and self.only.isChecked()
@@ -294,6 +318,13 @@ class ToolPickerDialog(QDialog):
             first = next((it for it in self._items() if it.data(0, ROLE) and not it.isHidden()), None)
             if first is not None:
                 self.tree.setCurrentItem(first)
+        elif was and getattr(self, '_view', None):       # recherche effacée : l'affichage d'avant elle (l'outil
+            from . import tree_memory as TM               # trouvé reste choisi, sans rouvrir son dossier)
+            self._opening = True
+            try:
+                TM.restore(self.tree, self._view, current=False)
+            finally:
+                self._opening = False
 
     def _tool(self, key):
         if isinstance(key, str) and key.startswith('lib:'):
@@ -366,6 +397,9 @@ class ToolPickerDialog(QDialog):
     def done(self, r) -> None:                                  # noqa: D401 — API Qt
         from .tool_filters import remember_large
         remember_large(self, self.settings, 'outils/choix_agrandi', full=True)
+        from . import tree_memory as TM                   # l'affichage de la liste (celui d'avant une recherche)
+        TM.save(self.settings, VIEW, getattr(self, '_view', None) if self.search.text().strip()
+                else TM.capture(self.tree))
         super().done(r)
 
     def tool_prefs(self, exec_dialog: bool = True):

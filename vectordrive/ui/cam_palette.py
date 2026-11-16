@@ -31,6 +31,8 @@ ROLE_FOLDER = Qt.ItemDataRole.UserRole + 3     # chemin du dossier (« TypeEdit 
 ROLE_ROOT = Qt.ItemDataRole.UserRole + 4       # dossier « Mes modèles » : y déposer, c'est sortir du dossier
 ROLE_GROUP = Qt.ItemDataRole.UserRole + 5      # dossier de la palette (« type », « fam:Usinage 2D », « user », « te »…)
 ROLE_DEFAULT = Qt.ItemDataRole.UserRole + 6    # son nom d'origine
+ROLE_PROCESS = Qt.ItemDataRole.UserRole + 7    # un process de « Mes process » (plusieurs opérations)
+ROLE_PDIR = Qt.ItemDataRole.UserRole + 8       # un dossier de « Mes process » (à part de ceux de « Mes modèles »)
 #: noms donnés aux dossiers de la palette (JSON {dossier: nom})
 NAMES = 'fao/palette/noms'
 
@@ -72,21 +74,37 @@ class TemplateTree(QTreeWidget):
                 continue
             if it.data(0, ROLE_TPL):
                 out.append(('modele', str(it.data(0, ROLE_TPL))))
-            elif it.data(0, ROLE_FOLDER):
-                out.append(('dossier', str(it.data(0, ROLE_FOLDER))))
+            elif it.data(0, ROLE_FOLDER):                # un dossier de « Mes process » : à part
+                out.append(('pdossier' if it.data(0, ROLE_PDIR) else 'dossier', str(it.data(0, ROLE_FOLDER))))
         return out
+
+    @staticmethod
+    def zone(item):
+        """Le dossier de la palette (« user », « process »…) où se trouve la ligne `item`."""
+        while item is not None and item.parent() is not None:
+            item = item.parent()
+        return item.data(0, ROLE_GROUP) if item is not None else None
+
+    def same_zone(self, target) -> bool:
+        """Un dépôt reste dans son dossier de la palette : un modèle ne va pas dans « Mes process », ni un process dans
+        « Mes modèles » (un modèle repris de TypeEdit va toujours dans « Mes modèles »)."""
+        z = self.zone(target) == 'process'
+        return all((self.zone(it) == 'process') == z for it in self.selectedItems()
+                   if it.data(0, ROLE_ORIGIN) == 'utilisateur')
 
     def dragMoveEvent(self, ev) -> None:
         super().dragMoveEvent(ev)
-        if self.target_folder(self.itemAt(ev.position().toPoint())) is None or not self.moving():
+        target = self.itemAt(ev.position().toPoint())
+        if self.target_folder(target) is None or not self.moving() or not self.same_zone(target):
             ev.ignore()
 
     def dropEvent(self, ev) -> None:
-        folder = self.target_folder(self.itemAt(ev.position().toPoint()))
+        target = self.itemAt(ev.position().toPoint())
+        folder = self.target_folder(target)
         objs = self.moving()
         ev.setDropAction(Qt.DropAction.IgnoreAction)     # l'arbre est refait d'après les fichiers
         ev.accept()
-        if folder is not None and objs:
+        if folder is not None and objs and self.same_zone(target):
             self.dropped(objs, folder)
 
 
@@ -112,6 +130,29 @@ def preset_of(tpl: dict, kinds: dict) -> str | None:
     if len(ops) != 1 or not isinstance(ops[0], dict):
         return None
     return kinds.get(ops[0].get('kind'))
+
+
+def is_process(tpl: dict, key) -> bool:
+    """Un modèle de l'utilisateur va dans « Mes process » (demande du 15/11, 23 h 30) : marqué process, ou de plusieurs
+    opérations (le réglage d'une gravure : `key`, son parcours, est None). Pas ceux importés de TypeEdit."""
+    return bool(tpl.get('process') or key is None) and not from_typeedit(tpl)
+
+
+def process_suffix(tpl: dict) -> str:
+    """« — 4 opération(s) » : la taille du process."""
+    return '  — ' + tr('{0} opération(s)').format(len(tpl.get('operations') or []))
+
+
+def process_tip(tpl: dict, name: str) -> str:
+    """Bulle d'un process : sa description, ses opérations, ce que fait le clic."""
+    from ..cam import model
+    lines = [str(tpl.get('description') or name)]
+    for d in tpl.get('operations') or []:
+        if isinstance(d, dict):
+            kind = str(d.get('kind') or '')
+            lines.append('• ' + (str(d.get('name') or '').strip() or tr(model.op_kinds().get(kind, kind))))
+    lines.append(tr('Clic : l’appliquer au dessin ; puis ⟳ sur chaque opération pour ses formes'))
+    return '\n'.join(lines)
 
 
 def top_folder(folder) -> str:
@@ -247,13 +288,22 @@ class CamPalette(QWidget):
         kinds = {}
         for key, (_label, kind, _kw, _tk) in ps.items():
             kinds.setdefault(kind, key)
+        self._kinds = kinds                              # (`_is_proc`)
         by_preset: dict[str, list] = {}                  # parcours → modèles des plugins, rangés sous lui
         mine: list = []                                  # vos modèles (importés compris) : « Mes modèles », « TypeEdit »
+        procs: list = []                                 # vos process : « Mes process »
         te_roots: set = set()                            # dossiers d'import de TypeEdit : l'import a été fait
         for name, (origin, tpl) in sorted(TPL.all_templates().items(), key=lambda kv: kv[0].lower()):
             if origin == 'utilisateur' and from_typeedit(tpl):
                 te_roots.add(top_folder(tpl.get('dossier')))
             key = preset_of(tpl, kinds)
+            if origin == 'utilisateur' and is_process(tpl, key):
+                keys = [kinds.get(d.get('kind')) for d in tpl.get('operations') or [] if isinstance(d, dict)]
+                keys = [k for k in keys if k in ps and k not in ('instruction', 'texte_machine')]
+                if not keys or any(fits(k) for k in keys):  # pas un process laser pour une fraiseuse (une
+                    # instruction machine va à toutes : pas comptée)
+                    procs.append((name, origin, tpl, None))
+                continue
             if key in ps and fits(key):
                 if origin == 'utilisateur':
                     mine.append((name, origin, tpl, key))
@@ -297,7 +347,7 @@ class CamPalette(QWidget):
                     g.addChild(self._preset_row(key, ps))
             g.setExpanded(was.get(gkey, True))
         base.setExpanded(was.get('type', True))
-        self._folder_tree(mine, ps, te_favs, te_roots)
+        self._folder_tree(mine, ps, te_favs, te_roots, procs)
 
     def _preset_row(self, key: str, ps: dict) -> QTreeWidgetItem:
         """La ligne d'un parcours et, dessous, les modèles des plugins pour ce parcours (dans leurs dossiers)."""
@@ -388,7 +438,8 @@ class CamPalette(QWidget):
         self.refresh()
         return self.group_name(key, default)
 
-    def _folder_tree(self, entries: list, ps: dict, favs: tuple = (), te_roots: set = frozenset()) -> None:
+    def _folder_tree(self, entries: list, ps: dict, favs: tuple = (), te_roots: set = frozenset(),
+                     procs: list = ()) -> None:
         """Vos modèles dans « Mes modèles », en dossiers ou hors dossier (y déposer un modèle le sort de son dossier) ;
         ceux importés de TypeEdit (dossiers d'import `te_roots`), avec la palette de TypeEdit (`favs`), dans
         « TypeEdit », seulement si l'import a été fait. Leur arborescence est gardée, comme la fenêtre de TypeEdit."""
@@ -412,6 +463,19 @@ class CamPalette(QWidget):
                 fav.setExpanded(was.get('favoris', True))
         self._fill(user, own, ps, [p for p in empty if not (te is not None and p and p[0] in te_roots)])
         user.setExpanded(was.get('user', True))
+        proc = self._group('process', tr('Mes process'))   # vos process, juste après vos modèles (demande du 15/11)
+        proc.setData(0, ROLE_ROOT, True)
+        tip = tr('Vos process : les opérations d’une gravure et leurs outils. Clic : les ajouter au dessin, puis ⟳ sur chaque opération pour lui donner ses formes')
+        proc.setToolTip(0, tip)
+        self.tree.insertTopLevelItem(self.tree.indexOfTopLevelItem(user) + 1, proc)
+        self._fill(proc, list(procs), ps)
+        if not procs:                                    # vide : comment le remplir
+            from PySide6.QtGui import QBrush, QColor
+            hint = QTreeWidgetItem([tr('(clic droit : enregistrer les opérations du dessin)')])
+            hint.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            hint.setForeground(0, QBrush(QColor('#868e96')))
+            proc.addChild(hint)
+        proc.setExpanded(was.get('process', True))
         if te is not None:
             self._fill(te, te_entries, ps, [p for p in empty if p and p[0] in te_roots])
             if te.childCount():
@@ -432,6 +496,8 @@ class CamPalette(QWidget):
                 if node is None:
                     node = folders[parts[:depth]] = QTreeWidgetItem(['📁 ' + parts[depth - 1]])
                     node.setData(0, ROLE_FOLDER, '/'.join(parts[:depth]))
+                    if g.data(0, ROLE_GROUP) == 'process':   # un dossier de « Mes process »
+                        node.setData(0, ROLE_PDIR, True)
                     if origin == 'utilisateur':
                         node.setData(0, ROLE_ORIGIN, origin)
                     else:                                # dossier d'un plugin : ni choisi, ni déplacé
@@ -457,14 +523,20 @@ class CamPalette(QWidget):
             folder = str(tpl.get('dossier') or '')
             parent = node_of(parts_of(tpl), origin)
             label = name[len(folder) + 3:] if name.startswith(folder + ' / ') else name
-            t = QTreeWidgetItem(['📄 ' + label + memo_suffix(tpl)])
-            t.setData(0, ROLE_KIND, key)
+            if key is None:                              # un process (« Mes process ») : ses opérations
+                t = QTreeWidgetItem(['📋 ' + label + process_suffix(tpl)])
+                t.setData(0, ROLE_PROCESS, True)
+                t.setToolTip(0, process_tip(tpl, name))
+            else:
+                t = QTreeWidgetItem(['📄 ' + label + memo_suffix(tpl)])
+                t.setData(0, ROLE_KIND, key)
+                act = self.win.A.get(f'cam_new_{key}')
+                if act is not None:
+                    t.setIcon(0, act.icon())
+                t.setToolTip(0, str(tpl.get('description') or name) + '\n' + tr('Parcours : {0}').format(
+                    tr(ps[key][0])))
             t.setData(0, ROLE_TPL, name)
             t.setData(0, ROLE_ORIGIN, origin)
-            act = self.win.A.get(f'cam_new_{key}')
-            if act is not None:
-                t.setIcon(0, act.icon())
-            t.setToolTip(0, str(tpl.get('description') or name) + '\n' + tr('Parcours : {0}').format(tr(ps[key][0])))
             if origin != 'utilisateur':
                 t.setFlags(t.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
             parent.addChild(t)
@@ -518,6 +590,9 @@ class CamPalette(QWidget):
         return self.win.cam_panel.forget_last(key)
 
     def _clicked(self, item: QTreeWidgetItem, _col: int = 0) -> None:
+        if item.data(0, ROLE_PROCESS):                   # un process : ajouté au dessin
+            self.apply_process(str(item.data(0, ROLE_TPL)))
+            return
         key = item.data(0, ROLE_KIND)
         if not key:
             item.setExpanded(not item.isExpanded())
@@ -528,6 +603,10 @@ class CamPalette(QWidget):
         item = self.tree.itemAt(pos)
         name = item.data(0, ROLE_TPL) if item is not None else None
         m = QMenu(self)
+        if item is not None and item.data(0, ROLE_PROCESS):
+            m.addAction(tr('Appliquer au dessin…'), lambda: self.apply_process(str(name)))
+            if item.data(0, ROLE_ORIGIN) == 'utilisateur':
+                m.addAction(tr('Remplacer par les opérations du dessin'), lambda: self.update_process(str(name)))
         if item is not None and item.data(0, ROLE_KIND):
             m.addAction(tr('Nouveau parcours…'), lambda: self._clicked(item))
             key = str(item.data(0, ROLE_KIND))
@@ -546,7 +625,9 @@ class CamPalette(QWidget):
             if str(group) in self._names():
                 m.addAction(tr('Nom d’origine'), lambda: self.rename_group(str(group), ''))
         folder = item.data(0, ROLE_FOLDER) if item is not None else None
-        if folder and item.data(0, ROLE_ORIGIN) == 'utilisateur':
+        if folder and item.data(0, ROLE_ORIGIN) == 'utilisateur' and item.data(0, ROLE_PDIR):
+            m.addAction(tr('Renommer ou déplacer le dossier…'), lambda: self.rename_process_folder(folder))
+        elif folder and item.data(0, ROLE_ORIGIN) == 'utilisateur':
             m.addAction(tr('Nouveau sous-dossier…'), lambda: self.new_folder(folder))
             m.addAction(tr('Renommer ou déplacer le dossier…'), lambda: self.rename_folder(folder))
         objs = self.tree.moving()
@@ -554,10 +635,118 @@ class CamPalette(QWidget):
             m.addAction(tr('Ranger la sélection dans un dossier…'), lambda: self.move_objects(objs))
             m.addAction(tr('Supprimer la sélection…'), self.delete_selected).setShortcut(QKeySequence.StandardKey.Delete)
         m.addSeparator()
+        m.addAction(tr('Enregistrer les opérations du dessin comme process…'), lambda: self.save_process())
         m.addAction(tr('Nouveau dossier…'), lambda: self.new_folder(''))
         m.addAction(tr('Importer les modèles de TypeEdit…'), lambda: self.import_typeedit())
         m.addAction(tr('Actualiser'), self.refresh)
         m.popup(self.tree.viewport().mapToGlobal(pos))
+
+    # --- process (demande du 15/11, 23 h 30) ------------------------------------------------------------------------
+    def save_process(self, name: str | None = None, description: str = '') -> str | None:
+        """Les opérations du dessin et leurs outils en process, dans « Mes process » : à ajouter à une autre gravure
+        d'un clic, puis ⟳ sur chaque opération pour ses formes. Sans `name`, le demande. Rend son nom (None : rien)."""
+        from PySide6.QtWidgets import QInputDialog
+        from ..cam import templates as TPL
+        s = self.win.cam_panel.setup()
+        if not s.operations:
+            if name is None:
+                QMessageBox.information(self, tr('Mes process'), tr('Aucune opération à enregistrer.'))
+            return None
+        asked = name is None
+        if asked:
+            name, ok = QInputDialog.getText(self, tr('Enregistrer un process'), tr('Nom du process'))
+            if not ok:
+                return None
+        name = str(name or '').replace('/', '-').strip()
+        if not name:
+            return None
+        users = TPL.user_templates()
+        # le même nom qu'un process rangé dans un dossier (« Atelier / Plaque » pour « Plaque ») : c'est lui
+        key = name if name in users else next((n for n, t in users.items() if self._is_proc(t)
+                                               and TPL.label_of(t) == name), name)
+        old = users.get(key)
+        if old is not None and not self._is_proc(old):   # un modèle d'une opération, un import : pas écrasé
+            if asked:
+                QMessageBox.information(self, tr('Mes process'),
+                                        tr('Un modèle (pas un process) porte déjà ce nom : choisissez-en un autre.'))
+            return None
+        if old is not None and asked and QMessageBox.question(
+                self, tr('Mes process'), tr('Remplacer le process « {0} » ?').format(name)) \
+                != QMessageBox.StandardButton.Yes:
+            return None
+        tpl = TPL.from_setup(s, key, description or str((old or {}).get('description') or ''))
+        tpl['process'] = True
+        for k in ('dossier', 'ordre'):                   # remplacé : il reste à sa place
+            if (old or {}).get(k) is not None:
+                tpl[k] = old[k]
+        TPL.save_user(tpl)
+        self.refresh()
+        return key
+
+    def _is_proc(self, tpl: dict) -> bool:
+        """Le modèle `tpl` de l'utilisateur est-il un process (« Mes process ») ?"""
+        return is_process(tpl, preset_of(tpl, getattr(self, '_kinds', {})))
+
+    def _rows(self):
+        """Toutes les lignes de la palette."""
+        from PySide6.QtWidgets import QTreeWidgetItemIterator
+        it = QTreeWidgetItemIterator(self.tree)
+        while it.value() is not None:
+            yield it.value()
+            it += 1
+
+    def _not_proc(self, tpl: dict) -> bool:
+        """Un modèle de « Mes modèles » (pas un process) : les dossiers des deux sont à part."""
+        return not self._is_proc(tpl)
+
+    def _move_process_folder(self, old: str, new: str) -> int:
+        """Les process du dossier `old` (et de ses sous-dossiers) rangés dans `new` : un dossier du même nom dans « Mes
+        modèles » n'est pas touché (les dossiers des deux sont à part). Rend le nombre de process déplacés."""
+        from ..cam import templates as TPL
+        old_p, new_p = TPL.folder_parts(old), TPL.folder_parts(new)
+        n = 0
+        for name, tpl in list(TPL.user_templates().items()):
+            parts = TPL.folder_parts(tpl.get('dossier'))
+            if self._is_proc(tpl) and old_p and parts[:len(old_p)] == old_p:
+                n += TPL.set_folder(name, '/'.join(new_p + parts[len(old_p):])) is not None
+        return n
+
+    def rename_process_folder(self, old: str, new: str | None = None) -> int:
+        """Renommer ou déplacer un dossier de « Mes process » (ses process seulement)."""
+        if new is None:
+            new = self._ask_folder(tr('Renommer ou déplacer le dossier'), old)
+            if new is None or new == old:
+                return 0
+        n = self._move_process_folder(old, new)
+        self.refresh()
+        return n
+
+    def update_process(self, name: str, confirm: bool = True) -> bool:
+        """Le process `name` refait avec les opérations du dessin (son nom, son dossier, sa description gardés)."""
+        from ..cam import templates as TPL
+        old = TPL.user_templates().get(name)
+        s = self.win.cam_panel.setup()
+        if old is None or not s.operations:
+            if confirm and old is not None:
+                QMessageBox.information(self, tr('Mes process'), tr('Aucune opération à enregistrer.'))
+            return False
+        if confirm and QMessageBox.question(
+                self, tr('Mes process'), tr('Remplacer le process « {0} » par les {1} opération(s) du dessin ?').format(
+                    name, len(s.operations))) != QMessageBox.StandardButton.Yes:
+            return False
+        tpl = TPL.from_setup(s, name, str(old.get('description') or ''))
+        tpl['process'] = True
+        for k in ('dossier', 'ordre'):
+            if old.get(k) is not None:
+                tpl[k] = old[k]
+        TPL.save_user(tpl)
+        self.refresh()
+        return True
+
+    def apply_process(self, name: str, exec_dialog: bool = True, **kw) -> list:
+        """Le process `name` ajouté aux opérations du dessin : la fenêtre du modèle (quoi usiner — d'office les formes
+        sélectionnées —, remplacer les opérations ou les compléter). Rend le compte rendu."""
+        return self.win.cam_panel.apply_template(name, exec_dialog=exec_dialog, prefer='objets', **kw)
 
     # --- modèles -------------------------------------------------------------------------------
     def delete_template(self, name: str, confirm: bool = True) -> bool:
@@ -613,7 +802,7 @@ class CamPalette(QWidget):
         if len(objs) != 1:
             return
         what, key = objs[0]
-        (self.rename_template if what == 'modele' else self.rename_folder)(key)
+        {'modele': self.rename_template, 'dossier': self.rename_folder}.get(what, self.rename_process_folder)(key)
 
     def move_objects(self, objs: list, folder: str | None = None) -> int:
         """Range modèles et dossiers (glissés, ou choisis) dans `folder`
@@ -631,10 +820,15 @@ class CamPalette(QWidget):
                 continue                                 # un dossier ne va pas dans lui-même
             if folder:
                 TPL.add_folder(folder)
-            n += TPL.rename_folder(d, '/'.join(TPL.folder_parts(folder) + [TPL.folder_parts(d)[-1]]))
+            n += TPL.rename_folder(d, '/'.join(TPL.folder_parts(folder) + [TPL.folder_parts(d)[-1]]),
+                                   which=self._not_proc)  # les process d'un dossier du même nom : à part
         for w, k in objs:
-            if w == 'modele' and not any(TPL._in(TPL.user_templates().get(k, {}).get('dossier'), d) for d in dirs):
+            if w == 'modele' and not any(TPL._in(TPL.user_templates().get(k, {}).get('dossier'), d)
+                                         for d in dirs + [k2 for w2, k2 in objs if w2 == 'pdossier']):
                 n += TPL.set_folder(k, folder) is not None
+        for w, d in objs:                                # dossiers de « Mes process » : leurs process seulement
+            if w == 'pdossier' and not TPL._in(folder, d):
+                n += self._move_process_folder(d, '/'.join(TPL.folder_parts(folder) + [TPL.folder_parts(d)[-1]]))
         self._open_folders = getattr(self, '_open_folders', set()) | {folder}
         self.refresh()
         return n
@@ -647,13 +841,19 @@ class CamPalette(QWidget):
             return 0
         dirs = [k for w, k in objs if w == 'dossier']
         names = [k for w, k in objs if w == 'modele']
-        inside = sum(1 for t in TPL.user_templates().values() if any(TPL._in(t.get('dossier'), d) for d in dirs))
-        msg = tr('Supprimer {0} modèle(s) et {1} dossier(s) ({2} modèle(s) dedans) ?').format(len(names), len(dirs),
-                                                                                           inside)
+        inside = sum(1 for t in TPL.user_templates().values()  # (les process d'un dossier du même nom : à part)
+                     if not self._is_proc(t) and any(TPL._in(t.get('dossier'), d) for d in dirs))
+        pdirs = [k for w, k in objs if w == 'pdossier']  # dossiers de « Mes process » : leurs process seulement
+        shown = {str(it.data(0, ROLE_TPL)) for it in self._rows() if it.data(0, ROLE_PROCESS)}
+        procs = [k for k, t in TPL.user_templates().items()   # ceux montrés (pas ceux d'une autre machine)
+                 if k in shown and self._is_proc(t) and any(TPL._in(t.get('dossier'), d) for d in pdirs)]
+        msg = tr('Supprimer {0} modèle(s) et {1} dossier(s) ({2} modèle(s) dedans) ?').format(
+            len(names), len(dirs) + len(pdirs), inside + len(procs))
         if confirm and QMessageBox.question(self, tr('Modèles d\'usinage'), msg) != QMessageBox.StandardButton.Yes:
             return 0
-        n = sum(TPL.delete_folder(d) for d in dirs)
+        n = sum(TPL.delete_folder(d, which=self._not_proc) for d in dirs)
         n += sum(TPL.delete_user(k) for k in names)
+        n += sum(TPL.delete_user(k) for k in procs if k not in names)
         self.refresh()
         return n
 
@@ -684,18 +884,18 @@ class CamPalette(QWidget):
             new = self._ask_folder(tr('Renommer ou déplacer le dossier'), old)
             if new is None or new == old:
                 return 0
-        n = TPL.rename_folder(old, new)
+        n = TPL.rename_folder(old, new, which=self._not_proc)   # (ses process : `rename_process_folder`)
         self.refresh()
         return n
 
     def delete_folder(self, folder: str, confirm: bool = True) -> int:
         from ..cam import templates as TPL
-        n = sum(1 for t in TPL.user_templates().values() if TPL._in(t.get('dossier'), folder))
+        n = sum(1 for t in TPL.user_templates().values() if TPL._in(t.get('dossier'), folder) and self._not_proc(t))
         if confirm and QMessageBox.question(self, tr('Modèles d\'usinage'),
                                             tr('Supprimer le dossier « {0} » et ses {1} modèle(s) ?').format(
                                                 folder, n)) != QMessageBox.StandardButton.Yes:
             return 0
-        n = TPL.delete_folder(folder)
+        n = TPL.delete_folder(folder, which=self._not_proc)
         self.refresh()
         return n
 

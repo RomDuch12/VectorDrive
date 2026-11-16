@@ -21,6 +21,10 @@ DOC = '__document__'
 #: réglages : la dernière liste utilisée (sa clé : MINE, DOC, nom d'une bibliothèque de plugin) et son dernier dossier
 LAST_LIST = 'outils/derniere_liste'
 LAST_FOLDER = 'outils/dernier_dossier'
+#: l'affichage de l'arbre (tree_memory), le tri, la part de l'arbre et de la fiche : retrouvés à la prochaine ouverture
+VIEW = 'outils/bibliotheque_affichage'
+SORT = 'outils/bibliotheque_tri'
+SPLIT = 'outils/bibliotheque_partage'
 #: données des lignes de l'arbre : la bibliothèque montrée, le chemin d'un dossier, le groupe des favoris
 SOURCE_ROLE = Qt.ItemDataRole.UserRole + 3
 PATH_ROLE = Qt.ItemDataRole.UserRole + 4
@@ -349,7 +353,8 @@ class ToolLibraryDialog(QDialog):
         from .tool_columns import install                 # colonnes arrangeables, n° T dans la sienne (cachée)
         install(self.tree, self.settings, 'outils/bibliotheque_colonnes')
         from .tool_filters import sortable
-        sortable(self.tree, lambda: self.fill())        # clic sur un titre : trier ; troisième clic : l'ordre rangé
+        sortable(self.tree, lambda: self.fill(), self.settings, SORT)   # clic sur un titre : trier (retenu) ;
+        # troisième clic : l'ordre rangé
         self.tree.header().sortIndicatorChanged.connect(lambda _c, _o: self._order_actions())
         self.tree.header().setToolTip(tr('Clic sur un titre : trier (croissant, décroissant, puis l’ordre rangé ; '
                                          'Monter et Descendre seulement dans l’ordre rangé)'))
@@ -447,6 +452,10 @@ class ToolLibraryDialog(QDialog):
         rl.addLayout(side)
         split.addWidget(right)
         split.setSizes([460, 700])
+        self.split = split
+        if self.settings is not None and self.settings.value(SPLIT, ''):     # la part de l'arbre : retenue
+            from PySide6.QtCore import QByteArray
+            split.restoreState(QByteArray.fromBase64(str(self.settings.value(SPLIT, '')).encode('ascii', 'ignore')))
         lay.addWidget(split, 1)
         self.info = QLabel()
         self.info.setWordWrap(True)
@@ -454,6 +463,10 @@ class ToolLibraryDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+        from . import tree_memory as TM                   # l'affichage de la dernière fois (demande du 15/11, 23 h 45)
+        self._view = TM.load(self.settings, VIEW)
+        self._searching = False                          # l'arbre montré est celui d'une recherche, d'un filtre
+        self._first_view = True                          # la ligne choisie : remise à l'ouverture seulement
         self.reload()
 
     # --- sources -----------------------------------------------------------------------------
@@ -617,6 +630,9 @@ class ToolLibraryDialog(QDialog):
         q = self.filters.active()
         op = self.filters.op.currentData()
         cur = self.source_key()
+        from . import tree_memory as TM
+        if self.tree.topLevelItemCount() and not getattr(self, '_searching', False):
+            self._view = TM.capture(self.tree)           # l'affichage d'avant : gardé quand l'arbre se refait
         self.tree.clear()
         self._fav_keys = set(FAV.load(self.settings))
         sources = self._sources()
@@ -679,6 +695,16 @@ class ToolLibraryDialog(QDialog):
             node.setHidden(bool(q and not shown))
         self._arrange_drops(fav_group, nodes.get(MINE))
         self._open(fav_group, nodes, cur, q)
+        first = getattr(self, '_first_view', False)
+        self._first_view = False
+        self._searching = bool(q)
+        view = getattr(self, '_view', None)
+        if view and not q:                               # l'affichage d'avant (ou de la dernière fois) par-dessus
+            self._opening = True
+            try:
+                TM.restore(self.tree, view, current=first)
+            finally:
+                self._opening = False
         self._order_actions()                             # triée : monter, descendre n'ont plus de sens
         text = tr('{0} outil(s)').format(total) if shown_n == total else \
             tr('{0} outil(s) sur {1}').format(shown_n, total)
@@ -1177,7 +1203,18 @@ class ToolLibraryDialog(QDialog):
     def done(self, r) -> None:                                  # noqa: D401 — API Qt
         from .tool_filters import remember_large
         remember_large(self, self.settings, 'outils/fenetre_agrandie', full=True)
+        self.remember_view()
         super().done(r)
+
+    def remember_view(self) -> None:
+        """L'affichage de l'arbre (celui d'avant une recherche en cours) et la part de l'arbre et de la fiche,
+        retrouvés à la prochaine ouverture."""
+        from . import tree_memory as TM
+        if self.settings is None:
+            return
+        TM.save(self.settings, VIEW, getattr(self, '_view', None) if getattr(self, '_searching', False)
+                else TM.capture(self.tree))
+        self.settings.setValue(SPLIT, bytes(self.split.saveState().toBase64()).decode('ascii'))
 
     def program_aliases(self, exec_dialog: bool = True):
         """Les outils retenus pour les programmes lus (tool_picker.ProgramAliasesDialog) ; rend la fenêtre."""

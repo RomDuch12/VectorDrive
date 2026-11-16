@@ -2104,8 +2104,8 @@ class CamPanel(QWidget):
         # opérations
         g = QGroupBox(tr('Opérations (dans l\'ordre d\'usinage)'))
         gl = QVBoxLayout(g)
-        self.ops = QTableWidget(0, 5)
-        self.ops.setHorizontalHeaderLabels([tr('Opération'), tr('Stratégie'), tr('Outil'), tr('Prof.'), ''])
+        self.ops = QTableWidget(0, 6)
+        self.ops.setHorizontalHeaderLabels([tr('Opération'), tr('Stratégie'), tr('Outil'), tr('Prof.'), '', '⟳'])
         hh = self.ops.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -2119,11 +2119,18 @@ class CamPanel(QWidget):
         hh.setSectionResizeMode(self.EYE_COL, QHeaderView.ResizeMode.Fixed)
         self.ops.setColumnWidth(self.EYE_COL, 28)
         hh.moveSection(self.EYE_COL, 0)
+        # ⟳ juste après l'œil (colonne logique 5) : l'opération prend les formes sélectionnées (demande du 15/11)
+        self.ops.horizontalHeaderItem(self.REFRESH_COL).setToolTip(tr(
+            '⟳ : cette opération usine les formes sélectionnées (son parcours, s’il est calculé, est refait)'))
+        hh.setSectionResizeMode(self.REFRESH_COL, QHeaderView.ResizeMode.Fixed)
+        self.ops.setColumnWidth(self.REFRESH_COL, 28)
+        hh.moveSection(hh.visualIndex(self.REFRESH_COL), 1)
         self.ops.cellClicked.connect(self._eye_clicked)
         self.ops.verticalHeader().hide()
         self.ops.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.ops.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.ops.doubleClicked.connect(lambda i: None if i.column() == self.EYE_COL else self.edit_op())
+        self.ops.doubleClicked.connect(lambda i: None if i.column() in (self.EYE_COL, self.REFRESH_COL) else
+                                       self.edit_op())
         self.ops.itemChanged.connect(self._op_checked)
         self.ops.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.ops.customContextMenuRequested.connect(lambda pos: self.op_menu(pos))
@@ -2179,6 +2186,11 @@ class CamPanel(QWidget):
         b.setToolTip(tr('Le programme machine dans sa fenêtre : coloré, en direct ou à la demande, à côté du dessin ou '
                         'à sa place ; « Enregistrer… » l\'écrit dans un fichier'))
         b.clicked.connect(lambda _=False: self.win.show_program())
+        row.addWidget(b)
+        b = self.process_button = QPushButton(tr('Ajouter aux process'))   # à côté du programme (demande du 16/11)
+        process_tip = tr('Les opérations du dessin et leurs outils, enregistrées dans « Mes process » (palette FAO) : à appliquer à une autre gravure, puis ⟳ sur chaque opération pour ses formes')
+        b.setToolTip(process_tip)
+        b.clicked.connect(lambda _=False: self.add_to_process())
         row.addWidget(b)
         for text, tip, slot in (('📂', tr('Ouvrir le dossier du dernier programme écrit'), self.open_program_folder),):
             b = QPushButton(text)
@@ -2748,12 +2760,15 @@ class CamPanel(QWidget):
                 self.ops.setItem(r, c, cell)
         self._fill_loose_rows()
         self._sync_eyes()
+        self._sync_retarget()
         self._loading = False
         self._fill_ops3d()
 
     # --- opérations et parcours dans un seul tableau : l'œil de la ligne ----------------------
     #: colonne de l'œil dans la liste des opérations (logique : la dernière ; montrée en tête de ligne)
     EYE_COL = 4
+    #: colonne ⟳ (logique : après l'œil ; montrée juste après lui) : l'opération prend les formes sélectionnées
+    REFRESH_COL = 5
     #: liste des outils dépliée (retenu) ; repliée d'office : la hauteur du panneau va aux opérations
     TOOLS_OPEN_KEY = 'fao/outils_deplies'
 
@@ -2844,6 +2859,46 @@ class CamPanel(QWidget):
     def _eye_clicked(self, r: int, c: int) -> None:
         if c == self.EYE_COL:
             self.toggle_op_paths(r)
+        elif c == self.REFRESH_COL:
+            self.retarget_op(r)
+
+    def _sync_retarget(self) -> None:
+        """La case ⟳ de chaque ligne d'opération (les parcours sans opération n'en ont pas)."""
+        table = getattr(self, 'ops', None)
+        if table is None:
+            return
+        n = getattr(self, '_n_ops', len(self.setup().operations))
+        tip = tr('⟳ : cette opération usine les formes sélectionnées (son parcours, s’il est calculé, est refait)')
+        for r in range(table.rowCount()):
+            cell = QTableWidgetItem('⟳' if r < n else '')
+            cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if r < n:
+                cell.setToolTip(tip)
+            table.setItem(r, self.REFRESH_COL, cell)
+
+    def retarget_op(self, r: int, items=None) -> bool:
+        """⟳ (demande du 15/11, 23 h 30) : l'opération de la ligne `r` usine désormais les formes sélectionnées (`items` :
+        leurs identifiants) — un process repris sur une autre gravure, adapté opération par opération. Son parcours,
+        s'il était calculé, est refait. False sans sélection (dit dans la barre d'état)."""
+        s = self.setup()
+        if not 0 <= r < len(s.operations):
+            return False
+        if items is None:
+            items = [it.id for it in self._selected()]
+        if not items:
+            msg = tr('⟳ : sélectionnez d’abord les formes à usiner par cette opération')
+            self.info.setText(msg)
+            self.win.statusBar().showMessage(msg, 8000)
+            return False
+        op = s.operations[r]
+        self.win.push_undo(tr('Formes de l’opération'), with_cam=True)
+        op.items, op.sources = list(items), []
+        self.save(s)
+        if any(tp.op_id == op.id for tp in self.toolpaths):
+            self.compute_op(op)
+        self.info.setText(tr('« {0} » : {1} forme(s) sélectionnée(s)').format(self.op_label(op), len(items)))
+        return True
 
     def toggle_op_paths(self, r: int, on: bool | None = None):
         """L'œil de l'opération de la ligne `r` : ses parcours calculés montrés ou cachés (dessin, durée, vue 3D,
@@ -5092,9 +5147,10 @@ class CamPanel(QWidget):
 
     # --- modèles d'usinage ---------------------------------------------------------------------------
     def apply_template(self, name: str, *, exec_dialog: bool = True, sources=None, replace: bool = False,
-                       items=None) -> list:
+                       items=None, prefer: str | None = None) -> list:
         """Applique le modèle `name` au réglage du dessin ; rend le compte rendu.
-        `items` : les objets à usiner (formes choisies) au lieu des couleurs."""
+        `items` : les objets à usiner (formes choisies) au lieu des couleurs ; `prefer` : le choix « Usiner » d'office
+        dans la fenêtre ('objets' : les formes sélectionnées, s'il y en a)."""
         from ..cam import templates as TPL
         found = TPL.all_templates().get(name)
         if found is None:
@@ -5118,6 +5174,8 @@ class CamPanel(QWidget):
                 src.addItem(tr('Couleurs des objets sélectionnés'), 'selection')
             src.addItem(tr('Couleur du calque actif'), 'calque')
             src.addItem(tr('Toutes les couleurs'), 'toutes')
+            if prefer and src.findData(prefer) >= 0:
+                src.setCurrentIndex(src.findData(prefer))
             f.addRow(tr('Usiner'), src)
             rep = QCheckBox(tr('Remplacer les opérations du dessin'))
             f.addRow(rep)
@@ -5138,6 +5196,10 @@ class CamPanel(QWidget):
                 sources = [self.win.canvas.current_tool_index]
             elif choice == 'toutes':
                 sources = []
+        elif prefer == 'objets' and items is None and sources is None and self.win.canvas.selection:
+            items = [it.id for it in self.win.canvas.selection]      # sans fenêtre : les formes sélectionnées aussi
+            sources = []
+        self.win.push_undo(tr("Modèle d'usinage"), with_cam=True)    # (un process d'un clic : Ctrl+Z le retire)
         s, report = TPL.apply(self.setup(), tpl, sources=sources, replace=replace, items=items)
         self.save(s)
         self.info.setText(tr('Modèle « {0} » : {1}').format(name, ' ; '.join(report)))
@@ -5158,7 +5220,16 @@ class CamPanel(QWidget):
         tpl = TPL.from_setup(s, name.strip(), description.strip())
         TPL.save_user(tpl)
         self.info.setText(tr('Modèle « {0} » enregistré').format(name.strip()))
+        pal = getattr(self.win, 'cam_palette', None)     # plusieurs opérations : dans « Mes process », tout de suite
+        if pal is not None:
+            pal.refresh()
         return tpl
+
+    def add_to_process(self, name: str | None = None) -> str | None:
+        """« Ajouter aux process » (bouton à côté du programme) : les opérations du dessin en process, dans « Mes
+        process » de la palette (nom demandé si `name` est None). Rend son nom (None : rien d'enregistré)."""
+        pal = getattr(self.win, 'cam_palette', None)
+        return pal.save_process(name) if pal is not None else None
 
     def save_op_template(self, name: str | None = None, description: str = '') -> dict | None:
         """Le formulaire de l'opération choisie (et son outil), enregistré pour
@@ -5281,6 +5352,7 @@ class CamPanel(QWidget):
         self.paths_group.setVisible(order != sorted(order))
         self._fill_loose_rows()
         self._sync_eyes()
+        self._sync_retarget()
         self._loading = False
         self._repaint_paths()
         self._report()
