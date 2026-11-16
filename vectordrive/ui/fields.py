@@ -5,8 +5,12 @@ lignes de saisie numériques) :
   le curseur : la partie entière ou les décimales) ;
 * le clic qui entre dans un champ sélectionne aussi toute sa valeur, prête à
   être remplacée (sauf une partie choisie en glissant) ;
-* jamais de flèches : les champs n'ont plus leurs boutons ▲▼ (les touches
-  ↑ ↓ et la molette changent toujours la valeur) ;
+* jamais de flèches : les champs n'ont plus leurs boutons ▲▼ ;
+* les touches ↑ ↓ passent au champ de valeur précédent ou suivant de la
+  fenêtre, sa valeur sélectionnée : un formulaire se remplit au clavier
+  (réponse du 15/11 à la question 37) ; la molette ne change plus une valeur
+  (elle fait défiler le formulaire) ; Page précédente et Page suivante la
+  changent toujours ;
 * la virgule, le point et le point du pavé numérique sont tous acceptés
   comme séparateur décimal, quelle que soit la langue du poste ;
 * la touche = ouvre un calcul (core.calc : « 25,4*3 », « (120-10)/7 »,
@@ -21,7 +25,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QLocale, QObject, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QDoubleSpinBox, QLineEdit
+from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSpinBox, QApplication, QDateTimeEdit, QDoubleSpinBox,
+                               QLineEdit, QScrollArea)
 
 
 def numeric_editor(w) -> QLineEdit | None:
@@ -66,6 +71,70 @@ def _select_value(le: QLineEdit) -> None:
         le.selectAll()
 
 
+def _field_of(w):
+    """Le champ de valeur dont `w` est la ligne de saisie (ou `w`)."""
+    p = w.parentWidget() if isinstance(w, QLineEdit) else None
+    return p if isinstance(p, QAbstractSpinBox) else w
+
+
+def _scroll_area_of(w):
+    """La zone qui défile où se trouve `w` (None : aucune dans sa fenêtre)."""
+    p = w.parentWidget()
+    while p is not None:
+        if isinstance(p, QAbstractScrollArea):
+            return p
+        if p.isWindow():
+            return None
+        p = p.parentWidget()
+    return None
+
+
+def keeps_arrows(w) -> bool:
+    """Un champ où ↑ ↓ et la molette gardent leur rôle de Qt : date ou heure (ses parties), champ marqué
+    `vd_fleches`."""
+    f = _field_of(w)
+    return isinstance(f, QDateTimeEdit) or bool(f.property('vd_fleches'))
+
+
+def is_value_field(w) -> bool:
+    """`w` est un champ de valeur où l'on peut saisir : un champ numérique (pas sa ligne de saisie interne), ou une
+    ligne de saisie numérique."""
+    if isinstance(w, QAbstractSpinBox):
+        return not w.isReadOnly()
+    return isinstance(w, QLineEdit) and not isinstance(w.parentWidget(), QAbstractSpinBox) \
+        and numeric_editor(w) is not None and not w.isReadOnly()
+
+
+def next_field(w, forward: bool = True):
+    """Le champ de valeur suivant (ou précédent) de la fenêtre de `w`, dans l'ordre de Tab : montré, actif ; après
+    le dernier, le premier. None : pas d'autre champ."""
+    start = _field_of(w)
+    win = start.window()
+    cur = start
+    for _ in range(200000):                              # (la chaîne de la fenêtre principale : des milliers de maillons)
+        cur = cur.nextInFocusChain() if forward else cur.previousInFocusChain()
+        if cur is None or cur is start:
+            return None
+        if cur.window() is win and cur.isEnabled() and cur.isVisibleTo(win) \
+                and cur.focusPolicy() & Qt.FocusPolicy.TabFocus and is_value_field(cur):
+            return cur
+    return None
+
+
+def move_field(w, forward: bool = True) -> bool:
+    """↑ ↓ : le focus au champ de valeur précédent ou suivant, sa valeur sélectionnée (la valeur en cours de saisie
+    est prise, comme avec Tab). False : pas d'autre champ."""
+    nxt = next_field(w, forward)
+    if nxt is None:
+        return False
+    nxt.setFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+    nxt.selectAll()
+    area = _scroll_area_of(nxt)
+    if isinstance(area, QScrollArea):                    # le formulaire défile jusqu'au champ atteint (Qt ne le fait
+        area.ensureWidgetVisible(nxt)                    # que pour Tab)
+    return True
+
+
 class NumericInputFilter(QObject):
     """Filtre d'événements de l'application (voir le module)."""
 
@@ -76,6 +145,9 @@ class NumericInputFilter(QObject):
         if t == _POLISH:                                            # jamais de flèches (demande du 15/11)
             if isinstance(obj, QAbstractSpinBox) and obj.buttonSymbols() != _NO_BUTTONS:
                 obj.setButtonSymbols(_NO_BUTTONS)
+            if isinstance(obj, QAbstractSpinBox) and obj.focusPolicy() == Qt.FocusPolicy.WheelFocus \
+                    and not keeps_arrows(obj):
+                obj.setFocusPolicy(Qt.FocusPolicy.StrongFocus)      # la molette ne donne plus le focus au champ
             return False
         if t == _FOCUS_IN:
             le = numeric_editor(obj)
@@ -86,6 +158,17 @@ class NumericInputFilter(QObject):
             le = numeric_editor(obj)                                # pas un clic, rien à sélectionner ensuite
             if le is not None:
                 le.setProperty('vd_click_select', False)
+            if isinstance(_field_of(obj), QAbstractSpinBox) and not keeps_arrows(obj):
+                # la molette ne change plus une valeur : donnée à la zone qui défile (le formulaire) ; sans zone, ou
+                # avec Ctrl, au parent du champ (plein écran translucide : son filtre zoome le dessin)
+                field = _field_of(obj)
+                area = _scroll_area_of(field)
+                ctrl = bool(ev.modifiers() & Qt.KeyboardModifier.ControlModifier)
+                target = area.viewport() if area is not None and not ctrl else field.parentWidget()
+                if target is not None:
+                    QApplication.sendEvent(target, ev)
+                ev.accept()                                         # (Qt ne la propose plus aux parents)
+                return True
             return False
         if t == _RELEASE:
             le = numeric_editor(obj)
@@ -105,6 +188,10 @@ class NumericInputFilter(QObject):
                 le.setProperty('vd_click_select', False)            # au clavier : le clic suivant place le curseur
             if le is None or le.isReadOnly():
                 return False
+            if ev.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down) and not keeps_arrows(obj) \
+                    and not ev.modifiers() & ~Qt.KeyboardModifier.KeypadModifier:
+                move_field(obj, ev.key() == Qt.Key.Key_Down)        # ↑ ↓ : d'un champ à l'autre, jamais la valeur
+                return True
             if ev.key() == Qt.Key.Key_Equal or ev.text() == '=':
                 calculate(le)
                 return True

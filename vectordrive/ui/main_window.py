@@ -3972,6 +3972,9 @@ class MainWindow(QMainWindow):
         from .rulers import Ruler
         from .theme import current
         self._apply_style()
+        cols = getattr(self, 'columns', None)
+        if cols is not None:
+            cols.dress_tabs(refresh=True)                # les icônes des onglets de panneaux : l'encre du thème
         for a in self.findChildren(QAction):
             name = a.property('vd_icon')
             if name:
@@ -6140,6 +6143,16 @@ class MainWindow(QMainWindow):
     def toggle_ui_mode(self) -> str:
         return self.set_ui_mode('expert' if self.ui_mode() == 'simple' else 'simple')
 
+    def simple_mode_dialog(self, exec_dialog: bool = True):
+        """« Commandes du mode simple… » (Options › Général) : la liste des commandes du ruban, à cocher pour le mode
+        simple (réponse du 16/11 à la question 10). Rend la fenêtre."""
+        from .modes_dialog import SimpleModeDialog
+        dlg = SimpleModeDialog(self)
+        if exec_dialog:
+            dlg.exec()
+            dlg.deleteLater()
+        return dlg
+
     def move_button_mode(self, key: str, to_simple: bool) -> None:
         """Le bouton de la commande `key` montré aussi en mode simple, ou réservé au mode expert (clic droit)."""
         from . import modes
@@ -6454,6 +6467,8 @@ class MainWindow(QMainWindow):
                 continue
             d = QDockWidget(tr(spec.title), self)
             d.setObjectName(f'plugin_{spec.key}')
+            if getattr(spec, 'short', ''):               # son libellé court, pour son onglet (`columns.short_title`)
+                d.setProperty('vd_court', tr(spec.short))
             d.setWidget(w)
             area = Qt.DockWidgetArea.LeftDockWidgetArea if spec.area == 'gauche' else Qt.DockWidgetArea.RightDockWidgetArea
             self.addDockWidget(area, d)
@@ -9015,6 +9030,10 @@ class MainWindow(QMainWindow):
         msg = tr('Enregistré : {0}').format(path)
         if comp is not None:
             msg += tr(' (+ {0} : {1})').format(comp.name, ', '.join(why))
+        elif not path.lower().endswith('.vdz'):
+            from ..cam.fixture import is_plate_layer
+            if any(is_plate_layer(L) for L in doc.layers):   # compagnon désactivé (Options) : gardée nulle part
+                msg += ' — ' + tr('plaque de reprise non enregistrée : seul un VDZ, ou le compagnon, la garde')
         for r in doc.report[n_report:][-2:]:
             msg += ' — ' + r
         self.statusBar().showMessage(msg, 10000)

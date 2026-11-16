@@ -28,6 +28,53 @@ from PySide6.QtWidgets import (QDockWidget, QFrame, QGridLayout, QHBoxLayout, QL
 from ..i18n import tr
 
 SIDES = ('gauche', 'droite')
+#: les onglets des panneaux d'une colonne : 'court' (une icône et un libellé court ; d'office) ou 'entier' (le titre du
+#: panneau, comme avant) — demande du 15/11, 22 h 30 : « Onglets colonnes pas assez de place »
+TAB_MODES = ('court', 'entier')
+#: icône d'onglet des panneaux du cœur, par nom de panneau
+TAB_ICONS = {'dims': 'tab_dims', 'layers': 'tab_layers', 'symbols': 'tab_library', 'fao': 'tab_paths',
+             'fao_liste': 'tab_ops', 'programme': 'tab_program', 'polices': 'tab_fonts'}
+#: mots de liaison jamais laissés au bout d'un libellé court tiré d'un titre
+LINK_WORDS = frozenset(('et', 'de', 'du', 'des', 'la', 'le', 'les', 'à', 'au', 'aux', 'en', 'pour', 'sur', 'ou',
+                        '—', '-', '&', 'and', 'of', 'the', 'or', 'for'))
+
+
+def full_title(dock) -> str:
+    """Le titre entier du panneau (celui de sa barre, des menus, de sa fenêtre) : le titre de sa fenêtre Qt peut
+    être son libellé court, que Qt écrit sur son onglet."""
+    return str(dock.property('vd_titre') or dock.windowTitle())
+
+
+def short_title(dock) -> str:
+    """Le libellé court du panneau, pour son onglet : celui des panneaux du cœur ; celui qu'un plugin a donné
+    (propriété `vd_court`) ; sinon le début de son titre (ses premiers mots, 14 caractères au plus)."""
+    known = {'dims': 'F2', 'layers': tr('Calques'), 'symbols': tr('Biblio'), 'fao': tr('Parcours'),
+             'fao_liste': tr('Opérations'), 'programme': tr('Programme'), 'polices': tr('Police')}
+    name = dock.objectName()
+    if name in known:
+        return known[name]
+    given = str(dock.property('vd_court') or '').strip()
+    if given:
+        return given
+    title = full_title(dock).strip()
+    if len(title) <= 14:
+        return title
+    tail = title.split(' — ', 1)[1].strip() if ' — ' in title else title     # « Machine — Panneau » : le panneau
+    words = []
+    for word in tail.replace(':', ' ').split():
+        if words and len(' '.join(words + [word])) > 14:
+            break
+        words.append(word)
+    while len(words) > 1 and words[-1].lower() in LINK_WORDS:               # pas de « et », de « de » au bout
+        words.pop()
+    short = ' '.join(words)
+    return short if len(short) <= 14 else short[:13].rstrip() + '…'
+
+
+def tab_icon(dock):
+    """L'icône de l'onglet du panneau (une fenêtre et sa barre pour un panneau sans icône à lui)."""
+    from . import icons
+    return icons.icon(TAB_ICONS.get(dock.objectName(), 'tab_panel'))
 AREAS = {'gauche': Qt.DockWidgetArea.LeftDockWidgetArea, 'droite': Qt.DockWidgetArea.RightDockWidgetArea}
 KEY = 'panneaux_colonnes'
 
@@ -45,9 +92,9 @@ class DockBar(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 1, 2, 1)
         lay.setSpacing(1)
-        self.title = ElideLabel(dock.windowTitle())      # un long titre s'abrège : il n'élargit pas la colonne
+        self.title = ElideLabel(full_title(dock))        # un long titre s'abrège : il n'élargit pas la colonne
         self.title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        dock.windowTitleChanged.connect(self.title.setText)
+        # (un titre changé : `Columns._retitled` remet le titre entier ici)
         lay.addWidget(self.title, 1)
         self.buttons = {}
         for key, text, tip, slot in (
@@ -78,6 +125,8 @@ class Columns(QObject):
         self._docks: list = []                           # les panneaux pris en charge (leur objet Python gardé)
         self._panels: dict = {}                          # fenêtres des colonnes ouvertes (clic droit des boutons)
         self._scan_due = False
+        self._titling = False                            # le titre court posé par nous : pas un nouveau titre
+        self._dress_due = False
         self._adopt_new()
         self.restore()
         win.installEventFilter(self)                     # panneaux et barres d'onglets nés plus tard
@@ -100,7 +149,11 @@ class Columns(QObject):
         if any(d is dock for d in self._docks):
             return
         self._docks.append(dock)
+        if not dock.property('vd_titre'):
+            dock.setProperty('vd_titre', dock.windowTitle())     # son titre entier, avant le libellé court
+        dock.windowTitleChanged.connect(lambda t, d=dock: self._retitled(d, t))
         dock._vd_bar = DockBar(self, dock)
+        self._dress(dock)
         dock.setTitleBarWidget(dock._vd_bar)
         # détaché, le panneau n'a plus le cadre de Windows (sa barre de titre est la nôtre) : une poignée dans son
         # coin bas droit le redimensionne
@@ -110,6 +163,70 @@ class Columns(QObject):
         dock.visibilityChanged.connect(lambda _v: self.sync())
         dock.dockLocationChanged.connect(lambda _a, d=dock: self._located(d))
         dock.topLevelChanged.connect(lambda _f, d=dock: (self._place_grip(d), self.sync()))
+
+    # --- titres et onglets (demande du 15/11, 22 h 30) -----------------------------------------------------------
+    def tab_mode(self) -> str:
+        """'court' : une icône et un libellé court sur les onglets (d'office) ; 'entier' : le titre du panneau."""
+        v = str(self._st().value(f'{KEY}/onglets', 'court') or 'court')
+        return v if v in TAB_MODES else 'court'
+
+    def set_tab_mode(self, mode: str) -> None:
+        self._st().setValue(f'{KEY}/onglets', mode if mode in TAB_MODES else 'court')
+        for d in self.docks():
+            self._dress(d)
+        self.dress_tabs()
+
+    def _dress(self, dock) -> None:
+        """Le titre de la fenêtre du panneau : son libellé court, ou son titre entier — c'est lui que Qt écrit sur
+        l'onglet (et y remet, si on change le texte de l'onglet). La barre du panneau garde le titre entier."""
+        want = short_title(dock) if self.tab_mode() == 'court' else full_title(dock)
+        if dock.windowTitle() != want:
+            self._titling = True
+            try:
+                dock.setWindowTitle(want)
+            finally:
+                self._titling = False
+        if dock.toggleViewAction().text() != full_title(dock):   # (le menu d'office de Qt : le titre entier)
+            dock.toggleViewAction().setText(full_title(dock))
+
+    def _retitled(self, dock, title: str) -> None:
+        """Un titre posé d'ailleurs (un plugin renomme son panneau) : c'est son nouveau titre entier, gardé tel quel
+        sur l'onglet aussi."""
+        if self._titling:
+            return
+        dock.setProperty('vd_titre', title)
+        bar = getattr(dock, '_vd_bar', None)
+        if bar is not None:
+            bar.title.setText(title)
+        self.dress_later()
+
+    def dress_later(self) -> None:
+        if not self._dress_due:
+            self._dress_due = True
+            QTimer.singleShot(0, self.dress_tabs)
+
+    def dress_tabs(self, refresh: bool = False) -> None:
+        """Les onglets des panneaux : une icône devant le libellé court (aucune devant un titre entier), le titre
+        entier en bulle. Qt refait l'onglet d'un panneau remontré : son icône est reposée ici. `refresh` : toutes
+        les icônes refaites (thème changé : une autre encre)."""
+        self._dress_due = False
+        short = self.tab_mode() == 'court'
+        try:
+            bars = self.win.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            return
+        for bar in bars:
+            for i in range(bar.count()):
+                d = self.dock_at(bar, i)
+                if d is None:
+                    continue
+                if short and (refresh or bar.tabIcon(i).isNull()):
+                    bar.setTabIcon(i, tab_icon(d))
+                elif not short and not bar.tabIcon(i).isNull():
+                    from PySide6.QtGui import QIcon
+                    bar.setTabIcon(i, QIcon())
+                if bar.tabToolTip(i) != full_title(d):
+                    bar.setTabToolTip(i, full_title(d))
 
     def _place_grip(self, dock) -> None:
         """La poignée de redimensionnement : montrée quand le panneau est détaché, dans son coin bas droit."""
@@ -518,6 +635,7 @@ class Columns(QObject):
             p = self.panel(side)
             if p is not None:
                 p.refresh_later()
+        self.dress_later()                               # un onglet refait par Qt : son icône, sa bulle
 
     # --- les fonctions d'un panneau --------------------------------------------------------------------------------
     def overlay(self, dock, create: bool = True):
@@ -602,7 +720,7 @@ class Columns(QObject):
                 sub.setObjectName('en_onglet_avec')
                 m.addMenu(sub)
                 for d in others:
-                    a = sub.addAction(d.windowTitle())
+                    a = sub.addAction(full_title(d))
                     a.triggered.connect(lambda _=False, o=d: self.tab_with(dock, o))
             if group:
                 a = m.addAction(tr('Sortir des onglets'))
@@ -616,9 +734,13 @@ class Columns(QObject):
                 sub.setObjectName(name)
                 m.addMenu(sub)
                 for d in near:
-                    a = sub.addAction(d.windowTitle())
+                    a = sub.addAction(full_title(d))
                     a.triggered.connect(lambda _=False, o=d, b=below: self.split_with(dock, o, b))
         m.addSeparator()
+        a = m.addAction(tr('Titres entiers dans les onglets'))    # sinon : une icône et un libellé court
+        a.setCheckable(True)
+        a.setChecked(self.tab_mode() == 'entier')
+        a.triggered.connect(lambda on=False: self.set_tab_mode('entier' if on else 'court'))
         a = m.addAction(tr('Fermer'))
         a.triggered.connect(lambda _=False: self.close(dock))
         return m
@@ -641,6 +763,7 @@ class Columns(QObject):
         self._adopt_new()                                # un panneau créé après coup (plugin) : la même barre
         self._watch_tabs()
         self.sync()
+        self.dress_tabs()
 
     def dock_at(self, bar, index: int):
         """Le panneau de l'onglet `index` d'une barre d'onglets de panneaux : celui que Qt y a mis (son adresse),
@@ -670,6 +793,9 @@ class Columns(QObject):
             if t in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._place_grip(obj)                    # la poignée reste dans le coin
             return False
+        if t == QEvent.Type.Paint and isinstance(obj, QTabBar) and not self._dress_due \
+                and any(obj.tabIcon(i).isNull() for i in range(obj.count())) and self.tab_mode() == 'court':
+            self.dress_later()                           # un onglet que Qt vient de refaire, sans son icône
         if t == QEvent.Type.ContextMenu and isinstance(obj, QTabBar):
             dock = self.dock_at(obj, obj.tabAt(ev.pos()))
             if dock is not None:
@@ -770,7 +896,7 @@ class ColumnPanel(QFrame):
     def rows(self) -> list:
         """Les panneaux listés : ceux de cette colonne d'abord, puis les autres, par nom."""
         c = self.columns
-        return sorted(c.docks(), key=lambda d: (c.side(d) != self.side, d.windowTitle().lower()))
+        return sorted(c.docks(), key=lambda d: (c.side(d) != self.side, full_title(d).lower()))
 
     def shown_here(self, dock) -> bool:
         return self.columns.side(dock) == self.side and not dock.isHidden()
@@ -811,7 +937,7 @@ class ColumnPanel(QFrame):
             eye.toggled.connect(lambda v, dk=d: self._eye(dk, v))
             self.eyes[d.objectName()] = eye
             grid.addWidget(eye, i, 0)
-            grid.addWidget(QLabel(d.windowTitle()), i, 1)
+            grid.addWidget(QLabel(full_title(d)), i, 1)
             where = self.columns.side(d)
             note = '' if where == self.side or (where is None and not d.isFloating()) else (
                 tr('détaché') if d.isFloating() else tr('colonne de gauche') if where == 'gauche'

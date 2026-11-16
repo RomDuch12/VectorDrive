@@ -498,6 +498,12 @@ class OptionsDialog(QDialog):
                 self.measure = QLabel()
                 self.measure.setWordWrap(True)
                 form.addRow(self.measure)
+            if title == 'Général' and hasattr(parent, 'simple_mode_dialog'):
+                from PySide6.QtWidgets import QPushButton
+                b = self.simple_mode_button = QPushButton(tr('Commandes du mode simple…'))
+                b.setToolTip(tr('Choisir, onglet par onglet, les commandes du ruban que le mode simple montre'))
+                b.clicked.connect(lambda _=False: parent.simple_mode_dialog())
+                form.addRow(b)
             if title == 'Apparence' and hasattr(parent, 'theme_editor'):
                 from PySide6.QtWidgets import QPushButton
                 b = QPushButton(tr('Éditeur de thèmes…'))

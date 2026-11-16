@@ -56,8 +56,10 @@ class NoArrows(unittest.TestCase):
         self.assertEqual(d.buttonSymbols(), NO)    # avant : les flèches ▲▼
         self.assertEqual(i.buttonSymbols(), NO)
         d.setFocus()
-        QTest.keyClick(d, Qt.Key.Key_Up)             # les touches changent toujours la valeur
-        self.assertEqual(d.value(), 11.0)
+        QTest.keyClick(d, Qt.Key.Key_Up)             # ↑ ↓ : d'un champ à l'autre, plus la valeur (0.907.0)
+        self.assertEqual(d.value(), 10.0)
+        QTest.keyClick(d, Qt.Key.Key_PageUp)         # Page précédente la change toujours
+        self.assertGreater(d.value(), 10.0)
 
     def test_in_the_operation_form(self):
         tool = model.CamTool(name='Cyl 2', diameter=2.0, feed=750.0, number=1)

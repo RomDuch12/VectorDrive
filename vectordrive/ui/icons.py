@@ -2511,3 +2511,82 @@ ICONS.update({'case_upper': _case_upper, 'case_lower': _case_lower, 'case_words'
               'text_compress_global': _text_compress_global, 'find_replace': _find_replace,
               'text_copy_format': _text_copy_format, 'text_styles': _text_styles,
               'text_preset_save': _text_preset_save})
+
+
+# --- onglets des panneaux d'une colonne (demande du 15/11, 22 h 30) -------------------------------------------------
+def _tab_dims(p):
+    """Dimensions (F2) : une cote entre deux traits d'attache."""
+    p.drawLine(QPointF(12, 12), QPointF(12, 52))
+    p.drawLine(QPointF(52, 12), QPointF(52, 52))
+    _accent(p, 4)
+    p.drawLine(QPointF(16, 32), QPointF(48, 32))
+    for x, dx in ((16, 8), (48, -8)):
+        p.drawLine(QPointF(x, 32), QPointF(x + dx, 25))
+        p.drawLine(QPointF(x, 32), QPointF(x + dx, 39))
+
+
+def _tab_layers(p):
+    """Calques : trois feuilles empilées, celle du dessus en couleur."""
+    for y in (46, 36):
+        p.drawLine(QPointF(8, y), QPointF(32, y + 11))
+        p.drawLine(QPointF(32, y + 11), QPointF(56, y))
+    _accent(p, 4)
+    path = QPainterPath()
+    path.moveTo(32, 9); path.lineTo(56, 22); path.lineTo(32, 35); path.lineTo(8, 22)
+    path.closeSubpath()
+    p.drawPath(path)
+
+
+def _tab_library(p):
+    """Bibliothèque : quatre cases, une en couleur."""
+    for x, y in ((9, 9), (36, 9), (9, 36)):
+        p.drawRect(QRectF(x, y, 19, 19))
+    _accent(p, 4)
+    p.drawRect(QRectF(36, 36, 19, 19))
+
+
+def _tab_paths(p):
+    """FAO, les parcours à créer : une fraise au-dessus de son trait."""
+    p.drawRect(QRectF(24, 6, 16, 24))
+    p.drawLine(QPointF(24, 30), QPointF(32, 41))
+    p.drawLine(QPointF(40, 30), QPointF(32, 41))
+    _accent(p, 4)
+    p.drawLine(QPointF(8, 54), QPointF(56, 54))
+
+
+def _tab_ops(p):
+    """FAO, les opérations : une liste et ses puces."""
+    for y in (16, 32, 48):
+        p.drawLine(QPointF(24, y), QPointF(54, y))
+    _accent(p, 8)
+    for y in (16, 32, 48):
+        p.drawPoint(QPointF(12, y))
+
+
+def _tab_program(p):
+    """Programme machine : des lignes de code, en retrait."""
+    p.drawLine(QPointF(10, 14), QPointF(38, 14))
+    p.drawLine(QPointF(20, 26), QPointF(54, 26))
+    p.drawLine(QPointF(20, 38), QPointF(46, 38))
+    _accent(p, 4)
+    p.drawLine(QPointF(10, 50), QPointF(34, 50))
+
+
+def _tab_fonts(p):
+    """Reconnaître une police : un A."""
+    p.drawLine(QPointF(14, 52), QPointF(32, 10))
+    p.drawLine(QPointF(32, 10), QPointF(50, 52))
+    _accent(p, 4)
+    p.drawLine(QPointF(22, 38), QPointF(42, 38))
+
+
+def _tab_panel(p):
+    """Un panneau sans icône à lui (celui d'un plugin) : une fenêtre et sa barre."""
+    p.drawRect(QRectF(10, 12, 44, 40))
+    _accent(p, 4)
+    p.drawLine(QPointF(10, 24), QPointF(54, 24))
+
+
+ICONS.update({'tab_dims': _tab_dims, 'tab_layers': _tab_layers, 'tab_library': _tab_library,
+              'tab_paths': _tab_paths, 'tab_ops': _tab_ops, 'tab_program': _tab_program, 'tab_fonts': _tab_fonts,
+              'tab_panel': _tab_panel})

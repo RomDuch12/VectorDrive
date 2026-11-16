@@ -69,9 +69,11 @@ class ComboWheel(unittest.TestCase):
         self.assertIs(wheelguard.install(app), wheelguard.install(app))      # posé une fois
         area, combo, _fonts, spin = self.panel()
         self.addCleanup(area.close)
+        from vectordrive.ui import fields
+        fields.install(app)                                          # comme au lancement
         spin.setValue(5)
         wheel(spin, steps=1)
-        self.assertEqual(spin.value(), 6)                            # un champ de nombre garde la molette
+        self.assertEqual(spin.value(), 5)                            # 0.907.0 : la molette ne change plus un nombre
         combo.showPopup()
         app.processEvents()
         view = combo.view()

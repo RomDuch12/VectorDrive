@@ -305,6 +305,10 @@ def export_items(win, items: list, path: str, options: dict | None = None, selec
     from ..io import raster, registry
     options = dict(options or {})
     doc = selection_document(win.canvas.doc, items)
+    if selection:                                        # une plaque de reprise choisie exprès : écrite, comme un dessin
+        from ..cam.fixture import PLATE_LAYER
+        for L in doc.layers:
+            L.extra.pop(PLATE_LAYER, None)
     if selection and pathlib.Path(path).suffix.lower() in PAGE_EXT:
         options['plaque'] = False
     if not options.get('plaque', True):
@@ -401,7 +405,11 @@ def run(win) -> str | None:
                     cur['options'], only)
             except Cancelled:
                 return None
-            expected = sum(1 for _ in selection_document(win.canvas.doc, items).iter_leaves())
+            written = selection_document(win.canvas.doc, items)
+            if not only and not path.lower().endswith('.vdz'):
+                from ..cam.fixture import without_plates    # tout le dessin : sa plaque de reprise n'est pas écrite
+                written = without_plates(written)
+            expected = sum(1 for _ in written.iter_leaves())
     except Exception as ex:
         from .. import journal
         journal.record(type(ex), ex, ex.__traceback__, where=f'export {pathlib.Path(path).suffix}')

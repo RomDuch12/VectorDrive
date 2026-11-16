@@ -6902,3 +6902,30 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Un petit bouton **▾**, à sa gauche, le **replie en une seule ligne** : le nombre d'avertissements, puis le temps estimé, par exemple « ⚠ 2 · Temps estimé : ~7 min… ». **▸** le déplie. La ligne est coupée à la largeur de la colonne ; le texte entier reste en bulle, au survol.
 - Dans la palette « FAO : parcours », le **texte d'aide gris** du bas se replie de la même façon.
 - Les deux replis sont retenus d'un lancement à l'autre. Un message d'une seule ligne est toujours montré en entier.
+### v0.906.0 — Onglets des colonnes : une icône et un libellé court
+
+- Quand plusieurs panneaux partagent une colonne, leurs **onglets** portent maintenant **une icône et un libellé court** : « F2 », « Calques », « Biblio », « Parcours », « Opérations », « Programme », « Police ». Avec les titres entiers (« FAO : opérations et parcours », « Dimensions (F2) »…), la colonne n'avait pas la place de les montrer tous.
+- Le **titre entier** reste dans la barre du panneau, dans les menus du clic droit, dans la fenêtre de la colonne, et en bulle au survol de l'onglet.
+- Clic droit sur un onglet ou sur la barre d'un panneau › **« Titres entiers dans les onglets »** revient aux titres d'avant, sans icône. Le choix est retenu.
+- Le panneau d'un plugin prend le libellé court que son plugin lui donne ; sinon le début de son titre (« Machine — Panneau » : le nom du panneau).
+### v0.907.0 — Champs de valeur : ↑ ↓ passent d'un champ à l'autre, la molette ne change plus rien
+
+- Dans un champ de valeur, les touches **↑ et ↓ ne changent plus la valeur** : elles passent au **champ de valeur précédent ou suivant** de la fenêtre, et sélectionnent sa valeur, prête à être remplacée. Un formulaire se remplit ainsi au clavier : une valeur, ↓, une valeur, ↓… Les cases à cocher, les listes, les boutons et les champs de texte sont sautés ; après le dernier champ, on revient au premier.
+- La valeur en cours de saisie est prise en quittant le champ, comme avec Tab. Un long formulaire défile jusqu'au champ atteint.
+- La **molette** ne change plus la valeur d'un champ, et ne lui donne plus le focus : elle fait défiler le formulaire, même quand le pointeur est sur un champ.
+- **Page précédente** et **Page suivante** changent toujours la valeur, de dix pas. La touche = ouvre toujours le calcul.
+- Les listes déroulantes, les champs de recherche (↓ va dans leur liste) et les champs de date ou d'heure gardent leurs flèches.
+### v0.908.0 — Plaque de reprise : son calque n'est écrit que dans le VDZ
+
+- Le calque d'une **plaque de reprise posée** (fenêtre des trous de fixation, « Poser une plaque ») est un repère de VectorDrive. Il n'est plus écrit dans les fichiers des autres logiciels : **VND, VNL et symboles de TypeEdit, DXF, SVG, PDF…** ne reçoivent que le dessin. TypeEdit ne voit donc plus les trous de la plaque.
+- Le **VDZ** garde tout, comme avant.
+- Pour un VND, un DXF ou un autre format, le **compagnon .vdz** écrit à côté garde la plaque : à la réouverture du fichier dans VectorDrive, elle revient à sa place, même si le fichier a été retouché entre-temps dans un autre logiciel.
+- Dans le dessin ouvert, rien ne change : la plaque reste posée. « Exporter » tout le dessin la laisse aussi de côté ; la sélection exportée, elle, écrit ce qui est sélectionné, plaque comprise.
+- Si le compagnon est désactivé dans les Options, la barre d'état le dit à l'enregistrement : la plaque n'est alors gardée que par un VDZ.
+- Les exports de programmes machine des plugins ne sont pas concernés par cette version.
+### v0.909.0 — Mode simple : la liste de ses commandes se règle dans les Options
+
+- **Options (F10) › Général › « Commandes du mode simple… »** ouvre la liste de toutes les commandes du ruban, onglet par onglet. Une case par commande : **cochée**, son bouton est montré en mode simple ; **décochée**, il est réservé au mode expert. Le mode expert montre toujours tout.
+- La case d'un onglet coche ou décoche toutes ses commandes d'un coup. Une recherche trouve une commande par son nom, son groupe ou son raccourci. Le bas de la fenêtre dit combien de commandes le mode simple montre.
+- **« Répartition d'office »** remet les cases comme à l'installation. Rien n'est changé avant OK ; le ruban suit aussitôt.
+- Le clic droit sur un bouton du ruban (« Réserver au mode expert », « Montrer aussi en mode simple ») marche toujours : c'est la même liste.

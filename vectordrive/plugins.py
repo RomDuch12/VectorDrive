@@ -77,6 +77,7 @@ class PanelSpec:
     posts: tuple = ()
     area: str = 'droite'            # 'droite' ou 'gauche'
     plugin: str = ''
+    short: str = ''                 # libellé court, pour l'onglet du panneau (vide : le début du titre)
 
 
 @dataclass
@@ -212,11 +213,14 @@ class Api:
         self._r.actions.append(ActionSpec(key, label, slot, tab, group, icon, tip, shortcut, big,
                                           self.info.name, after, tuple(posts or ())))
 
-    def add_panel(self, key: str, title: str, factory: Callable, *, posts=(), area: str = 'droite') -> None:
+    def add_panel(self, key: str, title: str, factory: Callable, *, posts=(), area: str = 'droite',
+                  short: str = '') -> None:
         """Panneau ancré (`factory(window)` → QWidget), montré seulement pour
         les machines `posts` (vide : toujours) — les fonctions d'une machine
-        qui apparaissent quand on la choisit."""
-        self._r.panels.append(PanelSpec(key, title, factory, tuple(posts or ()), area, self.info.name))
+        qui apparaissent quand on la choisit. `short` : son libellé court, écrit
+        sur son onglet quand il partage une colonne (sinon : le début du titre)."""
+        self._r.panels.append(PanelSpec(key, title, factory, tuple(posts or ()), area, self.info.name,
+                                        str(short or '')))
 
     def add_machine(self, key: str, label: str, *, kind: str = 'fraiseuse', posts=(), doubles=(),
                     tip: str = '') -> None:

@@ -154,7 +154,30 @@ def reasons(doc: Document) -> list[str]:
     beyond = sorted({int(getattr(lf, 'tool', 0) or 0) for lf in doc.iter_leaves()} - set(range(TE_TOOLS)))
     if beyond:                                           # la table de TypeEdit n'a que 10 outils : couleurs ici
         out.append(f'{len(beyond)} outil(s) au-delà du {TE_TOOLS}e (couleurs)')
+    if _plates(doc):                                     # jamais écrite ailleurs que dans un VDZ (`save_document`)
+        out.append('plaque de reprise posée')
     return out
+
+
+def _plates(doc: Document) -> list[int]:
+    """Rangs des calques de plaques de reprise posées : les calques que seul le VDZ reçoit."""
+    from ..cam.fixture import is_plate_layer
+    return [i for i, L in enumerate(doc.layers) if is_plate_layer(L)]
+
+
+def _held_plates(comp: Document, link: dict) -> list:
+    """[(rang, calque)] des plaques de reprise que le compagnon garde et que le fichier n'a pas reçues (lien
+    `plaques` ; absent d'un compagnon d'avant 0.908.0 : le fichier les avait, rien à remettre)."""
+    from ..cam.fixture import is_plate_layer
+    ranks = [i for i in (link.get('plaques') or []) if isinstance(i, int)]
+    return [(i, comp.layers[i]) for i in ranks if 0 <= i < len(comp.layers) and is_plate_layer(comp.layers[i])]
+
+
+def _put_plates(doc: Document, held: list) -> None:
+    """Les plaques de reprise `held` remises dans le dessin relu, à leur rang."""
+    for i, plate in sorted(held, key=lambda h: h[0]):
+        if not any(L is plate for L in doc.layers):
+            doc.layers.insert(min(i, len(doc.layers)), plate)
 
 
 def _sha(path) -> str:
@@ -284,10 +307,12 @@ def sync(doc: Document, vnd_path, mode: str = 'besoin') -> tuple[pathlib.Path | 
     if cp.exists() and not is_companion(cp):
         raise FileExistsError(f'{cp.name} existe déjà et n\'est pas un compagnon de VND : '
                               'données VectorDrive non enregistrées (renommer l\'un des deux)')
+    plates = _plates(doc)                                # pas écrites dans le fichier : comptées à part
+    written = [L for i, L in enumerate(doc.layers) if i not in plates]
     link = {'version': 1, 'fichier': pathlib.Path(vnd_path).name, 'format': key, 'sha256': _sha(vnd_path),
-            'compteurs': [len(L.items) for L in doc.layers], 'raisons': why,
-            'objets': [[i for i, it in enumerate(L.items) if rich(it)] for L in doc.layers],
-            'date': dt.datetime.now().isoformat(timespec='seconds')}
+            'compteurs': [len(L.items) for L in written], 'raisons': why,
+            'objets': [[i for i, it in enumerate(L.items) if rich(it)] for L in written],
+            'plaques': plates, 'date': dt.datetime.now().isoformat(timespec='seconds')}
     data = json.dumps(native.to_dict(doc), ensure_ascii=False, separators=(',', ':'))
     tmp = cp.with_suffix('.vdz.tmp')
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -314,6 +339,8 @@ def apply(doc: Document, vnd_path) -> list[str]:
         return [f'{cp.name} accompagne {link.get("fichier")}, pas ce VND : ignoré']
     if not te_native(vnd_path):
         return _apply_foreign(doc, vnd_path, cp, link, comp)
+    held = _held_plates(comp, link)                      # plaques de reprise : le VND ne les a pas reçues
+    comp.layers = [C for C in comp.layers if not any(C is P for _i, P in held)]
     msgs = []
     doc.extra.update(_own_extra(comp.extra))
     order = _in_vnd_order(doc.layers, comp.layers)
@@ -351,6 +378,7 @@ def apply(doc: Document, vnd_path) -> list[str]:
         msgs.append(f'le {what} a changé depuis son compagnon {cp.name} (retouché dans TypeEdit ?) : '
                     f'le dessin du {what} fait foi ; seuls le réglage FAO, les guides et l\'état des calques '
                     'sont repris')
+    _put_plates(doc, held)                               # remises à leur rang, VND retouché ou non
     msgs += _lost_operations(doc)
     doc.extra['compagnon'] = cp.name
     return msgs
@@ -417,9 +445,12 @@ def _apply_foreign(doc: Document, path, cp, link: dict, comp: Document) -> list[
         msgs = [f'compagnon {cp.name} relu : {kept}']
     else:
         doc.extra.update(_own_extra(comp.extra))
-        if len(comp.layers) == len(doc.layers):
-            for L, C in zip(doc.layers, comp.layers):
+        held = _held_plates(comp, link)                  # plaques de reprise : le fichier ne les a pas reçues
+        rest = [C for C in comp.layers if not any(C is P for _i, P in held)]
+        if len(rest) == len(doc.layers):
+            for L, C in zip(doc.layers, rest):
                 L.visible, L.locked = C.visible, C.locked
+        _put_plates(doc, held)
         msgs = [f'{name} a changé depuis son compagnon {cp.name} (retouché dans un autre logiciel ?) : son dessin '
                 'fait foi ; seuls le réglage FAO, les guides et l\'état des calques sont repris']
         msgs += _lost_operations(doc)

@@ -186,7 +186,7 @@ class DockAsWindow(QObject):
         """Le contenu du panneau dans sa fenêtre (créée au premier appel) : à sa place retenue, en plein écran si
         demandé (None : comme la dernière fois). Rend la fenêtre."""
         if self.window is None:
-            self.window = PanelWindow(self.dock.windowTitle())
+            self.window = PanelWindow(str(self.dock.property('vd_titre') or self.dock.windowTitle()))
             self.window.setObjectName((self.dock.objectName() or 'panneau') + '_fenetre')
             self.window.closing.connect(lambda: self.to_dock(show=False, keep_choice=True))
             self.window.dock_requested.connect(lambda: self.to_dock())

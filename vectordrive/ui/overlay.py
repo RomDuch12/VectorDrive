@@ -144,7 +144,7 @@ class _Bar(QWidget):
         self.setObjectName('overlayBar')
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 2, 4, 2)
-        lay.addWidget(QLabel(ov.dock.windowTitle()))
+        lay.addWidget(QLabel(str(ov.dock.property('vd_titre') or ov.dock.windowTitle())))   # (pas le libellé court)
         lay.addStretch(1)
         lay.addWidget(QLabel(tr('Opacité')))
         self.slider = QSlider(Qt.Orientation.Horizontal)

@@ -91,7 +91,7 @@ class Bars(Base):
             bar = d.titleBarWidget()
             self.assertIsNotNone(bar, d.objectName())
             self.assertEqual(list(bar.buttons), ['plein', 'detacher', 'fermer'], d.objectName())
-            self.assertEqual(bar.title.text(), d.windowTitle())
+            self.assertEqual(bar.title.text(), d.property('vd_titre') or d.windowTitle())   # son titre entier
             self.assertEqual(bar.title.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Ignored)   # il s'abrège
             self.assertTrue(d._vd_grip.isHidden())                  # la poignée : seulement quand il est détaché
         late = QDockWidget('Plus tard', self.w)                     # un panneau créé après coup (plugin)
@@ -150,7 +150,8 @@ class Bars(Base):
         m = self.cols.menu(d)
         acts = {a.text(): a for a in m.actions() if a.text()}
         self.assertEqual([t for t in acts if t not in (tr('En onglet avec'), tr('Sortir des onglets'),
-                                                       tr('Au-dessus de'), tr('Au-dessous de'))],   # 1028
+                                                       tr('Au-dessus de'), tr('Au-dessous de'),     # 1028
+                                                       'Titres entiers dans les onglets')],         # 1049
                          [tr('Plein écran translucide'), tr('Détacher'), tr('Colonne de gauche'),
                           tr('Colonne de droite'), tr('Fermer')])                # 1013 : et les onglets
         self.assertTrue(acts[tr('Colonne de droite')].isChecked())

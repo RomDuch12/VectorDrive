@@ -144,6 +144,9 @@ def save_document(doc: Document, path) -> None:
         raise ValueError(f'format non pris en charge en écriture : {pathlib.Path(path).suffix}')
     from ..core.text import ensure_outlines
     ensure_outlines(doc)                             # textes jamais affichés : contours calculés avant d'écrire
+    if f.key != 'vdz':                               # une plaque de reprise posée : un repère de VectorDrive, écrit
+        from ..cam.fixture import without_plates     # dans le VDZ seulement (réponse du 15/11 à la question 35) ;
+        doc = without_plates(doc)                    # le compagnon la garde (`companion.reasons`)
     f.writer(doc, str(path))
 
 
