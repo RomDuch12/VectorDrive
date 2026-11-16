@@ -1612,6 +1612,9 @@ def make_parser() -> argparse.ArgumentParser:
                     help='ouvrir le traitement par lots avec ces fichiers ou dossiers (clic droit de l\'explorateur)')
     ap.add_argument('--vignettes-serveur', action='store_true', dest='thumb_server',
                     help="serveur des vignettes de l'explorateur Windows (lancé par l'explorateur, sans fenêtre)")
+    ap.add_argument('--mcp', action='store_true',
+                    help='pont MCP (entrée et sortie standard) vers le serveur local du VectorDrive ouvert, sans '
+                         'fenêtre : la commande que lance un client MCP comme Claude Desktop')
     ap.add_argument('--nouvelle-fenetre', action='store_true', dest='new_window',
                     help="une fenêtre à part (sans session), au lieu d'un onglet dans la fenêtre ouverte")
     ap.add_argument('-SCRIPT', '--script', metavar='FICHIER', dest='script',
@@ -1625,6 +1628,9 @@ def main(argv=None) -> int:
     args = make_parser().parse_args(argv)
     if args.script:
         args.new_window = True                          # comme TypeEdit : le script dessine dans une fenêtre à lui
+    if args.mcp:                                        # sans fenêtre ni journal : la sortie standard est au client
+        from vectordrive.agent import stdio
+        return stdio.main()
     if args.thumb_server:                               # sans fenêtre ni journal (le journal de l'application reste)
         import os
         if sys.stdout is None:

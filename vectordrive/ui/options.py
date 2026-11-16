@@ -504,6 +504,12 @@ class OptionsDialog(QDialog):
                 b.setToolTip(tr('Choisir, onglet par onglet, les commandes du ruban que le mode simple montre'))
                 b.clicked.connect(lambda _=False: parent.simple_mode_dialog())
                 form.addRow(b)
+            if title == 'Général' and hasattr(parent, 'agent_dialog'):
+                from PySide6.QtWidgets import QPushButton
+                b = self.agent_button = QPushButton(tr('Assistant (serveur MCP)…'))
+                b.setToolTip(tr('Brancher un assistant (Claude Code…) sur le dessin ouvert : il le lit et peut y dessiner'))
+                b.clicked.connect(lambda _=False: parent.agent_dialog())
+                form.addRow(b)
             if title == 'Apparence' and hasattr(parent, 'theme_editor'):
                 from PySide6.QtWidgets import QPushButton
                 b = QPushButton(tr('Éditeur de thèmes…'))

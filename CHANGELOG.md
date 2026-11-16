@@ -6945,3 +6945,16 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - À gauche du programme, le **plan** : la liste de ses **séquences** et de ses **parcours**, avec leurs numéros de ligne. Un clic sur une ligne du plan montre cette partie du programme — dépliée, surlignée, amenée à l'écran — et choisit son opération dans le panneau FAO.
 - Le bouton **☰** (en bas à droite) montre ou cache le plan ; le choix est retenu.
 - Un post-processeur peut maintenant **dire lui-même** où commencent et finissent ses séquences et ses parcours : le plan, les blocs repliables et le surlignage de l'opération choisie sont alors exacts, même quand le programme n'écrit pas le nom des parcours. Sans cela, les parcours sont retrouvés par leur nom, comme avant.
+### v0.913.0 — Un assistant peut se brancher sur le dessin (serveur MCP local)
+
+- **Options (F10) › Général › « Assistant (serveur MCP)… »** : une case lance le **serveur MCP local** de VectorDrive. Un assistant qui parle le protocole MCP — Claude Code, par exemple — s'y branche et travaille sur le dessin ouvert.
+- L'assistant peut **lire** le dessin (plaque, calques, objets, géométrie, capture de la vue) et **dessiner** : rectangle, ellipse, polygone, polyligne, texte ; déplacer, tourner, mettre à l'échelle, supprimer ; réunir, intersecter, soustraire des formes ; sélectionner.
+- **Chaque modification est un pas d'annulation** : Ctrl+Z la défait, comme une commande de la fenêtre. Un objet gelé ou un calque verrouillé ne sont pas touchés. Rien n'est écrit sur le disque par l'assistant.
+- La fenêtre donne la **commande à coller dans un terminal pour Claude Code**, et l'adresse et l'en-tête pour un autre client MCP, avec un bouton « Copier » chacun.
+- **Confidentialité** : le serveur n'écoute que sur cette machine (127.0.0.1), jamais sur le réseau ; il demande un jeton, refuse les pages web et les noms détournés. Ce que l'assistant lit du dessin part chez son fournisseur : la case est décochée d'office. « Nouveau jeton » coupe les assistants déjà branchés.
+### v0.914.0 — Assistant : Claude Desktop se branche aussi (pont `--mcp`)
+
+- **« Assistant (serveur MCP) » donne une ligne « Claude Desktop »** : la configuration à fusionner dans `claude_desktop_config.json` (Claude Desktop : Réglages › Développeur › Modifier la configuration). Claude Desktop relancé, VectorDrive apparaît parmi ses outils.
+- Claude Desktop lance pour cela **`VectorDrive --mcp`** : un pont sans fenêtre, qui passe ses demandes au serveur local du VectorDrive ouvert. Le port et le jeton sont lus dans les réglages : rien à recopier, et un port changé est suivi sans rien refaire.
+- **VectorDrive fermé, ou serveur arrêté** : l'assistant voit quand même les outils, et chaque appel lui répond de demander à l'utilisateur d'ouvrir VectorDrive et de cocher le serveur.
+- Le pont n'ouvre rien sur le réseau : il ne parle qu'au serveur de cette machine.

@@ -48,9 +48,10 @@ def is_portable() -> bool:
     return d is not None and (d / INI).is_file()
 
 
-def settings():
+def settings(migrate: bool = True):
     """QSettings de l'application : fichier des tests, fichier portable ou
-    registre du poste."""
+    registre du poste. `migrate=False` : pour lire seulement (le pont MCP) — les
+    réglages d'un ancien éditeur ne sont pas repris à cette occasion."""
     from PySide6.QtCore import QSettings
     ini = os.environ.get('VECTORDRIVE_SETTINGS')
     if ini:
@@ -58,7 +59,7 @@ def settings():
     if is_portable():
         return QSettings(str(app_dir() / INI), QSettings.Format.IniFormat)
     s = QSettings(ORG, 'VectorDrive')
-    if not s.allKeys():
+    if migrate and not s.allKeys():
         _migrate(s)
     return s
 

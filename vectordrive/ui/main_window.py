@@ -6230,6 +6230,51 @@ class MainWindow(QMainWindow):
             dlg.deleteLater()
         return dlg
 
+    # --- assistant : le serveur MCP local (demande du 15/11, question 42) --------------------------------
+    def agent_server(self):
+        """Le serveur MCP local de la fenêtre (`agent.server.LocalServer`), fait à la demande — pas lancé pour
+        autant : voir `agent_sync`."""
+        srv = getattr(self, '_agent_server', None)
+        if srv is None:
+            from ..agent.server import LocalServer
+            srv = self._agent_server = LocalServer(self)
+        return srv
+
+    def agent_sync(self, on: bool | None = None) -> str:
+        """Met le serveur MCP local dans l'état du réglage `agent/serveur` (`on` : le règle d'abord) : lancé sur le
+        port et avec le jeton des réglages, ou arrêté. Rend '' ou la raison pour laquelle il n'est pas lancé."""
+        from ..agent import server as AS
+        st = self.settings
+        if on is not None:
+            st.setValue(AS.KEY_ON, bool(on))
+        self._agent_error = ''
+        srv = getattr(self, '_agent_server', None)
+        if st.value(AS.KEY_ON, False) not in (True, 'true', 1, '1'):
+            if srv is not None:
+                srv.stop()
+            return ''
+        srv = self.agent_server()
+        port, token = AS.port_of(st), AS.token_of(st)
+        if srv.running and srv.port == port:
+            srv.token = token                            # un jeton neuf vaut aussitôt, sans relancer
+            return ''
+        try:
+            srv.start(port, token)
+        except OSError:
+            self._agent_error = tr('Le port {0} est déjà pris (une autre fenêtre de VectorDrive ?) : le serveur MCP local n’est pas lancé.').format(port)
+            self.statusBar().showMessage(self._agent_error, 10000)
+        return self._agent_error
+
+    def agent_dialog(self, exec_dialog: bool = True):
+        """« Assistant (serveur MCP)… » (Options › Général) : lancer le serveur local, et de quoi y brancher un
+        assistant. Rend la fenêtre."""
+        from .agent_dialog import AgentDialog
+        dlg = AgentDialog(self)
+        if exec_dialog:
+            dlg.exec()
+            dlg.deleteLater()
+        return dlg
+
     def move_button_mode(self, key: str, to_simple: bool) -> None:
         """Le bouton de la commande `key` montré aussi en mode simple, ou réservé au mode expert (clic droit)."""
         from . import modes
@@ -6999,6 +7044,9 @@ class MainWindow(QMainWindow):
         self.apply_cam_opacity()
         self._snap_status()
         self._apply_ribbon_options()
+        if (getattr(self, '_agent_server', None) is not None
+                or self.settings.value('agent/serveur', False) in (True, 'true', 1, '1')):
+            self.agent_sync()                            # le serveur MCP local, s'il est demandé (rien d'importé sinon)
 
     def apply_cam_opacity(self) -> float:
         """Panneaux FAO détachés : opacité des Options (le plein écran
@@ -9683,6 +9731,9 @@ class MainWindow(QMainWindow):
                 self.session_dir = None
             self.remember_window()                       # sa place et sa taille : pour le prochain lancement
             self._release_favorites()                    # avant la destruction des commandes (plantage, 15/11)
+            srv = getattr(self, '_agent_server', None)
+            if srv is not None:                          # plus d'assistant sur une fenêtre fermée
+                srv.stop()
             ev.accept()
         else:
             ev.ignore()
