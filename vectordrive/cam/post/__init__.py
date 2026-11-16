@@ -29,6 +29,10 @@ class PostResult:
     extension: str = '.nc'
     encoding: str = 'ascii'
     files: list = field(default_factory=list)       # [(nom de fichier, texte)]
+    #: facultatif — les plages du programme : [{'file': rang du fichier (0 d'office), 'first', 'last' : lignes
+    #: numérotées de 0, 'kind' : 'sequence', 'parcours'…, 'label' : son nom, 'path' : rang du parcours parmi ceux
+    #: reçus (absent : aucun)}] ; la fenêtre du programme en fait son plan, ses blocs repliables et ses surlignages
+    sections: list = field(default_factory=list)
 
 
 def ascii_only(s: str) -> str:

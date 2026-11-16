@@ -7419,5 +7419,11 @@
  "Répartition d’office": "Default split",
  "{0} commande(s) sur {1} montrées en mode simple": "{0} command(s) out of {1} shown in simple mode",
  "Commandes du mode simple…": "Commands of the simple mode…",
- "Choisir, onglet par onglet, les commandes du ruban que le mode simple montre": "Choose, tab by tab, the ribbon commands the simple mode shows"
+ "Choisir, onglet par onglet, les commandes du ruban que le mode simple montre": "Choose, tab by tab, the ribbon commands the simple mode shows",
+ "Replier chaque parcours sous sa première ligne (▸ dans la marge le déplie)": "Fold each toolpath under its first line (▸ in the margin unfolds it)",
+ "Déplier tous les blocs du programme": "Unfold every block of the program",
+ "Le programme au centre, à la place du dessin, entre les colonnes — ou de retour dans sa fenêtre": "The program in the centre, in place of the drawing, between the columns — or back in its window",
+ "Plan du programme": "Program outline",
+ "N° de lignes": "Line numbers",
+ "Le plan du programme : la liste de ses séquences et de ses parcours, à gauche du texte": "The program outline: the list of its sequences and toolpaths, left of the text"
 }

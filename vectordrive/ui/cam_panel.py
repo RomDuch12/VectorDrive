@@ -2638,7 +2638,7 @@ class CamPanel(QWidget):
         changé depuis leur calcul (sans toucher aux dates du dessin) ; sinon tels qu'ils sont, et une note le dit
         s'ils sont dépassés."""
         from ..cam import post
-        out = {'files': [], 'warnings': [], 'key': '', 'extension': '', 'note': ''}
+        out = {'files': [], 'warnings': [], 'key': '', 'extension': '', 'note': '', 'sections': []}
         s = self.setup()
         available = post.posts(self.machines_dir())
         key = s.post if s.post in available or s.post.startswith('mah:') else next(iter(available), '')
@@ -2660,7 +2660,7 @@ class CamPanel(QWidget):
         box = self._stock_box()
         origin = self.program_origin()
         how = getattr(s, 'output_orient', 'normal')
-        files, warnings, ext = [], [], ''
+        files, warnings, ext, sections = [], [], '', []
         try:
             if box is not None:
                 tps, origin, box = post.oriented(tps, how, (box[0], box[1], box[3], box[4]), origin, box)
@@ -2670,12 +2670,23 @@ class CamPanel(QWidget):
                                origin=origin)
                 ext = ext or res.extension
                 warnings += list(res.warnings)
+                for sec in getattr(res, 'sections', None) or ():     # les plages données par le post : au rang de
+                    try:                                             # ses fichiers parmi tous ceux du programme
+                        d = {'file': len(files) + int(sec.get('file', 0) or 0), 'first': int(sec['first']),
+                             'last': int(sec['last']), 'kind': str(sec.get('kind') or 'parcours'),
+                             'label': str(sec.get('label') or ''), 'op_id': '', 'name': ''}
+                    except (AttributeError, KeyError, TypeError, ValueError):
+                        continue                                     # une plage mal formée : laissée de côté
+                    k = sec.get('path')
+                    if isinstance(k, int) and 0 <= k < len(part):
+                        d['op_id'], d['name'] = part[k].op_id, part[k].name
+                    sections.append(d)
                 for name, text in (list(res.files) or ([(stem + res.extension, res.text)] if res.text else [])):
                     files.append((name, text.encode(res.encoding, 'replace').decode(res.encoding)))
         except Exception as ex:                          # noqa: BLE001 — fiche machine absente, export refusé…
             out['note'] = tr('Programme impossible : {0}').format(ex)
             return out
-        out.update(files=files, warnings=warnings, extension=ext)
+        out.update(files=files, warnings=warnings, extension=ext, sections=sections)
         from ..plugins import REGISTRY
         if not files:
             out['note'] = tr('Aucun programme écrit.')

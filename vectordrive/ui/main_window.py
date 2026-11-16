@@ -2456,6 +2456,8 @@ class MainWindow(QMainWindow):
         pg = self.ribbon.page(i) if 0 <= i < self.ribbon.count() else None
         if cols is None or pg is None:
             return
+        if pg.property('vd_cad') in ('2d', '3d') and self.program_centered():
+            self.program_center(False)                   # l'onglet CAD : on dessine, le dessin revient
         cols.tab_clicked('cad' if pg.property('vd_cad') in ('2d', '3d') else 'fao' if pg.property('vd_fao') else '')
 
     def column_panel(self, side: str, button=None):
@@ -4716,6 +4718,8 @@ class MainWindow(QMainWindow):
     def set_view_mode(self, mode: str) -> None:
         """Plan de travail en 2D (dessin, modification) ou en 3D (la pièce
         usinée, vue seule ; recalculée quand le dessin change)."""
+        if self.program_centered():                      # le programme était à la place du dessin : dans sa fenêtre
+            self.program_center(False)
         if mode == '3d':
             self._ensure_panel3d()
             self.stage.setCurrentWidget(self.panel3d)
@@ -4801,7 +4805,10 @@ class MainWindow(QMainWindow):
         self.panel3d.view.set_view(name)
 
     def view_mode(self) -> str:
-        return '3d' if self.panel3d is not None and self.stage.currentWidget() is self.panel3d else '2d'
+        shown = self.stage.currentWidget()
+        if self.program_centered():                      # le programme à la place du dessin : la vue qu'il recouvre
+            shown = self.stage.widget(getattr(self, '_stage_before', 0))
+        return '3d' if self.panel3d is not None and shown is self.panel3d else '2d'
 
     def _refresh_3d_if_visible(self) -> None:
         if self.view_mode() == '3d' and self.panel3d.stale:
@@ -5981,6 +5988,9 @@ class MainWindow(QMainWindow):
         """Le programme machine dans sa fenêtre (`ui.program_window`) : montrée, devant, à jour. La première fois,
         détachée et sans place à elle (pas remise par la session, ou hors de l'écran) : posée sur la moitié droite du
         dessin."""
+        if self.program_centered():                      # déjà au centre, à la place du dessin : mis à jour
+            self.program_panel.refresh()
+            return
         d = self.dock_program
         first, self._program_shown = not getattr(self, '_program_shown', False), True
         d.setVisible(True)
@@ -5993,6 +6003,73 @@ class MainWindow(QMainWindow):
             d.setGeometry(tl.x() + st.width() - w, tl.y(), w, max(360, st.height()))
         d.raise_()
         self.program_panel.refresh()
+
+    def program_centered(self) -> bool:
+        """Le programme machine est-il au centre, à la place du dessin ?"""
+        page = getattr(self, '_program_page', None)
+        return page is not None and self.stage.currentWidget() is page
+
+    def program_center(self, on: bool | None = None) -> bool:
+        """Le programme machine au centre, à la place du dessin, entre les colonnes de gauche et de droite (demande
+        du 15/11, 20 h 55) — ou de retour dans sa fenêtre, le dessin revenu. `on` None : l'inverse. Rend l'état."""
+        centered = self.program_centered()
+        on = (not centered) if on is None else bool(on)
+        if on == centered:
+            return on
+        d, p = self.dock_program, self.program_panel
+        self._program_moving = True                      # (sa fenêtre cachée ou montrée par nous : pas un retour demandé)
+        try:
+            if on:
+                ov = self.columns.overlay(d, create=False) if getattr(self, 'columns', None) is not None else None
+                if ov is not None and ov.active:         # en plein écran translucide : d'abord rendu à sa fenêtre
+                    ov.set_active(False)
+                self._program_dock_was = not d.isHidden()
+                self._stage_before = self.stage.currentIndex()
+                page = getattr(self, '_program_page', None)
+                if page is None:
+                    page = self._program_page = QWidget()
+                    lay = QVBoxLayout(page)
+                    lay.setContentsMargins(0, 0, 0, 0)
+                    self.stage.addWidget(page)
+                    d.visibilityChanged.connect(self._program_dock_shown)
+                d.setWidget(QWidget())                   # sa place dans sa fenêtre : vide pendant ce temps
+                page.layout().addWidget(p)
+                p.show()
+                d.hide()
+                self.stage.setCurrentWidget(page)
+            else:
+                back = getattr(self, '_stage_before', 0)     # le dessin, ou la pièce en 3D : ce qui était montré
+                page = self._program_page
+                if not (0 <= back < self.stage.count()) or self.stage.widget(back) is page:
+                    back = 0
+                self.stage.setCurrentIndex(back)
+                hold = d.widget()
+                d.setWidget(p)
+                if hold is not None and hold is not p:
+                    hold.deleteLater()
+                p.show()
+                shown = bool(getattr(self, '_program_dock_was', True))
+                d.setVisible(shown)
+                if shown:
+                    d.raise_()                           # devant ses voisins d'onglet, comme avant
+                if self.panel3d is not None and self.stage.currentWidget() is self.panel3d:
+                    if self.panel3d.stale:               # la pièce a changé pendant ce temps : refaite
+                        self.panel3d.refresh()
+                else:
+                    self.canvas.setFocus()
+        finally:
+            self._program_moving = False
+        p.set_centered(on)
+        if on:
+            p.refresh()
+        return on
+
+    def _program_dock_shown(self, on: bool) -> None:
+        """La fenêtre du programme montrée d'ailleurs (fenêtre d'une colonne, onglet FAO, disposition remise) alors
+        qu'il est au centre : il y retourne — jamais une fenêtre vide."""
+        if on and not getattr(self, '_program_moving', False) and self.program_centered():
+            self._program_dock_was = True
+            self.program_center(False)
 
     def program_changed(self) -> None:
         """Le panneau FAO ou le dessin a changé : la fenêtre du programme suit, si elle est montrée et « en direct »."""
@@ -9577,6 +9654,9 @@ class MainWindow(QMainWindow):
             ev.ignore()
             return
         self.finish_typing()                             # le texte qui s'écrit est fini avant d'être gardé
+        if self.program_centered():                      # le programme rentre dans sa fenêtre : la session la retient
+            self._program_dock_was = True                # ouverte, comme on l'a laissée
+            self.program_center(False)
         saved = False
         if self.session_dir is not None:                 # session silencieuse : tout est gardé, sans question
             try:

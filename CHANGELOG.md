@@ -6929,3 +6929,19 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - La case d'un onglet coche ou décoche toutes ses commandes d'un coup. Une recherche trouve une commande par son nom, son groupe ou son raccourci. Le bas de la fenêtre dit combien de commandes le mode simple montre.
 - **« Répartition d'office »** remet les cases comme à l'installation. Rien n'est changé avant OK ; le ruban suit aussitôt.
 - Le clic droit sur un bouton du ruban (« Réserver au mode expert », « Montrer aussi en mode simple ») marche toujours : c'est la même liste.
+### v0.910.0 — Programme machine : numéros de ligne, blocs repliables, opération surlignée
+
+- La fenêtre **Programme** montre maintenant les **numéros de ligne**, dans une marge à gauche.
+- Les **blocs se replient** : un clic sur **▾** dans la marge replie un bloc sous sa première ligne, **▸** le déplie. Sont repliables les blocs du langage (module, programme, si, pour, tant que…) et **chaque parcours**, de la ligne qui le nomme jusqu'au parcours suivant.
+- En bas à droite, **⊟** replie tous les parcours d'un coup, une ligne chacun : le programme se lit comme une liste ; **⊞** déplie tout. Un bloc replié le reste quand le programme est réécrit.
+- L'**opération choisie** dans le panneau FAO est **surlignée sur toute sa longueur**, d'un fond discret et d'un trait dans la marge ; si elle était repliée, elle se déplie.
+### v0.911.0 — Programme machine au centre, à la place du dessin
+
+- Dans la fenêtre **Programme**, le bouton **▣** (en bas à droite, à côté de ⊟ ⊞) met le programme **au centre, à la place du dessin** : il remplit tout l'espace entre la colonne de gauche et celle de droite. Les panneaux des colonnes restent en place ; l'opération choisie dans le panneau FAO y est toujours surlignée.
+- Un nouveau clic sur **▣** le renvoie dans sa fenêtre et rend le dessin. Revenir au dessin par le bouton 2D / 3D fait de même.
+- Le bouton « Programme » du panneau FAO, quand le programme est déjà au centre, le met simplement à jour.
+### v0.912.0 — Programme machine : son plan, la liste des séquences et des parcours
+
+- À gauche du programme, le **plan** : la liste de ses **séquences** et de ses **parcours**, avec leurs numéros de ligne. Un clic sur une ligne du plan montre cette partie du programme — dépliée, surlignée, amenée à l'écran — et choisit son opération dans le panneau FAO.
+- Le bouton **☰** (en bas à droite) montre ou cache le plan ; le choix est retenu.
+- Un post-processeur peut maintenant **dire lui-même** où commencent et finissent ses séquences et ses parcours : le plan, les blocs repliables et le surlignage de l'opération choisie sont alors exacts, même quand le programme n'écrit pas le nom des parcours. Sans cela, les parcours sont retrouvés par leur nom, comme avant.
