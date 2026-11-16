@@ -6999,3 +6999,8 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Défaire / Refaire** : un panneau de la colonne de gauche montre toute la suite des modifications, celle où l'on est en avant, les modifications défaites en grisé. Un clic sur une ligne revient à cet état. La liste passagère de Ctrl+Z et Ctrl+Y reste.
 - Les deux sont masqués tant qu'on ne les demande pas ; ils se placent comme les autres (Gauche, Masqué, Droite ; en onglet, au-dessus, détaché). **Un poste déjà réglé garde sa disposition.**
 - Le panneau « Couleur » demandé avec eux attend de savoir lequel (question 46).
+### v0.921.0 — Fenêtre des colonnes, titre des parcours, plongée jusqu'à 89°
+
+- **Clic droit sur le bouton d'une colonne** : la fenêtre des panneaux est la même des deux côtés, elle n'a plus de titre « Colonne de gauche / de droite » ni de « ✕ ». **Un clic ailleurs la ferme** (dans VectorDrive ou dans une autre application), comme Échap, un second clic droit sur le bouton ou un clic droit dans la fenêtre.
+- **Formulaire d'un parcours** : son titre est « Parcours [type de parcours] », suivi de « - [commentaire] » quand il vient d'un modèle enregistré (la description du modèle, sinon son nom ; pour un modèle importé de TypeEdit, son nom). Choisir un autre modèle ou un autre type dans le formulaire, ou l'enregistrer comme modèle, refait le titre.
+- **Plongée angulaire** : l'angle va jusqu'à 89°. Il était ramené à 45° sans que le formulaire le dise ; le champ s'arrête maintenant à 89. **À noter** : un document ou un modèle qui avait un angle entre 45 et 89° (un import TypeEdit à 60°, par exemple) se calcule désormais à son vrai angle : son programme change.

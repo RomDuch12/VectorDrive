@@ -270,6 +270,32 @@ def presets() -> dict:
     """Boutons de la palette : ceux du cœur puis ceux des plugins."""
     from ..plugins import REGISTRY
     return {**PRESETS, **{k: v for k, v in REGISTRY.cam_presets.items() if k not in PRESETS}}
+
+
+def template_note(name) -> str:
+    """Le commentaire d'un modèle d'usinage (parcours préenregistré) : sa description (première ligne), sinon son nom
+    sans dossier ; '' sans modèle."""
+    if not name:
+        return ''
+    from ..cam import templates as TPL
+    found = TPL.all_templates().get(name)
+    tpl = found[1] if found is not None and isinstance(found[1], dict) else {}
+    lines = str(tpl.get('description') or '').strip().splitlines()
+    first = lines[0].strip() if lines else ''
+    if first.startswith(('TypeEdit : ', 'Modèle de parcours TypeEdit')) or 'typeedit' in tpl:
+        first = ''                                       # description faite à l'import TypeEdit : le nom, plutôt
+    note = first or TPL.label_of(tpl) or str(name)
+    return note if len(note) <= 80 else note[:79].rstrip() + '…'
+
+
+def toolpath_title(kind: str, preset: str = '', note: str = '') -> str:
+    """Titre du formulaire d'un parcours (demande du 16/11, 23 h 25) : « Parcours [type de parcours] » et, s'il vient
+    d'un modèle, « - [commentaire du modèle] ». Le type : le bouton de la palette `preset` s'il fait cette stratégie,
+    sinon le nom de la stratégie."""
+    pre = presets().get(preset) if preset else None
+    kind_text = tr(pre[0]) if pre is not None and pre[1] == kind else tr(model.op_kinds().get(kind, kind))
+    title = tr('Parcours {0}').format(kind_text)
+    return f'{title} - {note}' if note else title
 SIDES = {'exterieur': 'Extérieur', 'interieur': 'Intérieur', 'sur': 'Sur le trait'}
 #: champs à choix (listes)
 FIELD_CHOICES = {
@@ -673,7 +699,7 @@ class OpIllustration(QWidget):
         return default
 
     def ramp_angle(self) -> float:
-        """Angle de rampe du formulaire (°), comme le calcul : 0 → 5°, borné à [0,5 ; 45]."""
+        """Angle de rampe du formulaire (°), comme le calcul : 0 → 5°, borné à [0,5 ; 89]."""
         from ..cam.strategies import ramp_angle_of
 
         class _Op:
@@ -844,9 +870,14 @@ class FieldsDialog(QDialog):
         #: objets sélectionnés sur le dessin (« Prendre sur la sélection » des instructions)
         self.selection = list(selection or [])
         self._advanced_open = False
-        self.setWindowTitle(title)
+        #: `title` None : le formulaire d'un parcours se titre lui-même, « Parcours [type] - [commentaire du modèle] »
+        #: (demande du 16/11, 23 h 25), refait quand un modèle y est choisi ou enregistré
+        self._auto_title = title is None and isinstance(obj, model.Operation)
+        self._tpl_note = template_note(template) if self._auto_title else ''
+        self.setWindowTitle(title or '')
         self.setSizeGripEnabled(True)
         self.obj = obj
+        self._retitle()
         self.doc = doc
         self.widgets = {}
         self.rows = {}                                   # champ → (étiquette, champ) pour les masquer
@@ -907,6 +938,8 @@ class FieldsDialog(QDialog):
             self.template_box.setCurrentIndex(max(0, self.template_box.findData(template or '')))
             self.template_box.currentIndexChanged.connect(
                 lambda _i: self.template_box.currentData() and self.load_template(self.template_box.currentData()))
+            self.template_box.currentIndexChanged.connect(
+                lambda _i: self._template_titled(self.template_box.currentData()))
             row.addWidget(self.template_box, 1)
             b = QPushButton(tr('Enregistrer comme modèle…'))
             b.setToolTip(tr('Garder ces réglages (et l\'outil) sous un nom, pour les retrouver dans la '
@@ -915,6 +948,13 @@ class FieldsDialog(QDialog):
             row.addWidget(b)
             outer.addLayout(row)
         outer.addLayout(cols, 1)
+        if self._auto_title:
+            if self.template_box is not None:            # le modèle que la liste montre vraiment
+                self._tpl_note = template_note(self.template_box.currentData())
+            box = self.widgets.get('kind')
+            if isinstance(box, QComboBox):               # la stratégie changée (liste, modèle) : le titre la suit
+                box.currentIndexChanged.connect(lambda _i: self._retitle())
+            self._retitle()
         self.color_toggle = self.color_box = None
         if color:
             self._build_color_box(outer, color)
@@ -1370,6 +1410,10 @@ class FieldsDialog(QDialog):
             w.setDecimals(3)
             w.setRange(-100000, 1000000)
             w.setValue(v)
+            if name == 'ramp_angle' and isinstance(obj, model.Operation):   # 89° au plus (demande du 16/11)
+                w.setRange(0.0, strategies.RAMP_ANGLE_MAX)
+                w.setValue(min(max(v, 0.0), strategies.RAMP_ANGLE_MAX))
+                w.setToolTip(tr('Angle de la descente : de 0,5 à 89° (0 = 5°)'))
             if name in ZERO_IS_TOOL and isinstance(obj, model.Operation) and v >= 0:   # négatif (gammes) : gardé
                 w.setSpecialValueText(tool_value_text(name, None))     # la valeur de l'outil : `_tool_values`
                 w.setToolTip(tr('À 0, le champ prend la valeur de l’outil : {0}').format(tool_value_tip(name, None)))
@@ -1883,6 +1927,20 @@ class FieldsDialog(QDialog):
             return self.library.get(v[4:])
         return next((t for t in self.doc_tools + self.new_tools if t.id == v), None)
 
+    def _retitle(self) -> None:
+        """Le titre d'un formulaire de parcours qui se titre lui-même (`toolpath_title`) : la stratégie de la liste
+        si elle y est (un modèle peut la changer), sinon celle de l'opération."""
+        if not getattr(self, '_auto_title', False):
+            return
+        box = getattr(self, 'widgets', {}).get('kind')
+        kind = box.currentData() if isinstance(box, QComboBox) and box.currentData() else getattr(self.obj, 'kind', '')
+        self.setWindowTitle(toolpath_title(kind, self.preset, self._tpl_note))
+
+    def _template_titled(self, name) -> None:
+        """Un modèle choisi (ou « réglages ci-dessous ») : son commentaire dans le titre."""
+        self._tpl_note = template_note(name) if self._auto_title else ''
+        self._retitle()
+
     def load_template(self, name: str) -> bool:
         """Réglages du modèle `name` dans le formulaire (et son outil)."""
         from ..cam import templates as TPL
@@ -1939,6 +1997,8 @@ class FieldsDialog(QDialog):
             self.template_box.addItem(name, name)
             self.template_box.setCurrentIndex(self.template_box.count() - 1)
             self.template_box.blockSignals(False)
+        if self.template_box is not None and self.template_box.currentData() == name:
+            self._template_titled(name)                  # le formulaire est désormais celui d'un modèle
         pal = getattr(getattr(self.parent(), 'win', None), 'cam_palette', None)
         if pal is not None:
             pal.refresh()
@@ -3425,7 +3485,7 @@ class CamPanel(QWidget):
                             **self._op_defaults(model.Operation.kind))
         from ..core import surface2d
         surface2d.adopt(self.doc, o, self.doc.active_layer)
-        dlg = FieldsDialog(self, tr('Nouvelle opération'), o, self.doc, s.tools, library=lib,
+        dlg = FieldsDialog(self, None, o, self.doc, s.tools, library=lib,
                            selection=self._selected(), kind_choice=True)   # pas de type de parcours : la liste
         if dlg.exec():
             dlg.apply()
@@ -3489,7 +3549,7 @@ class CamPanel(QWidget):
         before = (list(op.items), list(op.sources))
         if sel:
             op.items, op.sources = [it.id for it in sel], []
-        dlg = FieldsDialog(self, tr('Opération'), op, self.doc, s.tools, library=self.pick_library(),
+        dlg = FieldsDialog(self, None, op, self.doc, s.tools, library=self.pick_library(),
                            selection=sel)
 
         def done(ok) -> None:
@@ -4489,7 +4549,7 @@ class CamPanel(QWidget):
         from ..core import surface2d
         surface2d.adopt(self.doc, o, self.doc.active_layer)   # dessin d'une surface posée : sa prise, sa cote
         if exec_dialog:
-            dlg = FieldsDialog(self, tr('Nouveau parcours : {0}').format(tr(label)), o, self.doc, s.tools,
+            dlg = FieldsDialog(self, None, o, self.doc, s.tools,
                                library=self.pick_library(), selection=self._selected(),
                                templates=self.templates_for(key), preset=key, template=template,
                                family=family, members=self.family_members(family) if family else ())
@@ -4574,7 +4634,7 @@ class CamPanel(QWidget):
         """Opération `o` préparée sur le réglage `s` : son formulaire, puis
         ajoutée, enregistrée et calculée."""
         if exec_dialog:
-            dlg = FieldsDialog(self, tr('Nouveau parcours : {0}').format(o.name), o, self.doc, s.tools,
+            dlg = FieldsDialog(self, None, o, self.doc, s.tools,
                                library=self.pick_library(), selection=self._selected())
             if not dlg.exec():
                 return None
@@ -5656,7 +5716,7 @@ class CamPanel(QWidget):
         op = model.Operation(kind='gravure', name=tp.name or tr('Programme'), tool_id=tool.id,
                              items=[sh.id for sh in shapes], depth=depth,
                              step_down=round(depth / len(levels), 4) if len(levels) > 1 else depth)
-        dlg = FieldsDialog(self, tr('Opération'), op, self.doc, list(s.tools) + ([tool] if new_tool else []),
+        dlg = FieldsDialog(self, None, op, self.doc, list(s.tools) + ([tool] if new_tool else []),
                            library=self.pick_library(), kind_choice=True)  # programme relu : nature devinée, à choisir
 
         def done(ok) -> None:

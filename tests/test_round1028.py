@@ -167,7 +167,7 @@ class ColumnWindow(unittest.TestCase):
         p.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5)))   # clic droit : fermée
         self.assertIsNone(w.columns.panel('droite'))
         p = w.column_panel('gauche')
-        p.close_btn.click()                                                   # « ✕ » : fermée
+        p.close()                                                             # 0.921.0 : plus de « ✕ »
         self.assertIsNone(w.columns.panel('gauche'))
 
     def test_eye_shows_or_removes_a_panel(self):

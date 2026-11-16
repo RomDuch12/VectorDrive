@@ -58,7 +58,8 @@ class TestRamps(unittest.TestCase):
         self.assertAlmostEqual(min(m.z for m in em.moves), -0.4)
         self.assertEqual(S.ramp_angle_of(model.Operation()), S.RAMP_ANGLE)
         self.assertEqual(S.ramp_angle_of(model.Operation(ramp_angle=12)), 12)
-        self.assertEqual(S.ramp_angle_of(model.Operation(ramp_angle=80)), 45)
+        self.assertEqual(S.ramp_angle_of(model.Operation(ramp_angle=80)), 80)          # 0.921.0 : 89° au plus
+        self.assertEqual(S.ramp_angle_of(model.Operation(ramp_angle=120)), 89)
 
     def test_no_ramp_unchanged(self):
         em = emitter()

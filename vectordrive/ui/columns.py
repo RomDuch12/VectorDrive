@@ -22,8 +22,8 @@ Les réglages sont sous `panneaux_colonnes/` (« colonnes/ » est celui des colo
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtWidgets import (QDockWidget, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QSizeGrip, QSizePolicy,
-                               QTabBar, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDockWidget, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QSizeGrip,
+                               QSizePolicy, QTabBar, QToolButton, QVBoxLayout, QWidget)
 
 from ..i18n import tr
 
@@ -516,6 +516,10 @@ class Columns(QObject):
         """La fenêtre de la colonne `side`, sous son bouton (ou au milieu de la fenêtre) ; rouverte si elle l'était."""
         if side not in AREAS:
             return None
+        import time
+        shut, self._panel_shut = getattr(self, '_panel_shut', None), None
+        if button is not None and shut is not None and shut[0] == side and time.monotonic() - shut[1] < 0.4:
+            return None                                  # fermée à l'instant par l'appui sur ce même bouton
         old = self._panels.pop(side, None)
         if old is not None:
             try:
@@ -960,8 +964,8 @@ class PanelRows(QWidget):
 
 class ColumnPanel(QFrame):
     """La fenêtre d'une colonne (clic droit sur son bouton, demande du 15/11, 8 h 40) : tous les panneaux que les
-    colonnes accueillent, ceux de cette colonne d'abord ; un œil chacun pour l'y montrer ou l'en retirer. « ✕ » ou un
-    clic droit dans la fenêtre la ferme."""
+    colonnes accueillent, ceux de cette colonne d'abord ; Gauche, Masqué, Droite pour chacun. La même des deux côtés :
+    sans titre (demande du 16/11, 23 h 25) ; un clic ailleurs, Échap ou un clic droit dans la fenêtre la ferme."""
 
     def __init__(self, columns, side: str):
         super().__init__(columns.win, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
@@ -969,20 +973,11 @@ class ColumnPanel(QFrame):
         self.setObjectName('columnPanel')
         self.setFrameShape(QFrame.Shape.StyledPanel)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 4, 4, 8)
+        lay.setContentsMargins(8, 6, 6, 8)
         lay.setSpacing(4)
-        head = QHBoxLayout()
-        head.addWidget(QLabel('<b>' + (tr('Colonne de gauche') if side == 'gauche' else tr('Colonne de droite'))
-                              + '</b>'), 1)
-        self.close_btn = QToolButton()
-        self.close_btn.setText('✕')
-        self.close_btn.setAutoRaise(True)
-        self.close_btn.setToolTip(tr('Fermer (ou clic droit dans la fenêtre)'))
-        self.close_btn.clicked.connect(lambda _=False: self.close())
-        head.addWidget(self.close_btn)
-        lay.addLayout(head)
         self.body = None
         self._due = False
+        self._watching = False                           # le filtre « clic ailleurs » posé sur l'application
         self.refresh()
 
     def rows(self) -> list:
@@ -1040,3 +1035,51 @@ class ColumnPanel(QFrame):
     def contextMenuEvent(self, ev):                      # noqa: N802 (API Qt)
         self.close()
         ev.accept()
+
+    # --- un clic ailleurs la ferme, comme un menu (sans prendre la souris ni le clavier : le clic va où il est fait) --
+    def showEvent(self, ev):                             # noqa: N802 (API Qt)
+        super().showEvent(ev)
+        app = QApplication.instance()
+        if app is not None and not self._watching:
+            app.installEventFilter(self)
+            self._watching = True
+
+    def hideEvent(self, ev):                             # noqa: N802 (API Qt)
+        self._unwatch()
+        super().hideEvent(ev)
+
+    def _unwatch(self) -> None:
+        app = QApplication.instance()
+        if self._watching and app is not None:
+            app.removeEventFilter(self)
+        self._watching = False
+
+    def eventFilter(self, obj, ev):                      # noqa: N802 (API Qt)
+        t = ev.type()
+        if t in (QEvent.Type.MouseButtonPress, QEvent.Type.NonClientAreaMouseButtonPress) and self.isVisible():
+            try:
+                at = ev.globalPosition().toPoint()
+            except (AttributeError, RuntimeError):
+                return False
+            if not self.frameGeometry().contains(at):    # ailleurs : dans VectorDrive, hors de la fenêtre
+                import time
+                # un second clic droit sur son bouton la ferme sans la rouvrir (le menu vient au relâchement)
+                self.columns._panel_shut = (self.side, time.monotonic())
+                self.close()
+        elif t in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress) and self.isVisible()                 and getattr(ev, 'key', lambda: None)() == Qt.Key.Key_Escape:
+            # Échap : pour elle, où qu'aille le clavier (elle ne le prend pas : Windows ne l'active pas) — pas un
+            # raccourci de la fenêtre ; fermée à l'appui, qui ne va pas plus loin
+            ev.accept()
+            if t == QEvent.Type.KeyPress:
+                self.close()
+            return True
+        elif t == QEvent.Type.ApplicationDeactivate and self.isVisible():
+            self.close()                                 # un clic dans une autre application
+        return False
+
+    def keyPressEvent(self, ev):                         # noqa: N802 (API Qt)
+        if ev.key() == Qt.Key.Key_Escape:
+            self.close()
+            ev.accept()
+            return
+        super().keyPressEvent(ev)

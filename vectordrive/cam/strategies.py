@@ -18,6 +18,8 @@ from ..core import surface2d as _S2
 
 #: angle de la rampe d'entrée (°)
 RAMP_ANGLE = 5.0
+#: angle de la plongée angulaire au plus (°) : 89 (demande du 16/11, 23 h 25 ; il était ramené à 45 sans le dire)
+RAMP_ANGLE_MAX = 89.0
 
 
 # --- géométrie source ------------------------------------------------------------
@@ -1021,9 +1023,9 @@ def _split_at(pts, cuts: list[float]) -> tuple[list, list]:
 
 
 def ramp_angle_of(op) -> float:
-    """Angle de rampe de l'opération (°), 5° par défaut, borné à ]0,5 ; 45]."""
+    """Angle de rampe de l'opération (°), 5° par défaut, borné à [0,5 ; 89] (`RAMP_ANGLE_MAX`)."""
     a = float(getattr(op, 'ramp_angle', 0.0) or 0.0)
-    return min(45.0, max(0.5, a)) if a > 0 else RAMP_ANGLE
+    return min(RAMP_ANGLE_MAX, max(0.5, a)) if a > 0 else RAMP_ANGLE
 
 
 def _first_stretch(spts: list, limit: float) -> tuple:
