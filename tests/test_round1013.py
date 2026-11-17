@@ -42,6 +42,7 @@ def forget():
     s = portable.settings()
     for k in KEYS:
         s.remove(k)
+    s.setValue('panneaux_colonnes/f2_rangement', 'onglet')   # un poste déjà servi : F2 et Calques en onglets (round 1071)
     s.sync()
 
 

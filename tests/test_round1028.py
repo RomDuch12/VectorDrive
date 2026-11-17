@@ -26,6 +26,7 @@ def forget():
     s.remove(PREFIX)
     s.remove('vue/mode')
     s.remove('vue/panneau_fao')
+    s.setValue('panneaux_colonnes/f2_rangement', 'onglet')   # un poste déjà servi : F2 et Calques en onglets (round 1071)
     s.sync()
 
 

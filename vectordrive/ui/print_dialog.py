@@ -34,7 +34,8 @@ def items_for(doc, selection, v: dict):
         return list(selection)
     if v.get('quoi') == 'calques':
         ids = set(v.get('calques') or [])
-        return [it for L in doc.layers if L.id in ids for it in L.items if it.visible]
+        from ..cam.fixture import is_plate_layer         # plaque de reprise posée : jamais imprimée (question 43)
+        return [it for L in doc.layers if L.id in ids and not is_plate_layer(L) for it in L.items if it.visible]
     return None
 
 
@@ -80,7 +81,10 @@ class PrintDialog(QDialog):
         self.layers.setMaximumHeight(110)
         saved = last.get('calques')
         chosen = set(saved if isinstance(saved, list) else []) & {L.id for L in doc.layers}   # un autre dessin : ses visibles
+        from ..cam.fixture import is_plate_layer
         for L in doc.layers:
+            if is_plate_layer(L):                        # plaque de reprise posée : pas proposée (question 43)
+                continue
             it = QListWidgetItem(L.name or L.id)
             it.setData(Qt.ItemDataRole.UserRole, L.id)
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)

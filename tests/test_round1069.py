@@ -396,6 +396,18 @@ class Keys(unittest.TestCase):
                 os.environ['MISTRAL_API_KEY'] = old
 
 
+def release_mouse(w):
+    """Un essai d'avant (même processus) a pu laisser un bouton de souris enfoncé pour Qt : l'assistant croirait
+    l'utilisateur en train de glisser (`UiBridge.busy`) et refuserait ses outils (round 1071)."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtTest import QTest
+    held = QGuiApplication.mouseButtons()
+    for b in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+        if held & b:
+            QTest.mouseRelease(w.canvas, b, Qt.KeyboardModifier.NoModifier, QPoint(5, 5))
+
+
 class Panel(unittest.TestCase):
 
     def setUp(self):
@@ -404,6 +416,7 @@ class Panel(unittest.TestCase):
         self.w = MainWindow()
         self.w.resize(1100, 800)
         self.w.show()
+        release_mouse(self.w)
         self.forget_settings()                           # rien de retenu par un passage d'avant (même processus)
         self.addCleanup(self.forget_settings)
         self.addCleanup(self.clean)

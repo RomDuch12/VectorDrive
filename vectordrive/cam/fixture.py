@@ -380,6 +380,19 @@ def without_plates(doc):
     return dataclasses.replace(doc, layers=[L for L in doc.layers if not is_plate_layer(L)])
 
 
+def shown(doc, items=None):
+    """(dessin, objets) montrés sur une page - BAT, impression, image : sans les plaques de reprise posées, un repère
+    de l'usinage (réponse du 17/11 à la question 43). `items` (une sélection, des calques choisis) perd les objets de
+    leurs calques - sauf s'il n'a que ceux-là : une plaque choisie exprès est montrée, comme elle est exportée."""
+    plates = [L for L in doc.layers if is_plate_layer(L)]
+    if not plates:
+        return doc, items
+    if items:
+        drop = {id(it) for L in plates for it in L.items}
+        items = [it for it in items if id(it) not in drop] or items
+    return without_plates(doc), items
+
+
 def plate_folders(settings=None) -> list:
     """Les dossiers de plaques : le dernier choisi (réglage `FOLDER_KEY`), puis ceux d'un plugin
     (`api.set_defaults('plaques', {'dossiers': [...]})`) ; ceux qui existent, chacun une fois."""

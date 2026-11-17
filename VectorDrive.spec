@@ -68,7 +68,10 @@ a = Analysis(
     excludes=['tkinter', 'matplotlib', 'fitz', 'pymupdf', 'IPython', 'pytest', 'jinja2',
               'PyQt5', 'PyQt6', 'PySide2', 'ezdxf.addons.drawing', 'ezdxf.addons.xqt',
               'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.Qt3DCore',
-              'PySide6.QtMultimedia', 'PySide6.QtQuick', 'PySide6.QtQml'],
+              'PySide6.QtMultimedia', 'PySide6.QtQuick', 'PySide6.QtQml',
+              # entrés avec les SDK de l'assistant IA (aides facultatives de openai, anthropic), jamais servis :
+              # 34 Mo de la portable 0.926.0 (round 1070)
+              'scipy', 'pandas', 'pytz', 'tzdata', 'dateutil', 'zstandard', 'websockets', 'click', 'markupsafe'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

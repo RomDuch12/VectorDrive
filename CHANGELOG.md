@@ -7032,3 +7032,11 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Il faut la clé d’API du fournisseur (un abonnement Claude.ai, ChatGPT ou Le Chat n’en donne pas : le lien mène à la console du fournisseur). Elle est gardée dans le gestionnaire d’identifiants de Windows, jamais dans les réglages ; sans elle, la variable d’environnement du fournisseur sert.
 - Ce que l’assistant lit du dessin part chez le fournisseur choisi : le panneau le dit.
 - « Arrêter » coupe la demande au prochain pas ; une fenêtre ouverte ou une commande en cours fait refuser les outils.
+### v0.927.0 — Portable allégée
+
+- La portable 0.926.0 avait pris 54 Mo avec l’assistant IA : les bibliothèques de Claude et de ChatGPT y faisaient entrer des modules de calcul et de tableaux dont VectorDrive ne se sert pas (scipy, pandas et quelques autres). Ils n’y sont plus ; l’assistant marche de même.
+### v0.928.0 — La plaque de reprise hors du BAT ; Dimensions au-dessus de Calques
+
+- Une plaque de reprise posée (panneau FAO) n’est plus sur le BAT, ni imprimée, ni dans une image exportée : c’est un repère pour l’usinage. Sélectionnée seule, exprès, elle se montre encore.
+- La fenêtre d’impression ne propose plus son calque.
+- Sur un poste neuf, Dimensions (F2) est d’office au-dessus de Calques, les deux visibles. Un poste déjà utilisé garde sa disposition ; « En onglet avec » et « Au-dessus de », au clic droit, restent au choix.

@@ -147,8 +147,11 @@ def _leaves(items):
 
 
 def render(doc: Document, spec: RasterSpec):
-    """Dessin → QImage à `spec.dpi` (repère : y vers le haut)."""
+    """Dessin → QImage à `spec.dpi` (repère : y vers le haut) ; une plaque de reprise posée n'y est pas, sauf
+    choisie exprès (`export_dialog.export_items` ôte alors sa marque) - question 43 du 17/11."""
     _app()
+    from ..cam.fixture import without_plates
+    doc = without_plates(doc)
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QTransform
     bb = doc.bbox(include_plate=spec.include_plate and doc.plate is not None)

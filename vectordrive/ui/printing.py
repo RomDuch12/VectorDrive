@@ -75,6 +75,8 @@ def sheet_mm(fmt: str, orientation: str = 'auto', bb=None) -> tuple:
 def extent(doc, opts: dict | None = None, items=None) -> tuple:
     """(boîte imprimée en mm ou None, plaque montrée ?) : les objets (`items`, sinon le dessin visible) et la plaque
     si elle est imprimée (pas avec la sélection seule) ; `quoi` 'plaque' : la plaque seule (le dessin y est coupé)."""
+    from ..cam.fixture import shown
+    doc, items = shown(doc, items)                       # plaque de reprise posée : pas imprimée (question 43)
     o = dict(PRINT_DEFAULTS, **(opts or {}))
     pl = doc.plate
     if o.get('quoi') == 'plaque' and pl is not None:
@@ -141,6 +143,8 @@ def print_drawing(doc, printer: QPrinter, opts: dict | None = None, items=None) 
     plaque, réduire (un dessin plus grand que la feuille est réduit), `quoi` ('plaque' : la plaque et ce qu'elle
     contient, coupé à son bord ; 'calques' : `items` avec la plaque) ; `items` : seulement ces objets.
     Renvoie le format de la feuille (mm)."""
+    from ..cam.fixture import shown
+    doc, items = shown(doc, items)                       # plaque de reprise posée : pas imprimée (question 43)
     o = dict(PRINT_DEFAULTS, **(opts or {}))
     leaves_src = items if items else list(doc.iter_items(visible_only=True))
     bb, show_plate = extent(doc, o, items)

@@ -636,6 +636,12 @@ def _label(s: str, h: float, x: float, y: float, align='left', color=(0, 0, 0)) 
     return Prim(p, color, 0, True)
 
 
+def _shown(doc, items):
+    """Le BAT ne montre pas les plaques de reprise posées (`fixture.shown`, question 43 du 17/11)."""
+    from ..cam.fixture import shown
+    return shown(doc, items)
+
+
 def uses_selection(info: ProofInfo, items) -> bool:
     """La page montre-t-elle la sélection (plutôt que tout le dessin) ?"""
     return bool(items) and info.content != 'tout'
@@ -648,6 +654,7 @@ def page_scale(doc: Document, info: ProofInfo, items=None) -> float:
 
 def bruts_on_page(doc: Document, info: ProofInfo, items=None) -> list:
     """(ensemble, brut) montrés sur la page."""
+    doc, items = _shown(doc, items)
     if not getattr(info, 'show_bruts', True):
         return []
     if uses_selection(info, items):
@@ -656,6 +663,7 @@ def bruts_on_page(doc: Document, info: ProofInfo, items=None) -> list:
 
 
 def _geometry(doc: Document, info: ProofInfo, items=None) -> dict:
+    doc, items = _shown(doc, items)
     leaves = None
     bruts = bruts_on_page(doc, info, items)
     if uses_selection(info, items):
@@ -726,6 +734,7 @@ def plan_views(info: 'ProofInfo', FW: float, FH: float, area, pad: float) -> lis
 def build(doc: Document, info: ProofInfo, items=None) -> tuple[list[Prim], float, float]:
     """Primitives de la page (mm, origine en bas à gauche) et format ;
     `items` : la sélection (voir `uses_selection`)."""
+    doc, items = _shown(doc, items)
     g = _geometry(doc, info, items)
     plate, ref, W0, H0, frame, FW, FH = g['plate'], g['ref'], g['W0'], g['H0'], g['frame'], g['FW'], g['FH']
     PW, PH, margin, title_h = g['PW'], g['PH'], g['margin'], g['title_h']
@@ -892,6 +901,7 @@ def each_engraving(n: int) -> bool:
 def engravings(doc: Document, info: ProofInfo, items=None) -> list:
     """Gravures du BAT : les objets (ou groupes) de premier niveau — ceux de
     la sélection, sinon ceux des calques affichés."""
+    doc, items = _shown(doc, items)
     if uses_selection(info, items):
         return [it for it in items if it.visible]
     return [it for L in doc.layers if L.visible for it in L.items if it.visible]

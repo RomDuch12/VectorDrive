@@ -82,6 +82,13 @@ AREAS = {'gauche': Qt.DockWidgetArea.LeftDockWidgetArea, 'droite': Qt.DockWidget
 #: rien de retenu pour elle ne les fait pas paraître ; montrés puis cachés avec leur colonne, ils reviennent avec elle
 ON_DEMAND = ('polices', 'accrochages', 'historique', 'assistant')
 KEY = 'panneaux_colonnes'
+#: réglage : le rangement d'office de Dimensions (F2) et Calques, décidé une fois par poste - 'dessus' (poste neuf,
+#: depuis 0.928.0 : Dimensions au-dessus de Calques, réponse du 17/11 à la question 36) ou 'onglet' (poste déjà servi :
+#: les deux en onglets, comme avant)
+F2_KEY = f'{KEY}/f2_rangement'
+#: réglages de la fenêtre (sa place à la fermeture, `MainWindow.GEOMETRY_KEY` ; plein écran ou non, et la barre des
+#: tâches, écrits même en plein écran) : l'un d'eux présent, le poste a déjà servi
+USED_KEYS = ('fenetre/geometrie', 'fenetre/plein_ecran', 'fenetre/plein_ecran_barre')
 
 
 class DockBar(QWidget):
@@ -357,20 +364,39 @@ class Columns(QObject):
         self._cad_names = [n for n in str(self._st().value(f'{KEY}/rangees_cad', '') or '').split(',') if n]
 
     # --- en onglets dans une colonne (demande du 14/11, soir) ----------------------------------------------------
-    def _f2_with_layers(self) -> None:
-        """D'office, Dimensions (F2) et Calques dans le même groupe d'onglets de leur colonne, Dimensions devant ;
-        pas s'ils ont été séparés (« Sortir des onglets » sur l'un ou l'autre), si Dimensions est en onglet avec un
-        autre panneau ou s'ils sont dans deux colonnes."""
+    def f2_mode(self) -> str:
+        """Le rangement d'office de Dimensions et Calques (`F2_KEY`), décidé au premier lancement qui le demande."""
         st = self._st()
+        mode = str(st.value(F2_KEY, '') or '')
+        if mode not in ('dessus', 'onglet'):
+            mode = 'onglet' if any(st.contains(k) for k in USED_KEYS) else 'dessus'
+            st.setValue(F2_KEY, mode)
+        return mode
+
+    def _f2_with_layers(self) -> None:
+        """D'office, sur un poste neuf, Dimensions (F2) au-dessus de Calques, les deux montrés (réponse du 17/11 à la
+        question 36 : les panneaux rangés comme à leur création, Calques devant dans son groupe d'onglets) ; sur un poste déjà servi (`USED_KEYS`), dans le même groupe d'onglets
+        de leur colonne, Dimensions devant, comme avant. Rien de cela s'ils ont été séparés (« Sortir des onglets »
+        sur l'un ou l'autre), rangés l'un par rapport à l'autre, si Dimensions est en onglet avec un autre panneau ou
+        s'ils sont dans deux colonnes."""
+        st = self._st()
+        first = str(st.value(F2_KEY, '') or '') not in ('dessus', 'onglet')
+        mode = self.f2_mode()
         if st.value(f'{KEY}/onglet/dims', '') or any(
                 str(st.value(f'{KEY}/seul/{n}', '')).lower() in ('1', 'true') or st.value(f'{KEY}/partage/{n}', '')
                 for n in ('dims', 'layers')):
             return
         dims = next((d for d in self.docks() if d.objectName() == 'dims'), None)
         layers = next((d for d in self.docks() if d.objectName() == 'layers'), None)
-        if dims is None or layers is None or layers in self.win.tabifiedDockWidgets(dims):
+        if dims is None or layers is None:
             return
         if self.side(layers) is None or self.side(dims) != self.side(layers):
+            return
+        if mode == 'dessus':                             # les panneaux comme créés : Dimensions au-dessus du groupe
+            if first and not layers.isHidden():          # de Calques (Bibliothèque, FAO...), Calques devant
+                self._quiet(layers.raise_)
+            return
+        if layers in self.win.tabifiedDockWidgets(dims):
             return
         if self.tab_with(dims, layers, remember=False, show=False) and not dims.isHidden():
             self._quiet(dims.raise_)
