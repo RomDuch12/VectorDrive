@@ -50,7 +50,10 @@ def from_setup(setup: model.CamSetup, name: str, description: str = '') -> dict:
         td.pop('history', None)                  # historique des vitesses : propre au poste
     ops = []
     from ..core import surface2d
+    from .external import is_external
     for o in setup.operations:
+        if is_external(o):                       # opération d'un plugin : propre à ce dessin
+            continue
         d = surface2d.strip(o.to_dict())         # surface posée d'un dessin : sans objet ailleurs
         d['items'] = []                          # objets d'un dessin : sans objet ailleurs
         d.pop('body3d_ref', None)                # volume d'un dessin : idem

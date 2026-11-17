@@ -4623,6 +4623,14 @@ def compute(doc: Document, setup: CamSetup, op: Operation, here=(0.0, 0.0)) -> T
     tool = setup.tool(op.tool_id)
     tp = Toolpath(op_id=op.id, tool_id=op.tool_id, name=op.name)
     if op.kind == 'instruction':                        # sans outil ni parcours
+        from .external import EXTERNAL, cycle_of
+        if op.instruction == EXTERNAL:                   # opération d'un plugin : écrite par son post-processeur
+            cy = cycle_of(op, setup.post)
+            if cy is None:
+                tp.warnings.append('opération d\'un plugin absent, ou d\'une autre machine : pas écrite')
+            else:
+                tp.cycles = [cy]
+            return tp
         from .instructions import INSTRUCTIONS, params_of
         if op.instruction not in INSTRUCTIONS:
             tp.warnings.append(f'instruction « {op.instruction} » inconnue')

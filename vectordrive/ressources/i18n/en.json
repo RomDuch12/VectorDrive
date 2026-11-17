@@ -7537,5 +7537,12 @@
  "Le fournisseur ne répond pas (HTTP {0}) : réessayez plus tard": "The provider is not answering (HTTP {0}): try again later",
  "Pas de connexion au fournisseur : vérifiez le réseau": "No connection to the provider: check the network",
  "Arrêt au prochain pas…": "Stopping at the next step…",
- "Assistant :": "Assistant:"
+ "Assistant :": "Assistant:",
+ "Opération de {0} : double clic pour la régler": "Operation from {0}: double-click to set it up",
+ "⟳ : opération d’un plugin absent, ou d’une autre machine": "⟳: operation of a missing plugin, or of another machine",
+ "⟳ : « {0} » ne reprend pas de formes ici": "⟳: “{0}” does not take shapes here",
+ "« {0} » : opération d’un plugin absent, ou d’une autre machine (Suppr la retire)": "“{0}”: operation of a missing plugin, or of another machine (Del removes it)",
+ "« {0} » se règle dans le panneau de son plugin": "“{0}” is set up in its plugin’s panel",
+ "« {0} » : une copie se fait dans le panneau de son plugin": "“{0}”: copies are made in its plugin’s panel",
+ "« {0} » se retire dans le panneau de son plugin": "“{0}” is removed in its plugin’s panel"
 }

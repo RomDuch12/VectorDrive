@@ -145,6 +145,8 @@ class Registry:
     #: export propre à une machine : clé de post → fonction(panneau FAO, parcours, réglage) → vrai si fait
     post_exports: dict = field(default_factory=dict)
     machines: list = field(default_factory=list)             # MachineSpec : fraiseuses et lasers du ruban FAO
+    #: opérations d'un plugin dans la liste des opérations FAO : clé → fournisseur (`cam.external`)
+    op_providers: dict = field(default_factory=dict)
 
 
 REGISTRY = Registry()
@@ -283,6 +285,18 @@ class Api:
     def add_post(self, key: str, label: str, write: Callable) -> None:
         """Post-processeur : write(toolpaths, setup, *, title, machine, stem, box_mm) → PostResult."""
         self._r.posts[key] = (label, write)
+
+    def add_operation_provider(self, key: str, provider) -> None:
+        """Opérations du plugin dans la liste des opérations du panneau FAO, à leur place dans le programme (une liste
+        unique : réponse du 17/11 à la question 48 ; `cam.external`). `provider.rows(dessin)` → [{'ref' (unique, gardé
+        dans le dessin), 'label', 'tool', 'tip', 'enabled'}] ; facultatifs : `provider.label` (colonne Stratégie),
+        `provider.posts` (clés des post-processeurs qui les écrivent ; vide : tous), `set_enabled(dessin, ref, oui)`,
+        `edit(fenêtre, ref)` (double clic, Modifier), `reload(fenêtre, ref, identifiants des formes)` → vrai si fait
+        (⟳), `remove(fenêtre, ref)` → vrai si retirée (Suppr). Une ligne neuve s'ajoute en fin de liste ; ↑ / ↓ la
+        placent entre les parcours ; le post-processeur reçoit, à son rang, un parcours dont le cycle est
+        `{'kind': 'instruction', 'name': 'externe', 'params': {'provider', 'ref', …}}`. Le plugin rafraîchit la liste
+        (`fenêtre.cam_panel.refresh()`) quand ses opérations changent."""
+        self._r.op_providers[key] = provider
 
     def add_post_provider(self, provider) -> None:
         """Post-processeurs tirés de fichiers machine (fiches d'un dossier) :

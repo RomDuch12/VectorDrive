@@ -6762,6 +6762,7 @@ class MainWindow(QMainWindow):
     def _cam_document_changed(self) -> None:
         """Nouveau document : réglage FAO relu, parcours effacés ; parcours
         TypeEdit à côté d'un VND signalés."""
+        self.cam_panel.toolpaths = []                    # (ceux de l'autre document : rien à y placer)
         self.cam_panel.refresh()
         self.cam_panel.display([])
         src = self.canvas.doc.source_path
@@ -8434,10 +8435,11 @@ class MainWindow(QMainWindow):
         if st:
             self._apply_view_state(st)
         self.layers_panel.refresh()
-        self.cam_panel.refresh()
+        self.cam_panel.toolpaths = list(t.toolpaths)     # ses parcours avant la liste : ceux des opérations de plugin
+        self.cam_panel.refresh()                         # s'y placent (pas dans ceux de l'autre dessin)
         self.cam_panel.ops.clearSelection()              # un autre dessin : les lignes choisies de l'autre ne comptent plus
         self._history_changed(hide=True)                 # … et la liste des modifications montrée était celle de l'autre
-        self.cam_panel.display(t.toolpaths)
+        self.cam_panel.display(self.cam_panel.toolpaths)
         if self.panel3d is not None:
             self.panel3d.stale = True
             if self.view_mode() == '3d':

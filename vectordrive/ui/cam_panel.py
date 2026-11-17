@@ -2605,7 +2605,7 @@ class CamPanel(QWidget):
         rest = {k: v for k, v in fao.items() if k not in ('operations', 'tools', 'post', 'post_options', 'arc_fit')}
         ops, before = {}, []
         for d in fao.get('operations') or []:
-            if isinstance(d, dict) and d.get('enabled', True):
+            if isinstance(d, dict) and d.get('enabled', True) and d.get('instruction') != 'externe':
                 mine = {k: v for k, v in d.items() if k not in ('enabled', 'name', 'restart_from', 'restart_to', 'restart_sig')}
                 own = strategies._digest((mine, tools.get(str(d.get('tool_id'))), tools.get(str(d.get('ref_tool_id')))))
                 # poche, seulement le reste : les opérations d'avant comptent aussi (retouchées, ou l'ordre changé)
@@ -2850,6 +2850,11 @@ class CamPanel(QWidget):
     def refresh(self) -> None:
         self._loading = True
         s = self.setup()
+        from ..cam import external
+        changed, gone = external.sync(s, self.doc, s.post)   # opérations des plugins (question 48 : liste unique)
+        if changed:
+            model.store(self.doc, s)                     # pas « modifié » : rien que l'utilisateur ait fait
+        stale = [t for t in getattr(self, 'toolpaths', []) if t.op_id in set(gone)]
         self.post.blockSignals(True)
         from ..cam import machines as MC
         known = MC.of_post(s.post)                       # la machine du post-processeur, si un plugin la déclare
@@ -2925,8 +2930,12 @@ class CamPanel(QWidget):
             if o.sources:
                 it.setIcon(swatch(self.doc.tool_color(o.sources[0])))
             self.ops.setItem(r, 0, it)
-            for c, v in enumerate((tr(model.op_kinds().get(o.kind, o.kind)),
-                                   toollib.short_label(t) if t else '—', f'{o.depth:g}'), start=1):
+            cols = (tr(model.op_kinds().get(o.kind, o.kind)), toollib.short_label(t) if t else '—', f'{o.depth:g}')
+            if external.is_external(o):                  # opération d'un plugin : ce qu'il en dit
+                cols = external.columns(o)
+                cols = (tr(cols[0]),) + cols[1:]
+                it.setToolTip(o.params.get('tip') or tr('Opération de {0} : double clic pour la régler').format(cols[0]))
+            for c, v in enumerate(cols, start=1):
                 cell = QTableWidgetItem(v)
                 if c == 2 and t is not None:
                     cell.setIcon(tool_icon(t, 12, 22))
@@ -2939,6 +2948,51 @@ class CamPanel(QWidget):
         self._sync_retarget()
         self._loading = False
         self._fill_ops3d()
+        paths = self._external_paths(s, stale)           # les parcours des opérations de plugin suivent la liste
+        if paths is not None:
+            self.display(paths)
+
+    def _external_paths(self, s, stale) -> list | None:
+        """Les parcours des opérations de plugin suivent la liste (question 48) : ceux d'une opération retirée
+        (`stale`) ou défaite (Ctrl+Z) ôtés, le libellé des autres à jour ; une opération de plugin cochée, écrite par
+        cette machine, qui n'a pas de parcours en reçoit un tout de suite, à sa place, dès qu'il y a des parcours —
+        rien à calculer : c'est un appel que son post-processeur écrit ; sa place dans la liste vaut donc dans le
+        programme sans « Calculer » (comptée calculée, comme par son formulaire). None : rien à changer."""
+        from ..cam import external
+        ops = {o.id: o for o in s.operations}
+        tps, changed = [], bool(stale)
+        for t in getattr(self, 'toolpaths', []):
+            if t in stale:
+                continue
+            cyc = t.cycles[0] if len(getattr(t, 'cycles', None) or []) == 1 else None
+            if isinstance(cyc, dict) and cyc.get('kind') == 'instruction' and cyc.get('name') == external.EXTERNAL:
+                o = ops.get(t.op_id)
+                if o is None or not external.is_external(o):
+                    changed = True                       # son opération n'est plus là (Ctrl+Z d'un ajout)
+                    continue
+                if cyc.get('params') != o.params or t.name != o.name:
+                    cyc['params'] = dict(o.params)       # renommée chez le plugin : le programme et la liste suivent
+                    t.name = o.name
+                    changed = True
+            tps.append(t)
+        added = set()
+        if tps:
+            have = {t.op_id for t in tps}
+            order = {o.id: i for i, o in enumerate(s.operations)}
+            for o in s.operations:
+                if external.is_external(o) and o.enabled and o.id not in have and external.active(o, s.post):
+                    tp = strategies.compute(self.doc, s, o)
+                    me = order[o.id]                     # juste avant le parcours de l'opération suivante
+                    nxt = next((i for i, t in enumerate(tps) if order.get(t.op_id, -1) > me), None)
+                    tps.insert(len(tps) if nxt is None else nxt, tp)
+                    added.add(o.id)
+        if added:                                        # calculées, comme par leur formulaire : pas de recalcul
+            done = self._memo('_computed')               # ni de « session reprise » pour elles
+            if done is not None:
+                self._remember('_computed', set(done) | added)
+            self._remember('_whole', set(self._memo('_whole') or ()) | added)
+            changed = True
+        return tps if changed else None
 
     # --- opérations et parcours dans un seul tableau : l'œil de la ligne ----------------------
     #: colonne de l'œil dans la liste des opérations (logique : la dernière ; montrée en tête de ligne)
@@ -3077,6 +3131,20 @@ class CamPanel(QWidget):
         s = self.setup()
         if not 0 <= r < len(s.operations):
             return False
+        from ..cam import external
+        if external.is_external(s.operations[r]):        # opération d'un plugin : il reprend lui-même les formes
+            if not external.active(s.operations[r], s.post):
+                self.win.statusBar().showMessage(tr('⟳ : opération d’un plugin absent, ou d’une autre machine'), 8000)
+                return False
+            o = s.operations[r]
+            ids = [it.id for it in self._selected()] if items is None else list(items)
+            done = bool(external.call(o, 'reload', self.win, external.ref_of(o), ids, default=False))
+            if done:
+                self.refresh()
+            else:
+                self.win.statusBar().showMessage(tr('⟳ : « {0} » ne reprend pas de formes ici').format(
+                    self.op_label(o)), 8000)
+            return done
         if items is None:
             items = [it.id for it in self._selected()]
         if not items:
@@ -3215,7 +3283,11 @@ class CamPanel(QWidget):
         s = self.setup()
         r = item.row()
         if r < len(s.operations):
-            s.operations[r].enabled = item.checkState() == Qt.CheckState.Checked
+            o = s.operations[r]
+            o.enabled = item.checkState() == Qt.CheckState.Checked
+            from ..cam import external
+            if external.is_external(o) and external.active(o, s.post):   # le plugin la (dé)coche chez lui aussi
+                external.call(o, 'set_enabled', self.doc, external.ref_of(o), o.enabled)
             self.save(s)
 
     def _row(self, table) -> int:
@@ -3548,6 +3620,15 @@ class CamPanel(QWidget):
             i = self._loose_row()                       # un parcours sans opération : en faire une (réponse 13)
             return self.program_form(self.toolpaths[i], exec_dialog) if i >= 0 else None
         op = s.operations[r]
+        from ..cam import external
+        if external.is_external(op):                    # opération d'un plugin : réglée dans son panneau
+            if not external.active(op, s.post):
+                self.win.statusBar().showMessage(tr('« {0} » : opération d’un plugin absent, ou d’une autre machine '
+                                                    '(Suppr la retire)').format(self.op_label(op)), 8000)
+            elif external.call(op, 'edit', self.win, external.ref_of(op), default=False) is False:
+                self.win.statusBar().showMessage(tr('« {0} » se règle dans le panneau de son plugin').format(
+                    self.op_label(op)), 8000)
+            return None
         if op.body3d_ref:                               # volume du dessin gardé : son numéro d'aujourd'hui
             from ..cam import mill3d
             now = mill3d.op_body(self.doc, op)
@@ -3713,6 +3794,11 @@ class CamPanel(QWidget):
         opérations liées : elles restent liées à elle)."""
         s, r, op = self._current_op()
         if op is None:
+            return None
+        from ..cam import external
+        if external.is_external(op):                    # opération d'un plugin : une par ligne de son plugin
+            self.win.statusBar().showMessage(tr('« {0} » : une copie se fait dans le panneau de son plugin').format(
+                self.op_label(op)), 8000)
             return None
         c = model.Operation(**{k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
                                for k, v in dataclasses.asdict(op).items() if k != 'id'})
@@ -4089,6 +4175,16 @@ class CamPanel(QWidget):
             if self._confirm_remove_loose(self.toolpaths[i]):
                 del self.toolpaths[i]
                 self.display(self.toolpaths)
+            return
+        from ..cam import external
+        if r >= 0 and external.is_external(s.operations[r]) and external.active(s.operations[r], s.post):
+            # opération d'un plugin : il la retire chez lui (plugin absent, autre machine : retirée comme une autre)
+            o = s.operations[r]
+            if external.call(o, 'remove', self.win, external.ref_of(o), default=False):
+                self.refresh()                                   # sa ligne disparue : l'opération aussi
+            else:
+                self.win.statusBar().showMessage(tr('« {0} » se retire dans le panneau de son plugin').format(
+                    self.op_label(o)), 8000)
             return
         if r >= 0:
             push = getattr(self.win, 'push_undo', None)

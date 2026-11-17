@@ -7040,3 +7040,14 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Une plaque de reprise posée (panneau FAO) n’est plus sur le BAT, ni imprimée, ni dans une image exportée : c’est un repère pour l’usinage. Sélectionnée seule, exprès, elle se montre encore.
 - La fenêtre d’impression ne propose plus son calque.
 - Sur un poste neuf, Dimensions (F2) est d’office au-dessus de Calques, les deux visibles. Un poste déjà utilisé garde sa disposition ; « En onglet avec » et « Au-dessus de », au clic droit, restent au choix.
+### v0.929.0 — Les opérations d’un plugin dans la liste du panneau FAO
+
+- Un plugin peut maintenant mettre ses propres opérations dans la liste des opérations du panneau FAO. On les place entre les parcours avec ↑ et ↓, et le programme les écrit à cet endroit.
+- La case les active ou les désactive ; double clic ou Modifier ouvre leur réglage dans le panneau du plugin ; Suppr les retire.
+- Sans le plugin, ou avec une autre machine, elles restent à leur place mais ne sont pas écrites (le compte rendu le dit) ; Suppr les retire alors comme une autre opération.
+- C’est la première étape de la liste unique : les opérations NeoDrive y viendront avec le plugin.
+### v0.930.0 — Les opérations d’un plugin écrites à leur place sans recalcul
+
+- Dès que des parcours sont calculés, une opération de plugin cochée a son parcours tout de suite, à sa place dans la liste : la placer avec ↑ et ↓ vaut dans le programme sans « Calculer ».
+- Une ligne de plugin remplacée par une autre garde sa place dans la liste ; son nom suit dans le programme.
+- Avec le plugin de la machine Datron, les opérations NeoDrive du dessin sont ces lignes : leurs appels sont écrits à cet endroit du programme principal.
