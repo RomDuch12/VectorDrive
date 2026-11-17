@@ -205,7 +205,7 @@ class Panel(unittest.TestCase):
         tp = path(Move('feed', -40.0, 20.0, -1.0))
         folder = tempfile.mkdtemp()
 
-        def fake(key, part, s, *, title='', stem='', box_mm=None, out_dir='', origin=None, machine=None):
+        def fake(key, part, s, *, title='', stem='', box_mm=None, out_dir='', origin=None, machine=None, doc=None, preview=False):
             return post.PostResult('G0', [], '.nc', 'ascii', [(stem + '.nc', 'G0\n')])
         with mock.patch.object(self.p, 'current_paths', lambda *a, **k: [tp]), \
                 mock.patch.object(post, 'posts', lambda d='': {'x': ('x', None)}), \

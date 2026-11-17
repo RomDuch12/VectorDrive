@@ -140,7 +140,7 @@ class TestPanel(unittest.TestCase):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         calls = []
 
-        def fake(key, part, s, *, title='', stem='', box_mm=None, out_dir='', origin=None, machine=None):
+        def fake(key, part, s, *, title='', stem='', box_mm=None, out_dir='', origin=None, machine=None, doc=None, preview=False):
             calls.append((stem, list(part)))
             return post.PostResult('G0', [f'note {stem}'], '.nc', 'ascii', [(stem + '.nc', 'G0\n')])
         self.p.group_dialog(how)

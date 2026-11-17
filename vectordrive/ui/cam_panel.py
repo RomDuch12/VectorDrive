@@ -2795,22 +2795,30 @@ class CamPanel(QWidget):
             tps = self._writable(self.checked_paths())
             if tps and self.outdated():
                 out['note'] = tr('Le dessin a changé depuis le calcul : « Mettre à jour » refait les parcours')
-        if not tps:
+        mine = post.doc_operations(key, self.doc)          # opérations propres à la machine (NeoDrive…)
+        if not tps and not mine:
             out['note'] = tr('Aucun parcours montré : « Mettre à jour » les calcule')
             return out
+        if not tps:
+            out['note'] = tr('Aucun parcours montré : le programme ne porte que les opérations propres à la machine')
         src = self.win.path or self.doc.source_path
         title = pathlib.Path(src).stem if src else 'VectorDrive'
         box = self._stock_box()
         origin = self.program_origin()
         how = getattr(s, 'output_orient', 'normal')
         files, warnings, ext, sections = [], [], '', []
+        mine_doc = self.doc
+        if mine and box is not None and how != 'normal':
+            mine_doc = None                              # elles ne suivent pas l'orientation de sortie
+            warnings.append(self._orient_note())
         try:
             if box is not None:
                 tps, origin, box = post.oriented(tps, how, (box[0], box[1], box[3], box[4]), origin, box)
-            for suffix, part in post.program_groups(tps, s.program_group, self._plan_of_path):
+            groups = post.program_groups(tps, s.program_group, self._plan_of_path)
+            for gi, (suffix, part) in enumerate(groups):
                 stem = f'{title}_{suffix}' if suffix else title
                 res = post.run(key, part, s, title=title, stem=stem, box_mm=box, out_dir=str(self.program_dir()),
-                               origin=origin)
+                               origin=origin, doc=mine_doc if gi == len(groups) - 1 else None, preview=True)
                 ext = ext or res.extension
                 warnings += list(res.warnings)
                 for sec in getattr(res, 'sections', None) or ():     # les plages données par le post : au rang de
@@ -6260,6 +6268,19 @@ class CamPanel(QWidget):
                     paths.append(g)
         return [pts for pts, _closed in strategies.polylines(paths, s.tolerance)]
 
+    def machine_ops(self) -> int:
+        """Les opérations propres à la machine que le dessin porte et que son post-processeur écrit lui-même
+        (NeoDrive sur le Datron) : avec elles, le programme s'écrit même sans parcours."""
+        from ..cam import post
+        s = self.setup()
+        available = post.posts(self.machines_dir())
+        key = s.post if s.post in available or s.post.startswith('mah:') else next(iter(available), '')
+        return post.doc_operations(key, self.doc)
+
+    def _orient_note(self) -> str:
+        return tr('Orientation de sortie : les opérations propres à la machine (NeoDrive…) ne sont pas écrites, '
+                  'elles ne suivent pas l\'orientation')
+
     def post_process(self) -> None:
         from ..cam import post
         tps = self.current_paths()                       # parcours d'avant : ancienne date, surface déplacée…
@@ -6269,7 +6290,9 @@ class CamPanel(QWidget):
                 QMessageBox.information(self, tr('Post-traitement'), tr(
                     'Rien à écrire : les parcours cochés sont ceux d\'opérations désactivées ou supprimées '
                     'depuis le calcul. Recalculer les parcours.'))
-            return
+                return
+            if not self.machine_ops():                   # opérations propres à la machine : un programme quand même
+                return
         s = self.setup()
         available = post.posts(self.machines_dir())
         key = s.post if s.post in available or s.post.startswith('mah:') else next(iter(available), '')
@@ -6286,14 +6309,20 @@ class CamPanel(QWidget):
         box = self._stock_box()
         origin = self.program_origin()
         how = getattr(s, 'output_orient', 'normal')
+        mine_doc, mine_note = self.doc, ''
+        if box is not None and how != 'normal' and self.machine_ops():
+            mine_doc, mine_note = None, self._orient_note()      # elles ne suivent pas l'orientation de sortie
+            if not tps:
+                QMessageBox.information(self, tr('Post-traitement'), mine_note)
+                return
         if box is not None:                              # orientation de sortie : ce qui est écrit, contrôlé et noté
             tps, origin, box = post.oriented(tps, how, (box[0], box[1], box[3], box[4]), origin, box)
-        probe = post.run(key, tps, s, title=title, stem='programme', box_mm=box, origin=origin)
+        probe = post.run(key, tps, s, title=title, stem='programme', box_mm=box, origin=origin, doc=mine_doc)
         if not probe.files:                              # export refusé (ex. oscillation trop rapide) : rien à écrire
             QMessageBox.warning(self, tr('Post-traitement'), tr('Aucun programme écrit.') + '\n\n' +
                                 '\n'.join('• ' + w for w in probe.warnings[:20]))
             return
-        if not self.preflight(tps, probe.warnings):
+        if tps and not self.preflight(tps, probe.warnings):      # sans parcours : rien à vérifier
             return
         from ..plugins import REGISTRY
         special = REGISTRY.post_exports.get(key) or REGISTRY.post_exports.get(post.family(key))
@@ -6310,9 +6339,11 @@ class CamPanel(QWidget):
             return
         out = pathlib.Path(path)
         self.win.settings.setValue('dossier/programmes', str(out.parent))
+        groups = post.program_groups(tps, s.program_group, self._plan_of_path)
         results = [(part, post.run(key, part, s, title=title, stem=f'{out.stem}_{suffix}' if suffix else out.stem, box_mm=box,
-                                   out_dir=str(out.parent), origin=origin))
-                   for suffix, part in post.program_groups(tps, s.program_group, self._plan_of_path)]
+                                   out_dir=str(out.parent), origin=origin,
+                                   doc=mine_doc if gi == len(groups) - 1 else None))      # une seule fois : à la fin
+                   for gi, (suffix, part) in enumerate(groups)]
         others = [out.with_name(name) for _p, r in results for name, _t in r.files if out.with_name(name) != out]
         others = [f.name for f in others if f.exists()]          # le nom choisi a déjà été confirmé par la fenêtre
         if others and len(results) > 1 and QMessageBox.question(
@@ -6327,13 +6358,13 @@ class CamPanel(QWidget):
                 f = out.with_name(name)
                 f.write_text(text, encoding=r.encoding, errors='replace', newline='\r\n')
                 written.append(f.name)
-            try:                                         # programme relu et comparé aux parcours
-                r.warnings = run(self.win, tr('Contrôle du programme écrit'), postcheck.verify, r.files, part, s,
-                                 origin) + r.warnings
+            try:                                         # programme relu et comparé aux parcours (sans les
+                r.warnings = run(self.win, tr('Contrôle du programme écrit'), postcheck.verify,  # opérations propres
+                                 getattr(r, 'check_files', None) or r.files, part, s, origin) + r.warnings  # à la machine)
             except Cancelled:
                 pass
         res = results[0][1]
-        res.warnings = [w for _p, r in results for w in r.warnings]
+        res.warnings = ([mine_note] if mine_note else []) + [w for _p, r in results for w in r.warnings]
         msg = tr('Programme écrit : {0}').format(', '.join(written))
         msg += '\n' + tr('Dossier : {0}').format(out.parent)
         hidden = self.hidden_active_ops()
@@ -6439,6 +6470,9 @@ class CamPanel(QWidget):
             except Cancelled:
                 problems = res.warnings
             warnings += [tr('Panneau {0} : {1}').format(p.rank, w) for w in problems]
+        if self.machine_ops():                           # NeoDrive… : pas dans les programmes par panneau
+            warnings.insert(0, tr('Opérations propres à la machine (NeoDrive…) : non écrites dans les programmes par '
+                                  'panneau'))
         when = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         text = PN.report(panels, cut, s, bounds, out.stem, names=names, overlap=overlap, where=where, when=when,
                          spec=TM.spec_from_settings(self.win.settings))

@@ -389,15 +389,18 @@ def oriented(toolpaths, how: str, rect, origin=None, box_mm=None) -> tuple:
     return out, new_origin, box
 
 
-def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str = 'programme',
-        box_mm=None, out_dir: str = '', origin=None) -> PostResult:
-    """Programme machine des parcours par le post-processeur `key` (d'un
-    plugin, ou tiré d'une fiche machine par le plugin qui sait la lire) ;
-    `out_dir` : dossier où les fichiers seront écrits — un post-processeur
-    qui le demande (`machine_dir`) reçoit ce dossier tel que la machine le
-    voit (F10 › FAO › chemins des programmes) ; `origin` : l'origine du
-    dessin (x, y), zéro du programme comme dans TypeEdit (parcours et brut
-    décalés)."""
+def _named(fn, name: str) -> bool:
+    """La fonction a-t-elle un paramètre de ce nom (pas seulement **kwargs) ?"""
+    import inspect
+    try:
+        return name in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _resolve(key: str, machine=None) -> tuple:
+    """(fonction du post-processeur `key`, fiche machine) : celui d'un plugin, ou celui que le plugin qui sait lire la
+    fiche machine désigne ; (None, fiche) s'il n'y en a pas."""
     fns = {k: v[1] for k, v in _plugin_posts().items()}
     fn = fns.get(key)
     if fn is None:                                     # fiche machine : son plugin dit quel post et quelle fiche
@@ -408,6 +411,37 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
                 machine = found if machine is None else machine
                 fn = target if callable(target) else fns.get(target)
                 break
+    return fn, machine
+
+
+def doc_operations(key: str, doc) -> int:
+    """Le nombre d'opérations propres à la machine que le dessin porte et que le post-processeur `key` écrit lui-même
+    dans le programme (attribut `doc_operations(dessin)` de sa fonction — les opérations NeoDrive sur le Datron) : avec
+    elles, un programme s'écrit même sans parcours. 0 sans elles, ou si le plugin est en défaut."""
+    if doc is None or not key:
+        return 0
+    try:
+        fn, _machine = _resolve(key)
+        count = getattr(fn, 'doc_operations', None)
+        return max(0, int(count(doc) or 0)) if callable(count) else 0
+    except Exception:                                  # noqa: BLE001 — un plugin en défaut : rien de plus
+        return 0
+
+
+def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str = 'programme',
+        box_mm=None, out_dir: str = '', origin=None, doc=None, preview: bool = False) -> PostResult:
+    """Programme machine des parcours par le post-processeur `key` (d'un
+    plugin, ou tiré d'une fiche machine par le plugin qui sait la lire) ;
+    `out_dir` : dossier où les fichiers seront écrits — un post-processeur
+    qui le demande (`machine_dir`) reçoit ce dossier tel que la machine le
+    voit (F10 › FAO › chemins des programmes) ; `origin` : l'origine du
+    dessin (x, y), zéro du programme comme dans TypeEdit (parcours et brut
+    décalés) ; `doc` : le dessin, donné au post-processeur qui a un paramètre
+    `doc` (et `origin`, s'il l'a aussi) pour qu'il écrive les opérations
+    propres à la machine que le dessin porte (voir `doc_operations`) ;
+    `preview` : un aperçu (fenêtre Programme), dit au post qui a ce paramètre
+    — il peut y écrire plus vite (calculs longs laissés à l'écriture)."""
+    fn, machine = _resolve(key, machine)
     if fn is None:
         raise PostError(f'post-processeur « {key} » absent (il est apporté par un plugin)')
     if origin is not None:                             # origine du dessin : zéro du programme
@@ -431,6 +465,12 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
         seen = ncpaths.to_machine(str(out_dir))
         if seen and seen.lower() != str(pathlib.Path(out_dir)).replace('/', '\\').lower():
             extra['machine_dir'] = seen                  # sinon : noms seuls, à côté du travail
+    if doc is not None and _named(fn, 'doc'):           # le dessin : ses opérations propres à la machine
+        extra['doc'] = doc
+        if _named(fn, 'origin'):                       # leur zéro : l'origine du dessin (les parcours sont décalés)
+            extra['origin'] = origin
+    if preview and _named(fn, 'preview'):
+        extra['preview'] = True
     res = fn(toolpaths, setup, title=title, machine=machine, stem=stem, box_mm=box_mm, **extra)
     if not res.files and res.text:                     # texte vide : export refusé ou rien à écrire
         res.files = [(stem + res.extension, res.text)]

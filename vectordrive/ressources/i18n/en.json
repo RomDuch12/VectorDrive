@@ -7496,5 +7496,8 @@
  "Numéros de ligne": "Line numbers",
  "Retour à la ligne": "Word wrap",
  "Couleurs du langage": "Syntax colours",
- "Replier chaque parcours": "Fold each toolpath"
+ "Replier chaque parcours": "Fold each toolpath",
+ "Aucun parcours montré : le programme ne porte que les opérations propres à la machine": "No toolpath shown: the program only holds the machine-specific operations",
+ "Orientation de sortie : les opérations propres à la machine (NeoDrive…) ne sont pas écrites, elles ne suivent pas l'orientation": "Output orientation: the machine-specific operations (NeoDrive…) are not written, they do not follow the orientation",
+ "Opérations propres à la machine (NeoDrive…) : non écrites dans les programmes par panneau": "Machine-specific operations (NeoDrive…): not written in the per-panel programs"
 }

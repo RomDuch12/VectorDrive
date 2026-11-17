@@ -7019,3 +7019,9 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 
 - Un bouton apporté par un plugin peut ouvrir l'onglet **Programme** directement sur sa partie (dépliée, la fenêtre Programme devant), même quand la machine du dessin n'est pas encore la sienne ; elle se recache quand la machine change.
 - Au centre (▣), une partie qui apparaît ou disparaît refait aussitôt le partage : le texte seul au centre et les parties dans la colonne, ou tout le panneau au centre.
+### v0.925.0 — Le programme reçoit les opérations propres à la machine
+
+- Un post-processeur peut écrire dans le programme les opérations propres à sa machine que le dessin porte (avec le plugin de l’atelier : les opérations NeoDrive du Datron, à la suite des parcours). La fenêtre Programme les montre, « Post-traitement » les écrit.
+- Un dessin qui n’a que de telles opérations, sans parcours, donne quand même un programme.
+- Programme en plusieurs fichiers (par plan, par parcours) : elles ne sont écrites qu’une fois, dans le dernier fichier. Avec une orientation de sortie, elles ne sont pas écrites (elles ne la suivent pas) : un avertissement le dit ; de même pour la parcellisation.
+- La relecture du programme écrit reste comparée aux parcours, sans ces opérations.
