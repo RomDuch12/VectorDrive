@@ -901,6 +901,8 @@ class Canvas(QWidget):
             self._paint_points(p)
         if self.cross_marks:
             self._paint_cross_marks(p)
+        if getattr(self, 'flash_paths', None) and getattr(self, '_flash_on', False):
+            self._paint_flash(p)
         if not (self.tool_obj is not None and type(self.tool_obj).__name__ == 'NodeTool'):
             self._paint_selection(p)
 
@@ -1058,6 +1060,53 @@ class Canvas(QWidget):
             p.setBrush(fill)
             for z in zones[:2000]:
                 p.drawPolygon(QPolygonF([QPointF(x, y) for x, y in z['pts']]))
+        p.restore()
+
+    # --- contours qui clignotent (formes à la base d'un parcours, `ui.fao_guard`) --------------------------------
+    def flash(self, paths, ms: int = 2000) -> None:
+        """Les contours `paths` (tracés du dessin) clignotent `ms` millisecondes par-dessus le dessin."""
+        from PySide6.QtCore import QTimer
+        self.flash_paths = [q for q in paths or [] if q is not None]
+        timer = getattr(self, '_flash_timer', None)
+        if not self.flash_paths:                         # rien (ou un autre dessin) : arrêté
+            if timer is not None:
+                timer.stop()
+            self._flash_on = False
+            self.update()
+            return
+        qp = QPainterPath()                              # un seul tracé, fait une fois (pas à chaque peinture)
+        for q in self.flash_paths[:5000]:
+            qp.addPath(to_qpath(q))
+        self._flash_qpath, self._flash_smooth = qp, len(self.flash_paths) <= 300
+        if timer is None:
+            timer = self._flash_timer = QTimer(self)
+            timer.setInterval(250)
+            timer.timeout.connect(self._flash_tick)
+        self._flash_left = max(1, int(ms) // 250)
+        self._flash_on = True
+        timer.start()
+        self.update()
+
+    def _flash_tick(self) -> None:
+        self._flash_left -= 1
+        self._flash_on = not self._flash_on and self._flash_left > 0
+        if self._flash_left <= 0:
+            self._flash_timer.stop()
+            self.flash_paths = []
+            self._flash_on = False
+        self.update()
+
+    def _paint_flash(self, p: QPainter) -> None:
+        from .cam_panel import COLOUR_BLIND
+        p.save()
+        smooth = getattr(self, '_flash_smooth', True)    # beaucoup de contours : sans lissage, trait fin
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, smooth)
+        p.setTransform(self.view())
+        pen = QPen(QColor('#d55e00' if COLOUR_BLIND['on'] else '#f03e3e'), 3.0 if smooth else 2.0)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(self._flash_qpath)
         p.restore()
 
     def _paint_cross_marks(self, p: QPainter) -> None:

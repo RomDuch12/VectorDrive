@@ -238,6 +238,10 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Le plus gros outil adapté qui atteint tous les détails (outils du document et Mes outils de la '
               'machine) est choisi d’office ; la vérification s’écrit sous l’outil'),
         B('fao/rapides', 'Afficher les rapides', True),
+        C('fao/formes_parcours', 'Forme à la base d’un parcours calculé, déplacée ou modifiée', 'clignoter',
+          [('clignoter', 'Son contour clignote 2 s (Ctrl+Z pour revenir)'),
+           ('bloquer', 'Bloquée : la modification est défaite aussitôt'),
+           ('rien', 'Aucune alarme (comme le mode FAO de TypeEdit)')]),
         B('fao/panneaux_onglet', 'Onglet CAD : ranger les panneaux FAO ; un onglet FAO les rétablit', True),
         F('fao/simulation_pas', 'Pas de la simulation (0 = automatique)', 0.0, 0, 2, ' mm'),
         F('fao/vitesse_rapide', 'Temps estimé : vitesse des rapides', 15000.0, 100, 200000, ' mm/min', 0),

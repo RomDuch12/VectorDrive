@@ -6155,6 +6155,9 @@ class CamPanel(QWidget):
         n = len(V.refresh_dates(self.doc, now))
         self.win.canvas.invalidate()
         self.win._on_doc_changed()
+        guard = getattr(self.win, 'fao_guard', None)
+        if guard is not None:                            # la date du jour avant le calcul : pas une alarme
+            guard.forget()
         self.win.statusBar().showMessage(tr('Date du jour mise dans {0} texte(s)').format(n), 5000)
         return n
 

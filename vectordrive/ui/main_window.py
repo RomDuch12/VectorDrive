@@ -3105,6 +3105,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, d9)
         d9.setVisible(False)
         self.dock_history = d9
+        from .fao_guard import Guard                     # formes à la base d'un parcours : l'alarme (17/11, 0 h 15)
+        self.fao_guard = Guard(self)
         self.cam_panel.ops.itemSelectionChanged.connect(lambda: self.program_panel.follow_op())
         for dk in (d4, d5):                              # détachés : légèrement translucides (Options, FAO)
             dk.topLevelChanged.connect(lambda _f: self.apply_cam_opacity())
@@ -3705,6 +3707,9 @@ class MainWindow(QMainWindow):
                 self._refresh3d.start()
         self.modified = True
         self._title()
+        guard = getattr(self, 'fao_guard', None)
+        if guard is not None:                            # une forme d'un parcours déplacée ou modifiée ?
+            guard.changed()
         self.program_changed()                           # le programme montré « en direct » suit le dessin
         self.layers_panel.refresh()
         self._layer_status()
@@ -7666,6 +7671,9 @@ class MainWindow(QMainWindow):
             self._undo.pop(0)
         self._redo.clear()
         self._history_changed()
+        guard = getattr(self, 'fao_guard', None)
+        if guard is not None:                            # les formes des parcours avant la modification
+            guard.before_change()
 
     def one_undo(self, label: str | None = None, **kw):
         """Un seul pas d'annulation pour plusieurs modifications qui en poseraient chacune un (formulaire commun des
@@ -7822,6 +7830,10 @@ class MainWindow(QMainWindow):
         self.canvas.invalidate()
         self._on_selection()
         self._on_doc_changed()
+        guard = getattr(self, 'fao_guard', None)
+        if guard is not None:                            # défaire, refaire : pas une modification à signaler
+            guard.forget()
+            self.canvas.flash([])                        # ni un contour qui clignoterait à l'ancienne place
 
     def _counter_snapshot(self, s) -> tuple:
         out = self._snapshot() + (self._label_of(s),)
@@ -8326,6 +8338,10 @@ class MainWindow(QMainWindow):
         self._undo, self._redo = t.undo, t.redo
         self._format_brush = None
         self.canvas.set_document(t.doc)
+        guard = getattr(self, 'fao_guard', None)
+        if guard is not None:                            # un autre dessin : rien à comparer, plus rien ne clignote
+            guard.forget()
+            self.canvas.flash([])
         if keep_view and t.view is not None:
             self.canvas.scale, self.canvas.ox, self.canvas.oy = t.view
             self.canvas.viewChanged.emit()
