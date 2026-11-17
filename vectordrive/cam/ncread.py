@@ -427,7 +427,8 @@ def proposal(info: dict, label: str = ''):
     if num:
         t.number = int(num)
     t.ref, t.vendor = str(info.get('ref') or ''), str(info.get('vendor') or '')
-    for k, attr in (('spindle', 'spindle'), ('feed', 'feed'), ('plunge', 'plunge'), ('ramp', 'ramp_feed')):
+    for k, attr in (('spindle', 'spindle'), ('feed', 'feed'), ('plunge', 'plunge'), ('ramp', 'ramp_feed'),
+                    ('finish_feed', 'finish_feed')):
         try:
             v = float(info.get(k) or 0.0)
         except (TypeError, ValueError):

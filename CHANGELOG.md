@@ -7051,3 +7051,11 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Dès que des parcours sont calculés, une opération de plugin cochée a son parcours tout de suite, à sa place dans la liste : la placer avec ↑ et ↓ vaut dans le programme sans « Calculer ».
 - Une ligne de plugin remplacée par une autre garde sa place dans la liste ; son nom suit dans le programme.
 - Avec le plugin de la machine Datron, les opérations NeoDrive du dessin sont ces lignes : leurs appels sont écrits à cet endroit du programme principal.
+### v0.931.0 — Panneau Couleur ; avances NeoDrive ; vis hors de la découpe des gravures
+
+- Nouveau panneau de colonne « Couleur » (clic droit sur la barre ou l’onglet d’un panneau, tableau Gauche / Masqué / Droite ; à gauche d’office) : la palette des couleurs du dessin, avec le nombre d’objets de chacune.
+- Un clic sur une couleur colore les objets sélectionnés (groupes compris, un seul Ctrl+Z) et en fait la couleur courante, celle des objets dessinés ensuite ; sans sélection, il choisit seulement la couleur courante.
+- La couleur courante est en gras, celles de la sélection sont cochées ; clic droit : changer la couleur de l’outil.
+- Un outil importé de NeoDrive garde ses deux avances : le cadre Ébauche prend son avance d’ébauche, le cadre Finition son avance de finition (avant : l’avance de finition partout). L’export vers NeoDrive les rend toutes deux.
+- Plaque de reprise : quand des gravures sont découpées dans le brut (la découpe suit le cadre de chacune), « Les vis vont » choisit où vont les vis, selon le cahier des charges du client : partout sous le brut (comme avant), dans le squelette qui reste, hors de la découpe de chaque gravure, ou au dos de chaque gravure (vis par brut = vis par gravure). La largeur de la découpe (Ø de l’outil) se règle ; des gravures dont les découpes se touchent sont découpées ensemble.
+- Avec le plugin de la machine Datron : un sous-programme par parcours, la séquence passe de l’avance d’ébauche à celle de finition ; la colonne SimPL du panneau des opérations NeoDrive devient une fenêtre.

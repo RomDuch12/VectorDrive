@@ -305,7 +305,10 @@ class LayersPanel(QWidget):
         self._loading = False
         self._sync_header()
         self._apply_filter()
-        self.win.canvas.current_tool_index = active.tool
+        key = (id(self.doc), active.id, active.tool)
+        if getattr(self, '_tool_from', None) != key:     # un autre calque, ou son outil changé : sa couleur ; sinon la
+            self._tool_from = key                        # couleur courante choisie dans le panneau Couleur est gardée
+            self.win.canvas.current_tool_index = active.tool
         if hasattr(self.win, 'lbl_layer'):
             self.win._layer_status()
         if hasattr(self.win, '_refresh_layer_tabs'):

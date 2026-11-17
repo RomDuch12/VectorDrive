@@ -23,6 +23,11 @@ PREDRILL_FROM = 6.0
 MAX_DEPTH, KEPT = 6.0, 0.5
 #: deux trous sont « du même diamètre » à ceci près (mm) : 4 et 4,05
 SAME = 0.11
+#: où vont les vis quand des gravures sont découpées dans le brut (réponse du 17/11 à la question 45 : la forme
+#: découpée est le cadre englobant de chaque logo ; les vis au choix, selon le cahier des charges du client) : ''
+#: partout sous le brut (comme avant), 'squelette' dans ce qui reste du brut, hors de la découpe de chaque gravure,
+#: 'gravures' au dos de chaque gravure, dans son cadre
+SCREWS_IN = ('', 'squelette', 'gravures')
 
 
 def thread_for(diameter: float) -> str:
@@ -106,6 +111,8 @@ class Spec:
     common_only: bool = True        # seulement les trous du Ø le plus fréquent (`common`)
     auto_depth: bool = True         # profondeur d'après l'épaisseur du brut (`depth_for`)
     machined: float = 3.0           # ce que l'usinage de la face enlève (pour `auto_depth`)
+    screws_in: str = ''             # `SCREWS_IN` (question 45)
+    cut_width: float = 2.0          # largeur de la découpe des gravures, autour de leur cadre : Ø de l'outil
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -147,6 +154,8 @@ class Spec:
                     pass
         out.per_blank = max(0, out.per_blank)
         out.mirror = out.mirror if out.mirror in ('', 'x', 'y') else ''
+        out.screws_in = out.screws_in if out.screws_in in SCREWS_IN else ''
+        out.cut_width = max(0.0, out.cut_width)
         from .model import THREADS
         out.thread = out.thread if out.thread in THREADS else ''
         return out
@@ -344,6 +353,13 @@ class Placement:
     """Ce que donne la plaque pour chaque brut : ses trous de vis (déjà retournés s'il le faut)."""
     blanks: list = field(default_factory=list)       # [(objet brut, [Hole…])] dans l'ordre des bruts
     thread: str = ''
+    #: les gravures découpées dans les bruts (question 45) : [(cadre (x0, y0, x1, y1), vis dans ce cadre)]
+    frames: list = field(default_factory=list)
+    screws_in: str = ''
+
+    def bare(self) -> list:
+        """Les cadres des gravures sans aucune vis, quand les vis vont dans les gravures."""
+        return [f for f, n in self.frames if not n] if self.screws_in == 'gravures' else []
 
     def count(self) -> int:
         return sum(len(h) for _b, h in self.blanks)
@@ -453,22 +469,112 @@ def frame_of(holes_: list[Hole]):
     return (min(h.x for h in holes_), min(h.y for h in holes_), max(h.x for h in holes_), max(h.y for h in holes_))
 
 
-def layout(blanks, plate_items, spec: Spec, skip=()) -> Placement:
+def engraving_items(doc) -> list:
+    """Les objets où chercher les gravures découpées dans les bruts (question 45) : ceux des calques montrés, sans
+    les plaques de reprise posées ni les trous de fixation déjà ajoutés."""
+    return [it for L in doc.layers if getattr(L, 'visible', True) and not is_plate_layer(L)
+            and not (getattr(L, 'extra', None) or {}).get(MADE_KEY) for it in L.items]
+
+
+def _bbox_of(leaves):
+    boxes = []
+    for it in leaves:
+        try:
+            boxes.append(tuple(float(v) for v in it.bbox()))
+        except (AttributeError, NotImplementedError, TypeError, ValueError):
+            continue
+    boxes = [b for b in boxes if b[2] >= b[0] and b[3] >= b[1]]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def logo_frames(poly, items, exclude=(), gap: float = 0.0) -> list:
+    """Les cadres (x0, y0, x1, y1) des gravures posées dans le brut `poly` (question 45 : la forme découpée de chaque
+    logo est son cadre englobant). Une gravure : un objet de premier niveau de `items` (un groupe en entier), dont le
+    cadre tient dans celui du brut et touche le brut ; un groupe qui contient un objet de `exclude` (le brut, la plaque,
+    ses trous) est déplié. Deux cadres dont les découpes, de largeur `gap`, se touchent n'en font qu'un : ils sont
+    découpés ensemble."""
+    from shapely.geometry import box as sbox
+    from ..core.document import Group
+    exclude = set(exclude)
+    x0, y0, x1, y1 = poly.bounds
+    found = []
+
+    def walk(it):
+        if not getattr(it, 'visible', True) or getattr(it, 'id', None) in exclude:
+            return
+        if isinstance(it, Group):
+            leaves = list(_leaves(it.children))
+            if any(x.id in exclude for x in leaves):
+                for ch in it.children:
+                    walk(ch)
+                return
+        else:
+            leaves = [it]
+        b = _bbox_of(leaves)
+        if b is None or not (b[0] >= x0 - 1e-6 and b[1] >= y0 - 1e-6 and b[2] <= x1 + 1e-6 and b[3] <= y1 + 1e-6):
+            return
+        if (b[2] - b[0]) * (b[3] - b[1]) >= (x1 - x0) * (y1 - y0) - 1e-6:
+            return                                       # le brut lui-même, ou ce qui le couvre en entier
+        if poly.intersects(sbox(*b)):
+            found.append(b)
+    for it in items or ():
+        walk(it)
+    gap = max(0.0, float(gap))
+    merged = True
+    while merged:                                        # découpes qui se touchent : un seul cadre
+        merged = False
+        for i in range(len(found)):
+            for j in range(i + 1, len(found)):
+                a, c = found[i], found[j]
+                if a[0] - gap <= c[2] + gap and c[0] - gap <= a[2] + gap and \
+                        a[1] - gap <= c[3] + gap and c[1] - gap <= a[3] + gap:
+                    found[i] = (min(a[0], c[0]), min(a[1], c[1]), max(a[2], c[2]), max(a[3], c[3]))
+                    del found[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return sorted(found, key=lambda b: (round(b[1], 3), round(b[0], 3)))
+
+
+def layout(blanks, plate_items, spec: Spec, skip=(), logos=None) -> Placement:
     """Pour chaque brut (contour fermé) : ses trous de vis sur la plaque `plate_items`, d'après le réglage `spec`.
     Une forme faite de plusieurs contours séparés compte pour autant de bruts. `skip` : objets de la plaque à laisser
-    (les cercles des bruts choisis, quand ils sont sur le calque de la plaque)."""
+    (les cercles des bruts choisis, quand ils sont sur le calque de la plaque). `logos` : les objets où chercher les
+    gravures découpées dans les bruts (`engraving_items`) — avec `spec.screws_in` (question 45), les vis vont dans le
+    squelette, hors de la découpe de chaque gravure (son cadre élargi de `spec.cut_width`), ou dans chaque gravure."""
     cand = plate_holes(plate_items, spec.min_diameter, spec.max_diameter, skip)
     if spec.common_only:                                 # les trous de vis : les plus nombreux
         cand = common(cand)
-    out = Placement()
+    out = Placement(screws_in=spec.screws_in if logos is not None else '')
     used = []
+    exclude = {b.id for b in blanks} | plate_parts(plate_items, spec.min_diameter, spec.max_diameter) | set(skip)
+    exclude |= {h_it.id for h_it in _leaves(plate_items)}
     for b in blanks:
         poly = blank_polygon(b)
         if poly is None:
             continue
         for part in getattr(poly, 'geoms', [poly]):     # plusieurs contours séparés : un brut chacun
-            got = choose(part, cand, spec.per_blank, spec.margin)
+            frames = logo_frames(part, logos, exclude, spec.cut_width) if out.screws_in else []
+            if out.screws_in == 'gravures' and frames:   # au dos de chaque gravure, dans son cadre
+                from shapely.geometry import box as sbox
+                for f in frames:
+                    got = choose(part.intersection(sbox(*f)), cand, spec.per_blank, spec.margin)
+                    used += got
+                    out.blanks.append((b, mirrored(got, part, spec.mirror)))
+                    out.frames.append((f, len(got)))
+                continue
+            zone = part
+            if out.screws_in == 'squelette' and frames:  # hors de la découpe de chaque gravure
+                from shapely.geometry import box as sbox
+                from shapely.ops import unary_union
+                cut = unary_union([sbox(*f).buffer(max(0.0, spec.cut_width), join_style=2) for f in frames])
+                zone = part.difference(cut)
+            got = [] if zone.is_empty else choose(zone, cand, spec.per_blank, spec.margin)
             used += got
             out.blanks.append((b, mirrored(got, part, spec.mirror)))
+            out.frames += [(f, 0) for f in frames]
     out.thread = spec.thread or (thread_for(min(h.diameter for h in used)) if used else '')
     return out

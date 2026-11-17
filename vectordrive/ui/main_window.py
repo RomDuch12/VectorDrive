@@ -3118,6 +3118,17 @@ class MainWindow(QMainWindow):
         d10.setVisible(False)
         d10.visibilityChanged.connect(lambda on: self.assistant_panel() if on else None)   # remis par la session aussi
         self.dock_assistant = d10
+        # « Couleur » (demande du 15/11, 20 h 02 ; réponse du 17/11 à la question 46 : la palette) : les couleurs du
+        # dessin, un clic colore la sélection et choisit la couleur courante ; à gauche d'office, masqué tant qu'on ne
+        # le demande pas
+        from .color_panel import ColorPanel
+        self.color_panel = ColorPanel(self)
+        d11 = QDockWidget(tr('Couleur'), self)
+        d11.setObjectName('couleur')
+        d11.setWidget(self.color_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, d11)
+        d11.setVisible(False)
+        self.dock_color = d11
         from .fao_guard import Guard                     # formes à la base d'un parcours : l'alarme (17/11, 0 h 15)
         self.fao_guard = Guard(self)
         self.cam_panel.ops.itemSelectionChanged.connect(lambda: self.program_panel.follow_op())
@@ -3518,6 +3529,9 @@ class MainWindow(QMainWindow):
 
     def _on_selection(self) -> None:
         self.canvas._hover_cursor_after_change()         # Suppr sur une poignée : la double flèche ne reste pas
+        palette = getattr(self, 'color_panel', None)
+        if palette is not None:                          # le panneau Couleur, s'il est montré : les couleurs choisies
+            palette.sync()
         pb = getattr(self, '_props_brush', None)
         if pb is not None:                               # pinceau chargé : les objets cliqués prennent les propriétés
             targets = [t for t in self.canvas.selection if t is not pb[0]]
@@ -3732,6 +3746,9 @@ class MainWindow(QMainWindow):
         L = doc.active_layer
         name = next((t.name for t in doc.tools if t.index == L.tool), tr('Outil {0}').format(L.tool))
         self.lbl_layer.setText(tr('Calque : {0}  ·  {1}').format(L.name, name))
+        palette = getattr(self, 'color_panel', None)
+        if palette is not None:                          # le panneau Couleur, s'il est montré, suit le dessin
+            palette.sync()
 
     # --- accrochage, options ------------------------------------------------
     #: accrochage d'office : nœuds et intersections (et guides, posés exprès) ; sans la grille, qui sinon

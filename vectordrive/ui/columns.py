@@ -34,7 +34,7 @@ TAB_MODES = ('court', 'entier')
 #: icône d'onglet des panneaux du cœur, par nom de panneau
 TAB_ICONS = {'dims': 'tab_dims', 'layers': 'tab_layers', 'symbols': 'tab_library', 'fao': 'tab_paths',
              'fao_liste': 'tab_ops', 'programme': 'tab_program', 'polices': 'tab_fonts',
-             'assistant': 'tab_assistant'}
+             'assistant': 'tab_assistant', 'couleur': 'themes'}
 #: mots de liaison jamais laissés au bout d'un libellé court tiré d'un titre
 LINK_WORDS = frozenset(('et', 'de', 'du', 'des', 'la', 'le', 'les', 'à', 'au', 'aux', 'en', 'pour', 'sur', 'ou',
                         '—', '-', '&', 'and', 'of', 'the', 'or', 'for'))
@@ -80,7 +80,7 @@ def tab_icon(dock):
 AREAS = {'gauche': Qt.DockWidgetArea.LeftDockWidgetArea, 'droite': Qt.DockWidgetArea.RightDockWidgetArea}
 #: panneaux montrés seulement à la demande (F3, le tableau des panneaux, leur commande) : une colonne rouverte sans
 #: rien de retenu pour elle ne les fait pas paraître ; montrés puis cachés avec leur colonne, ils reviennent avec elle
-ON_DEMAND = ('polices', 'accrochages', 'historique', 'assistant')
+ON_DEMAND = ('polices', 'accrochages', 'historique', 'assistant', 'couleur')
 KEY = 'panneaux_colonnes'
 #: réglage : le rangement d'office de Dimensions (F2) et Calques, décidé une fois par poste - 'dessus' (poste neuf,
 #: depuis 0.928.0 : Dimensions au-dessus de Calques, réponse du 17/11 à la question 36) ou 'onglet' (poste déjà servi :

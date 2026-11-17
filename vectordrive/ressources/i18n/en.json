@@ -7544,5 +7544,18 @@
  "« {0} » : opération d’un plugin absent, ou d’une autre machine (Suppr la retire)": "“{0}”: operation of a missing plugin, or of another machine (Del removes it)",
  "« {0} » se règle dans le panneau de son plugin": "“{0}” is set up in its plugin’s panel",
  "« {0} » : une copie se fait dans le panneau de son plugin": "“{0}”: copies are made in its plugin’s panel",
- "« {0} » se retire dans le panneau de son plugin": "“{0}” is removed in its plugin’s panel"
+ "« {0} » se retire dans le panneau de son plugin": "“{0}” is removed in its plugin’s panel",
+ "Un clic : les objets sélectionnés prennent cette couleur, qui devient la couleur courante (celle des objets dessinés ensuite) ; clic droit : changer la couleur": "One click: the selected objects take this colour, which becomes the current colour (that of the objects drawn next); right-click: change the colour",
+ "{0} objet(s) sélectionné(s) : un clic les colore": "{0} object(s) selected: one click colours them",
+ "Rien de sélectionné : un clic choisit la couleur courante": "Nothing selected: one click chooses the current colour",
+ "Changer la couleur…": "Change the colour…",
+ "Couleur de l’outil {0}": "Colour of tool {0}",
+ "Couleur de l’outil": "Tool colour",
+ "Des gravures découpées dans le brut (la découpe suit le cadre de chacune) : les vis vont dans le squelette qui reste, ou au dos de chaque gravure, selon le cahier des charges du client": "Engravings cut out of the blank (the cut follows the frame of each): the screws go in the remaining skeleton, or in the back of each engraving, as the customer’s specification requires",
+ "Les vis vont": "Screws go",
+ "Autour du cadre de chaque gravure : le Ø de l’outil de découpe": "Around the frame of each engraving: the Ø of the cutting tool",
+ "Largeur de la découpe des gravures (mm)": "Width of the engravings’ cut (mm)",
+ "{0} gravures : {1} trous de vis, filetage {2}.": "{0} engravings: {1} screw holes, thread {2}.",
+ "{0} gravures sans aucun trou de la plaque dessous (trop petites, ou à déplacer).": "{0} engravings without any plate hole under them (too small, or to be moved).",
+ "{0} gravures découpées : les vis restent hors de leur découpe.": "{0} engravings cut out: the screws stay clear of their cut."
 }

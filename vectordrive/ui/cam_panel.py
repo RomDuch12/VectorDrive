@@ -4942,7 +4942,7 @@ class CamPanel(QWidget):
                 blanks = FX.find_blanks(sel, plate_items, spec.min_diameter, spec.max_diameter)
             skip = FX.skip_for(list(sel) + list(plate_items), blanks)   # les cercles des bruts : pas des trous
         st.setValue(self.FIXTURE_KEY, json.dumps(spec.to_dict()))
-        pl = FX.layout(blanks, plate_items, spec, skip)
+        pl = FX.layout(blanks, plate_items, spec, skip, logos=FX.engraving_items(self.doc))   # question 45
         if not pl.count() or pl.thread not in model.THREADS:
             self.info.setText(tr('Aucun trou de la plaque sous les bruts : rien n\'est ajouté.') if not pl.count()
                               else tr('Aucun filetage ne passe dans les trous de la plaque : choisissez-le.'))

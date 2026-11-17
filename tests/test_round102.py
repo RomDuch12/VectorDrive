@@ -118,6 +118,7 @@ class TestDialog(unittest.TestCase):
     def tearDown(self):
         self.w.modified = False
         self.w.close()
+        pathlib.Path(os.environ['VECTORDRIVE_TOOLS']).unlink(missing_ok=True)   # pas laissée aux essais suivants
 
     def test_manager(self):
         d = self.w.cam_panel.tool_library(exec_dialog=False)

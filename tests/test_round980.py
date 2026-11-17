@@ -39,6 +39,7 @@ class ToolDrawings(unittest.TestCase):
         for t in getattr(self.w, 'docs', []):
             t.modified = False
         self.w.close()
+        pathlib.Path(os.environ['VECTORDRIVE_TOOLS']).unlink(missing_ok=True)   # pas laissée aux essais suivants
 
     def library(self):
         d = self.w.cam_panel.tool_library(exec_dialog=False)

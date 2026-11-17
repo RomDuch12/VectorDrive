@@ -157,12 +157,13 @@ def from_neodrive(key: str, d: dict) -> CamTool:
     if dessins.get('famille'):
         geometry.setdefault('famille', dessins['famille'])
     ref = str(d.get('reference') or d.get('article_nr') or '')
+    rough, fin = _num(d.get('feed_roughing')), _num(d.get('feed_finishing'))   # Q31 : cadre Ébauche, cadre Finition
     return CamTool(
         name=name, kind=kind, diameter=dia or 1.0, tip=tipd if kind == 'conique' else 0.0,
         angle=angle if kind in ('conique', 'foret') else 0.0, flutes=int(_num(g.get('NumberOfFlutes'), 1) or 1),
         cut_length=_num(g.get('FluteLength')) or _num(d.get('max_depth'), 3.0), ref=ref.split(' / ')[0],
         vendor=str(d.get('vendor') or ''), spindle=_num(d.get('rpm'), 20000.0),
-        feed=_num(d.get('feed_finishing')) or _num(d.get('feed_roughing'), 600.0),
+        feed=rough or fin or 600.0, finish_feed=fin if rough and fin and fin != rough else 0.0,
         plunge=_num(d.get('feed_plunge'), 200.0), ramp_feed=_num(d.get('feed_ramp')),
         step_down=_num(d.get('max_depth')) and min(_num(d.get('max_depth')), 1.0) or 0.2,
         notes=str(d.get('notes') or ''), geometry=geometry,
@@ -176,7 +177,7 @@ def to_neodrive(t: CamTool) -> tuple[str, dict]:
     g = {'Diameter': t.diameter, 'TipAngle': t.angle if t.kind in ('conique', 'foret') else 0.0,
          'TipDiameter': t.tip if t.kind == 'conique' else t.diameter, 'NumberOfFlutes': t.flutes,
          'FluteLength': t.cut_length}
-    return key, {'name': t.name, 'reference': t.ref, 'rpm': t.spindle, 'feed_finishing': t.feed,
+    return key, {'name': t.name, 'reference': t.ref, 'rpm': t.spindle, 'feed_finishing': t.finish_feed or t.feed,
                  'feed_roughing': t.feed, 'feed_plunge': t.plunge, 'feed_ramp': t.ramp_feed or t.plunge,
                  'diameter': t.diameter, 'vendor': t.vendor, 'max_depth': t.cut_length, 'notes': t.notes,
                  'geometry': g}

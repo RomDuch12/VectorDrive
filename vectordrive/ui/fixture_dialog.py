@@ -13,6 +13,9 @@ from ..i18n import tr
 #: retournement du brut pour son taraudage (miroir autour de son centre)
 MIRRORS = {'': 'Non, taraudé tel qu\'il est posé', 'x': 'Oui, retourné de gauche à droite',
            'y': 'Oui, retourné de haut en bas'}
+#: où vont les vis quand des gravures sont découpées dans le brut (question 45 : selon le cahier des charges du client)
+SCREWS = {'': 'Partout sous le brut', 'squelette': 'Dans le squelette, hors de la découpe des gravures',
+          'gravures': 'Dans les gravures, taraudées au dos de chacune'}
 
 
 def mm(value: float) -> str:
@@ -98,6 +101,18 @@ class FixtureDialog(QDialog):
         form.addRow(tr('Vis par brut'), self.per_blank)
         self.margin = self._spin(spec.margin, 0.0, 100.0)
         form.addRow(QLabel(tr('Marge au bord du brut (mm)')), self.margin)
+        self.screws_in = QComboBox()                     # question 45 : la découpe des gravures ne touche pas les vis
+        for k, text in SCREWS.items():
+            self.screws_in.addItem(tr(text), k)
+        self.screws_in.setToolTip(tr('Des gravures découpées dans le brut (la découpe suit le cadre de chacune) : '
+                                     'les vis vont dans le squelette qui reste, ou au dos de chaque gravure, selon '
+                                     'le cahier des charges du client'))
+        self.screws_in.setCurrentIndex(max(0, self.screws_in.findData(spec.screws_in)))
+        self.screws_in.currentIndexChanged.connect(lambda _i: self.refresh())
+        form.addRow(tr('Les vis vont'), self.screws_in)
+        self.cut_width = self._spin(spec.cut_width, 0.0, 50.0)
+        self.cut_width.setToolTip(tr('Autour du cadre de chaque gravure : le Ø de l’outil de découpe'))
+        form.addRow(QLabel(tr('Largeur de la découpe des gravures (mm)')), self.cut_width)
         self.thread = QComboBox()
         self.thread.addItem(tr('D\'après les trous de la plaque'), '')
         from ..cam.model import THREADS
@@ -224,7 +239,8 @@ class FixtureDialog(QDialog):
                        mirror=self.mirror.currentData() or '', thread=self.thread.currentData() or '',
                        depth=depth, extra_drill=float(self.extra.value()),
                        common_only=self.common.isChecked(), auto_depth=self.auto_depth.isChecked(),
-                       machined=float(self.machined.value()))
+                       machined=float(self.machined.value()), screws_in=self.screws_in.currentData() or '',
+                       cut_width=float(self.cut_width.value()))
 
     def _sync_depth(self) -> None:
         """Sous la case « d'après l'épaisseur », l'épaisseur connue : la profondeur calculée, montrée, non
@@ -256,11 +272,20 @@ class FixtureDialog(QDialog):
             self.ok.setEnabled(False)
             return
         spec = self.spec()
-        pl = FX.layout(blanks, plate.items, spec, self.skip())
+        pl = FX.layout(blanks, plate.items, spec, self.skip(), logos=FX.engraving_items(self.doc))
         self.placement = pl
-        text = tr('{0} bruts : {1} trous de vis, filetage {2}.').format(len(pl.blanks), pl.count(),
-                                                                       pl.thread or tr('aucun'))
-        if pl.empty():
+        self.cut_width.setEnabled(bool(spec.screws_in))
+        if pl.screws_in == 'gravures' and pl.frames:
+            text = tr('{0} gravures : {1} trous de vis, filetage {2}.').format(len(pl.frames), pl.count(),
+                                                                          pl.thread or tr('aucun'))
+            if pl.bare():
+                text += ' ' + tr('{0} gravures sans aucun trou de la plaque dessous (trop petites, ou à déplacer).').format(len(pl.bare()))
+        else:
+            text = tr('{0} bruts : {1} trous de vis, filetage {2}.').format(len(pl.blanks), pl.count(),
+                                                                           pl.thread or tr('aucun'))
+            if pl.screws_in == 'squelette' and pl.frames:
+                text += ' ' + tr('{0} gravures découpées : les vis restent hors de leur découpe.').format(len(pl.frames))
+        if pl.empty() and not (pl.screws_in == 'gravures' and pl.frames):
             text += ' ' + tr('{0} bruts sans aucun trou de la plaque dessous (trop petits, ou à déplacer).').format(
                 len(pl.empty()))
         if not pl.count() and spec.common_only:
