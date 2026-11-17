@@ -5,4 +5,6 @@ shapely>=2.0        # BSD — offset, booléens
 numpy>=1.26         # BSD
 pypdf>=5.0          # BSD — structure PDF (décompression des flux)
 manifold3d>=3.0     # Apache-2.0 — volumes 3D (booléens, extrusion, révolution)
+anthropic>=0.84     # MIT — assistant IA : Claude (SDK officiel)
+openai>=2.0         # Apache-2.0 — assistant IA : ChatGPT (SDK officiel, API Responses)
 # Interdit : PyMuPDF (AGPL) — incompatible avec une diffusion extérieure

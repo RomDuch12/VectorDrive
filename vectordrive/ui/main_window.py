@@ -1845,6 +1845,9 @@ class MainWindow(QMainWindow):
         a('font_recognize', tr('Reconnaître une police…'), lambda _=False: self.show_font_panel(), None,
           'font_recognize', tip=tr('Trouver les polices du poste les plus proches de lettres en courbes sélectionnées, ou '
                              'd\'une image : la dernière capture d\'écran, le presse-papiers, un fichier'))
+        a('assistant_ia', tr('Assistant IA'), lambda _=False: self.show_assistant_panel(), None, 'assistant_ia',
+          tip=tr('Discuter avec Claude, ChatGPT ou Mistral, qui dessinent et modifient le dessin ouvert (avec la clé '
+                 'd’API du fournisseur)'))
         a('text_move_on_path', tr('Déplacer sur la courbe'), lambda _=False: self.move_text_on_path_tool(), None,
           'text_path', tip=tr('Déplacer un texte le long de sa courbe, à la souris ; F2 : depuis le départ de la courbe '
                               'ou depuis sa position actuelle'))
@@ -2546,6 +2549,8 @@ class MainWindow(QMainWindow):
         g.add(A['undo']); g.add(A['redo'])
         for k in ('undo_list', 'redo_list', 'clear_history'):
             g.add(A[k], big=False)
+        g = t.group(tr('Assistant'))
+        g.add(A['assistant_ia'])                         # un grand bouton : il ouvre son panneau de colonne
         g = t.group(tr('Presse-papiers'))
         g.add(A['paste'])
         for k in ('cut', 'copy', 'delete', 'oops', 'match_props', 'fill_toggle', 'contour_color',
@@ -3105,6 +3110,14 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, d9)
         d9.setVisible(False)
         self.dock_history = d9
+        # « Assistant IA » (demande du 17/11) : un panneau de colonne (à droite d'office), son contenu fait la
+        # première fois qu'il paraît ; masqué tant qu'on ne le demande pas
+        d10 = QDockWidget(tr('Assistant IA'), self)
+        d10.setObjectName('assistant')
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, d10)
+        d10.setVisible(False)
+        d10.visibilityChanged.connect(lambda on: self.assistant_panel() if on else None)   # remis par la session aussi
+        self.dock_assistant = d10
         from .fao_guard import Guard                     # formes à la base d'un parcours : l'alarme (17/11, 0 h 15)
         self.fao_guard = Guard(self)
         self.cam_panel.ops.itemSelectionChanged.connect(lambda: self.program_panel.follow_op())
@@ -6360,6 +6373,32 @@ class MainWindow(QMainWindow):
             dlg.exec()
             dlg.deleteLater()
         return dlg
+
+    def assistant_panel(self):
+        """Le contenu du panneau « Assistant IA » (`ui.assistant_panel`), fait la première fois."""
+        from .assistant_panel import AssistantPanel
+        d = self.dock_assistant
+        w = d.widget()
+        if not isinstance(w, AssistantPanel):
+            w = AssistantPanel(self)
+            d.setWidget(w)
+            w.show()
+        return w
+
+    def show_assistant_panel(self):
+        """« Assistant IA » : son panneau, dans sa colonne (à droite la première fois, puis celle retenue), mis
+        devant, la demande prête à écrire. Rend son contenu."""
+        d = self.dock_assistant
+        p = self.assistant_panel()
+        cols = getattr(self, 'columns', None)
+        if cols is not None and not d.isFloating() \
+                and not self.settings.value('panneaux_colonnes/place/assistant', ''):
+            cols.move(d, cols.side(d) or 'droite')       # la première fois : en onglet dans sa colonne, retenu
+        else:
+            d.setVisible(True)
+            d.raise_()
+        p.input.setFocus()
+        return p
 
     def move_button_mode(self, key: str, to_simple: bool) -> None:
         """Le bouton de la commande `key` montré aussi en mode simple, ou réservé au mode expert (clic droit)."""
@@ -9851,6 +9890,10 @@ class MainWindow(QMainWindow):
             srv = getattr(self, '_agent_server', None)
             if srv is not None:                          # plus d'assistant sur une fenêtre fermée
                 srv.stop()
+            dock = getattr(self, 'dock_assistant', None)
+            chat = dock.widget() if dock is not None else None
+            if chat is not None and hasattr(chat, 'shutdown'):
+                chat.shutdown()                          # la demande en cours s'arrête, plus aucun outil
             ev.accept()
         else:
             ev.ignore()

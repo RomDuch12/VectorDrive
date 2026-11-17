@@ -8,6 +8,16 @@
 | shapely / GEOS | BSD-3-Clause / LGPL-2.1 | offset, opérations booléennes |
 | numpy | BSD-3-Clause | calcul |
 | pypdf | BSD-3-Clause | structure des fichiers PDF |
+| anthropic (SDK Python d'Anthropic) | MIT | assistant IA : Claude |
+| openai (SDK Python d'OpenAI) | Apache-2.0 | assistant IA : ChatGPT |
+| httpx, httpcore, idna | BSD-3-Clause | HTTP des deux SDK |
+| pydantic, pydantic-core, annotated-types, typing-inspection, anyio, jiter, h11, docstring-parser | MIT | dépendances des deux SDK |
+| colorama | BSD-3-Clause | dépendance de tqdm sous Windows |
+| distro | Apache-2.0 | dépendance des deux SDK |
+| sniffio | MIT OR Apache-2.0 | dépendance des deux SDK |
+| typing-extensions | PSF-2.0 | dépendance des deux SDK |
+| certifi | MPL-2.0 | certificats racine des SDK (fichier inchangé) |
+| tqdm | MPL-2.0 AND MIT | dépendance du SDK openai (inchangé) |
 | manifold3d (Manifold) | Apache-2.0 | volumes 3D : booléens, extrusion, révolution (licence : `licences/manifold3d-LICENSE.txt`) |
 
 Code repris de **TauDrive** (même auteur) : encodeurs DataMatrix, QR Code,

@@ -20,7 +20,7 @@ SIMPLE = frozenset('''
     undo redo paste cut copy delete tool_select select_all order_front order_back group ungroup dims snap
     contour_color
     zoom_fit zoom_sel zoom_in zoom_out refresh fill grid rulers layer_tabs themes full_screen ribbon_collapse
-    tool_rect tool_ellipse tool_line tool_polyline tool_arc tool_text char_map font_recognize tool_dim tool_measure tool_node join
+    tool_rect tool_ellipse tool_line tool_polyline tool_arc tool_text char_map font_recognize assistant_ia tool_dim tool_measure tool_node join
     tool_trim tool_extend symbols library_big save_symbol barcode trace hatch
     bool_union bool_intersect bool_difference offset mirror_h mirror_v rot90 rot-90 rot_free move_by
     align_left align_hcenter align_right align_top align_vcenter align_bottom center_plate

@@ -1,3 +1,3 @@
 """VectorDrive — logiciel de dessin pour la gravure (réécriture de la
 partie dessin de TypeEdit / LaserType)."""
-__version__ = '0.925.0'
+__version__ = '0.926.0'

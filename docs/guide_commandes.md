@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.925.0
+# Guide des commandes — VectorDrive 0.926.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -53,6 +53,12 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Défaire plusieurs… |  | Liste des modifications : défaire jusqu'à celle choisie |
 | Refaire plusieurs… |  | Liste des modifications défaites : refaire jusqu'à celle choisie |
 | Vider l'historique |  | Oublier les annulations (libère la mémoire sur un gros dessin) |
+
+### Assistant
+
+| Commande | Raccourci | Rôle |
+|---|---|---|
+| Assistant IA |  | Discuter avec Claude, ChatGPT ou Mistral, qui dessinent et modifient le dessin ouvert (avec la clé d’API du fournisseur) |
 
 ### Presse-papiers
 

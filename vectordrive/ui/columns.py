@@ -33,7 +33,8 @@ SIDES = ('gauche', 'droite')
 TAB_MODES = ('court', 'entier')
 #: icône d'onglet des panneaux du cœur, par nom de panneau
 TAB_ICONS = {'dims': 'tab_dims', 'layers': 'tab_layers', 'symbols': 'tab_library', 'fao': 'tab_paths',
-             'fao_liste': 'tab_ops', 'programme': 'tab_program', 'polices': 'tab_fonts'}
+             'fao_liste': 'tab_ops', 'programme': 'tab_program', 'polices': 'tab_fonts',
+             'assistant': 'tab_assistant'}
 #: mots de liaison jamais laissés au bout d'un libellé court tiré d'un titre
 LINK_WORDS = frozenset(('et', 'de', 'du', 'des', 'la', 'le', 'les', 'à', 'au', 'aux', 'en', 'pour', 'sur', 'ou',
                         '—', '-', '&', 'and', 'of', 'the', 'or', 'for'))
@@ -49,7 +50,8 @@ def short_title(dock) -> str:
     """Le libellé court du panneau, pour son onglet : celui des panneaux du cœur ; celui qu'un plugin a donné
     (propriété `vd_court`) ; sinon le début de son titre (ses premiers mots, 14 caractères au plus)."""
     known = {'dims': 'F2', 'layers': tr('Calques'), 'symbols': tr('Biblio'), 'fao': tr('Parcours'),
-             'fao_liste': tr('Opérations'), 'programme': tr('Programme'), 'polices': tr('Police')}
+             'fao_liste': tr('Opérations'), 'programme': tr('Programme'), 'polices': tr('Police'),
+             'assistant': tr('Assistant')}
     name = dock.objectName()
     if name in known:
         return known[name]
@@ -78,7 +80,7 @@ def tab_icon(dock):
 AREAS = {'gauche': Qt.DockWidgetArea.LeftDockWidgetArea, 'droite': Qt.DockWidgetArea.RightDockWidgetArea}
 #: panneaux montrés seulement à la demande (F3, le tableau des panneaux, leur commande) : une colonne rouverte sans
 #: rien de retenu pour elle ne les fait pas paraître ; montrés puis cachés avec leur colonne, ils reviennent avec elle
-ON_DEMAND = ('polices', 'accrochages', 'historique')
+ON_DEMAND = ('polices', 'accrochages', 'historique', 'assistant')
 KEY = 'panneaux_colonnes'
 
 

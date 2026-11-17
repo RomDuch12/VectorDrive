@@ -7025,3 +7025,10 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Un dessin qui n’a que de telles opérations, sans parcours, donne quand même un programme.
 - Programme en plusieurs fichiers (par plan, par parcours) : elles ne sont écrites qu’une fois, dans le dernier fichier. Avec une orientation de sortie, elles ne sont pas écrites (elles ne la suivent pas) : un avertissement le dit ; de même pour la parcellisation.
 - La relecture du programme écrit reste comparée aux parcours, sans ces opérations.
+### v0.926.0 — L’assistant IA dans VectorDrive
+
+- Nouveau panneau « Assistant IA » (Édition › Assistant, ou le tableau des panneaux) : une discussion avec Claude (Anthropic), ChatGPT (OpenAI) ou Mistral, qui lisent et modifient le dessin ouvert — formes, textes, déplacements, rotations, échelles, booléens, sélection, captures. Chaque modification est un pas d’annulation (Ctrl+Z).
+- Le modèle se choisit dans une liste (un autre nom peut être écrit) ; pour Mistral, l’adresse du serveur se règle (un serveur local du même format convient).
+- Il faut la clé d’API du fournisseur (un abonnement Claude.ai, ChatGPT ou Le Chat n’en donne pas : le lien mène à la console du fournisseur). Elle est gardée dans le gestionnaire d’identifiants de Windows, jamais dans les réglages ; sans elle, la variable d’environnement du fournisseur sert.
+- Ce que l’assistant lit du dessin part chez le fournisseur choisi : le panneau le dit.
+- « Arrêter » coupe la demande au prochain pas ; une fenêtre ouverte ou une commande en cours fait refuser les outils.

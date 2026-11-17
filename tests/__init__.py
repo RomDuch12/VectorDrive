@@ -13,6 +13,8 @@ tempfile.tempdir = _dir
 for _k in ('TMP', 'TEMP', 'TMPDIR'):
     os.environ[_k] = _dir
 os.environ.setdefault('VECTORDRIVE_SETTINGS', os.path.join(_dir, 'reglages.ini'))
+# les clés d'API de l'assistant IA : en mémoire, jamais dans le gestionnaire d'identifiants de Windows du poste
+os.environ['VECTORDRIVE_KEYS_MEMORY'] = '1'
 
 
 def seed_settings(path) -> None:

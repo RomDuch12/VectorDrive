@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.925.0
+# Command guide — VectorDrive 0.926.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -53,6 +53,12 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Undo several… |  | List of changes: undo back to the chosen one |
 | Redo several… |  | List of undone changes: redo up to the chosen one |
 | Clear history |  | Forget the undo steps (frees memory on a large drawing) |
+
+### Assistant
+
+| Command | Shortcut | Purpose |
+|---|---|---|
+| AI assistant |  | Chat with Claude, ChatGPT or Mistral, which draw and edit the open drawing (with the provider’s API key) |
 
 ### Clipboard
 

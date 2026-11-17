@@ -2580,6 +2580,20 @@ def _tab_fonts(p):
     p.drawLine(QPointF(22, 38), QPointF(42, 38))
 
 
+def _assistant(p):
+    """Assistant IA : une bulle de discussion, une étincelle dedans."""
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(6, 8, 52, 36), 10, 10)
+    p.drawPath(path)
+    p.drawLine(QPointF(18, 44), QPointF(14, 56))
+    p.drawLine(QPointF(14, 56), QPointF(28, 44))
+    _accent(p, 4)
+    p.drawLine(QPointF(32, 16), QPointF(32, 36))
+    p.drawLine(QPointF(22, 26), QPointF(42, 26))
+    p.drawLine(QPointF(25, 19), QPointF(39, 33))
+    p.drawLine(QPointF(39, 19), QPointF(25, 33))
+
+
 def _tab_panel(p):
     """Un panneau sans icône à lui (celui d'un plugin) : une fenêtre et sa barre."""
     p.drawRect(QRectF(10, 12, 44, 40))
@@ -2589,4 +2603,4 @@ def _tab_panel(p):
 
 ICONS.update({'tab_dims': _tab_dims, 'tab_layers': _tab_layers, 'tab_library': _tab_library,
               'tab_paths': _tab_paths, 'tab_ops': _tab_ops, 'tab_program': _tab_program, 'tab_fonts': _tab_fonts,
-              'tab_panel': _tab_panel})
+              'tab_panel': _tab_panel, 'assistant_ia': _assistant, 'tab_assistant': _assistant})
