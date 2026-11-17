@@ -6,7 +6,7 @@ import unicodedata
 
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPixmap
-from PySide6.QtWidgets import (QColorDialog, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLineEdit,
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLineEdit,
                                QMenu, QPushButton, QStyle, QStyledItemDelegate, QStyleOptionButton, QTableWidget,
                                QTableWidgetItem, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -647,9 +647,9 @@ class ToolsDialog(QDialog):
     def _pick(self, row: int, col: int) -> None:
         if col != 2:
             return
-        cur = QColor(self.table.item(row, 2).text())
-        c = QColorDialog.getColor(cur, self, tr('Couleur de l\'outil'))
-        if c.isValid():
+        from .color_picker import get_color
+        c = get_color(QColor(self.table.item(row, 2).text()), self, tr('Couleur de l\'outil'))
+        if c is not None:
             it = self.table.item(row, 2)
             it.setText(c.name())
             it.setIcon(swatch(c.name()))

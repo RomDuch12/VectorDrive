@@ -11,7 +11,7 @@ clavier : les raccourcis restent au dessin."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QColorDialog, QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
 from ..i18n import tr
 
@@ -37,8 +37,18 @@ class ColorPanel(QWidget):
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)             # le clavier reste au dessin
         self.list.setToolTip(tr('Un clic : les objets sélectionnés prennent cette couleur, qui devient la couleur '
-                                'courante (celle des objets dessinés ensuite) ; clic droit : changer la couleur'))
+                                'courante (celle des objets dessinés ensuite) ; double clic ou clic droit : '
+                                'changer la couleur'))
         self.list.itemClicked.connect(self._clicked)
+        #: demande du 17/11 soir : « double clic sur la couleur ouvre une fenetre de selection beaucoup plus avancee ».
+        #: Le simple clic attend la durée d'un double clic : un double clic ne recolore pas la sélection (et la liste
+        #: n'est pas refaite entre les deux clics, ce qui empêchait Qt de voir le double clic).
+        self._click_index = None
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.timeout.connect(self._click_now)
+        self._dbl_at = None
+        self.list.itemDoubleClicked.connect(self._double_clicked)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.list, 1)
@@ -109,7 +119,26 @@ class ColorPanel(QWidget):
 
     # --- les gestes
     def _clicked(self, item) -> None:
-        self.apply(int(item.data(Qt.ItemDataRole.UserRole)))
+        from PySide6.QtWidgets import QApplication
+        gap = QApplication.doubleClickInterval()
+        if self._dbl_at is not None and self._dbl_at.elapsed() < gap:     # le relâché du double clic
+            return
+        self._click_index = int(item.data(Qt.ItemDataRole.UserRole))
+        self._click_timer.start(gap)
+
+    def _click_now(self) -> None:
+        index, self._click_index = self._click_index, None
+        if index is not None:
+            self.apply(index)
+
+    def _double_clicked(self, item) -> None:
+        from PySide6.QtCore import QElapsedTimer
+        self._click_timer.stop()                         # le simple clic qui précède n'a pas lieu
+        self._click_index = None
+        self._dbl_at = QElapsedTimer()
+        self._dbl_at.start()
+        self.pick_color(int(item.data(Qt.ItemDataRole.UserRole)))
+        self._dbl_at.restart()
 
     def apply(self, index: int) -> int:
         """La couleur `index` : donnée aux objets sélectionnés (un pas d'annulation), et couleur courante — celle des
@@ -152,9 +181,9 @@ class ColorPanel(QWidget):
         tool = next((t for t in self.doc().tools if t.index == index), None)
         if tool is None:
             return False
-        from PySide6.QtGui import QColor
-        c = QColorDialog.getColor(QColor(tool.color), self, tr('Couleur de l’outil {0}').format(index))
-        return c.isValid() and self.set_tool_color(index, c.name())
+        from .color_picker import get_color
+        c = get_color(tool.color, self, tr('Couleur de l’outil {0}').format(index))
+        return c is not None and self.set_tool_color(index, c.name())
 
     def set_tool_color(self, index: int, color: str) -> bool:
         """La couleur de l'outil `index` changée (un pas d'annulation) ; rend vrai si elle a changé."""

@@ -12497,12 +12497,12 @@ class MainWindow(QMainWindow):
             return 0
         if ask:
             from PySide6.QtGui import QColor
-            from PySide6.QtWidgets import QColorDialog
+            from .color_picker import get_color
             first = next((lf for lf in _leaves(items)), None)
             start = QColor(own_color(first) or self.canvas.doc.item_color(first)) if first is not None \
                 else QColor('#000000')
-            got = QColorDialog.getColor(start, self, tr('Couleur des objets sélectionnés'))
-            if not got.isValid():
+            got = get_color(start, self, tr('Couleur des objets sélectionnés'))
+            if got is None:
                 return 0
             color = got.name()
         changed = sum(1 for lf in _leaves(items) if own_color(lf) != (str(color).lower() if color else None))

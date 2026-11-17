@@ -7560,5 +7560,20 @@
  "{0} gravures découpées : les vis restent hors de leur découpe.": "{0} engravings cut out: the screws stay clear of their cut.",
  "Quand un plugin de devis en donne une : la page technique sans les prix, puis une page des prix": "When a quote plugin provides one: the technical page without the prices, then a price page",
  "Prix sur une page à part": "Prices on a separate page",
- " (suite)": " (continued)"
+ " (suite)": " (continued)",
+ "Teinte": "Hue",
+ "Saturation": "Saturation",
+ "Luminosité": "Brightness",
+ "Cyan": "Cyan",
+ "Magenta": "Magenta",
+ "Jaune": "Yellow",
+ "RVB": "RGB",
+ "TSV": "HSV",
+ "CMJN": "CMYK",
+ "Code": "Code",
+ "Code hexadécimal : #RRVVBB (ou #RVB)": "Hexadecimal code: #RRGGBB (or #RGB)",
+ "Couleur de départ": "Starting colour",
+ "Un clic revient à la couleur de départ": "One click goes back to the starting colour",
+ "Nouvelle couleur": "New colour",
+ "Un clic : les objets sélectionnés prennent cette couleur, qui devient la couleur courante (celle des objets dessinés ensuite) ; double clic ou clic droit : changer la couleur": "One click: the selected objects take this colour, which becomes the current colour (that of the objects drawn next); double-click or right-click: change the colour"
 }

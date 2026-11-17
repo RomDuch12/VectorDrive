@@ -7065,3 +7065,8 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Nouveau réglage du BAT « Prix sur une page à part » (coché d’office) : décoché, les prix par gravure restent sur la page technique, comme avant. « Prix du devis par gravure » décoché : aucun prix, une seule page.
 - Une liste de prix trop longue continue sur les pages suivantes. La case est grisée quand elle est sans effet (pas de plugin qui donne une page des prix, ou prix décochés).
 - Les plugins peuvent donner cette page (`add_bat_page`).
+### v0.933.0 — Une fenêtre de couleur plus complète
+
+- Dans le panneau Couleur, un double clic sur une couleur ouvre la nouvelle fenêtre de couleur (le clic droit aussi) : une roue des teintes (la saturation va du centre au bord) et une barre de luminosité, des curseurs Rouge / Vert / Bleu, Teinte / Saturation / Luminosité et Cyan / Magenta / Jaune / Noir, chacun avec son champ, et le code hexadécimal (#RRVVBB ou #RVB).
+- La couleur de départ et la nouvelle sont côte à côte ; un clic sur la couleur de départ y revient.
+- La même fenêtre sert au tableau des outils (double clic sur une couleur) et à Édition › Couleur… (la couleur propre des objets).
