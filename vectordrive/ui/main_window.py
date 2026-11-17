@@ -6034,15 +6034,16 @@ class MainWindow(QMainWindow):
         ov = self.overlays[which]
         return ov.set_active(not ov.active if on is None else on)
 
-    def show_program(self) -> None:
+    def show_program(self, refresh: bool = True) -> None:
         """Le programme machine dans sa fenêtre (`ui.program_window`) : montrée, devant, à jour. La première fois,
         détachée et sans place à elle (pas remise par la session, ou hors de l'écran) : posée sur la moitié droite du
-        dessin."""
+        dessin. `refresh` faux : pas réécrit d'office (la fenêtre montrée suit « en direct », avec ses garde-fous)."""
         if self.program_centered():                      # déjà au centre, à la place du dessin : mis à jour
             if getattr(self, '_program_part', None) is not self.program_panel:
                 self.dock_program.setVisible(True)       # le texte seul au centre : sa fenêtre (machine, parties)
                 self.dock_program.raise_()               # rouverte
-            self.program_panel.refresh()
+            if refresh:
+                self.program_panel.refresh()
             return
         d = self.dock_program
         first, self._program_shown = not getattr(self, '_program_shown', False), True
@@ -6055,7 +6056,8 @@ class MainWindow(QMainWindow):
             w = max(420, min(760, st.width() // 2))
             d.setGeometry(tl.x() + st.width() - w, tl.y(), w, max(360, st.height()))
         d.raise_()
-        self.program_panel.refresh()
+        if refresh:
+            self.program_panel.refresh()
 
     def program_centered(self) -> bool:
         """Le programme machine est-il au centre, à la place du dessin ?"""
@@ -6124,6 +6126,28 @@ class MainWindow(QMainWindow):
         if on:
             p.refresh()
         return on
+
+    def _program_reshare(self) -> None:
+        """Au centre, des parties de plugin apparues ou disparues : le texte seul au centre (les parties dans la
+        colonne) ou tout le panneau, comme si le programme venait d'y être mis."""
+        prog = getattr(self, 'program_panel', None)
+        if prog is not None and self.program_centered() and \
+                bool(prog.sections_shown()) == (getattr(self, '_program_part', None) is prog):
+            self.program_center(False)
+            self.program_center(True)
+
+    def show_program_part(self, key: str) -> bool:
+        """La partie `key` de l'onglet Programme (apportée par un plugin, `add_panel(host='programme')`) : montrée et
+        dépliée, la fenêtre Programme montrée et devant — demandée, elle se montre même si sa machine n'est pas celle
+        du dessin (elle se recache quand la machine change). Rend faux si aucune partie n'a cette clé."""
+        prog = getattr(self, 'program_panel', None)
+        if prog is None or key not in getattr(prog, 'hosted', {}):
+            return False
+        prog.show_section(key, True)
+        prog.fold_section(key, False)
+        self._program_reshare()
+        self.show_program(refresh=False)              # (pas tout le programme réécrit à chaque clic)
+        return True
 
     def _program_dock_shown(self, on: bool) -> None:
         """La fenêtre du programme montrée d'ailleurs (fenêtre d'une colonne, onglet FAO, disposition remise) alors
@@ -6630,11 +6654,7 @@ class MainWindow(QMainWindow):
                 dock.setVisible(on)
                 if on and not was:
                     self.dock_full_height(dock)           # le panneau de la machine choisie : devant, sur la colonne
-        prog = getattr(self, 'program_panel', None)
-        if prog is not None and self.program_centered() and \
-                bool(prog.sections_shown()) == (getattr(self, '_program_part', None) is prog):
-            self.program_center(False)                   # des parties apparues ou disparues : au centre, le texte
-            self.program_center(True)                    # seul (parties dans la colonne) ou tout le panneau
+        self._program_reshare()                          # des parties apparues ou disparues : le partage refait
         kind = m.kind if m is not None else ''
         if kind != getattr(self, '_machine_kind', ''):   # fraiseuse ↔ laser : la palette ne montre que ses parcours
             self._machine_kind = kind

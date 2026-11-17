@@ -7015,3 +7015,7 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Au centre** (bouton ▣) : quand ces parties sont montrées, seul le texte du programme prend la place du dessin, entre les colonnes ; la machine et les parties restent dans la colonne, à portée de main.
 - Au centre, le texte a son propre bouton ⟳ (mettre à jour) ; « Programme machine » rouvre la fenêtre de la colonne.
 - **Menu « Vue »** du programme : agrandir ou réduire le texte, taille d'origine, numéros de ligne, retour à la ligne, couleurs du langage, plan du programme, replier chaque parcours ou tout déplier — retenus d'une fois sur l'autre.
+### v0.924.0 — Onglet Programme : une partie ouverte à la demande
+
+- Un bouton apporté par un plugin peut ouvrir l'onglet **Programme** directement sur sa partie (dépliée, la fenêtre Programme devant), même quand la machine du dessin n'est pas encore la sienne ; elle se recache quand la machine change.
+- Au centre (▣), une partie qui apparaît ou disparaît refait aussitôt le partage : le texte seul au centre et les parties dans la colonne, ou tout le panneau au centre.
