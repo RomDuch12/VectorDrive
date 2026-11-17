@@ -7059,3 +7059,9 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Un outil importé de NeoDrive garde ses deux avances : le cadre Ébauche prend son avance d’ébauche, le cadre Finition son avance de finition (avant : l’avance de finition partout). L’export vers NeoDrive les rend toutes deux.
 - Plaque de reprise : quand des gravures sont découpées dans le brut (la découpe suit le cadre de chacune), « Les vis vont » choisit où vont les vis, selon le cahier des charges du client : partout sous le brut (comme avant), dans le squelette qui reste, hors de la découpe de chaque gravure, ou au dos de chaque gravure (vis par brut = vis par gravure). La largeur de la découpe (Ø de l’outil) se règle ; des gravures dont les découpes se touchent sont découpées ensemble.
 - Avec le plugin de la machine Datron : un sous-programme par parcours, la séquence passe de l’avance d’ébauche à celle de finition ; la colonne SimPL du panneau des opérations NeoDrive devient une fenêtre.
+### v0.932.0 — BAT sur deux pages : la page technique, puis celle des prix
+
+- Avec un plugin de devis, le BAT a deux pages : la page technique (dessin, cotes, cartouche), sans les prix, puis une page des prix (avec l’en-tête du BAT : logos, entreprise ; client, référence et date). L’aperçu montre la page technique ; l’impression sort toutes les pages.
+- Nouveau réglage du BAT « Prix sur une page à part » (coché d’office) : décoché, les prix par gravure restent sur la page technique, comme avant. « Prix du devis par gravure » décoché : aucun prix, une seule page.
+- Une liste de prix trop longue continue sur les pages suivantes. La case est grisée quand elle est sans effet (pas de plugin qui donne une page des prix, ou prix décochés).
+- Les plugins peuvent donner cette page (`add_bat_page`).

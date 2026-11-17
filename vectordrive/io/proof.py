@@ -84,6 +84,8 @@ class ProofInfo:
     show_bruts: bool = True          # bruts des ensembles dessinés et cotés
     dims_each: bool = True           # une cote par gravure (chaque objet ou groupe de premier niveau)
     prices: bool = True              # prix du devis par gravure (si un plugin en donne un)
+    #: les prix sur une page à part, après la page technique (si un plugin en donne une ; question 29)
+    price_page: bool = True
     company: str = ''                # en-tête : nom de l'entreprise
     logo: str = ''                   # en-tête, à gauche : fichier du logo, image (PNG, JPEG…) ou dessin (SVG, PDF, DXF…)
     logo2: str = ''                  # en-tête, à droite : second logo (celui du client…)
@@ -106,7 +108,7 @@ LAYOUT_FIELDS = ('content', 'fit_selection', 'page', 'orientation', 'scale_mode'
                  'company', 'logo', 'fill_mode', 'title_color', 'theme_all', 'decimals', 'keep_zeros', 'logo2',
                  'show_bruts', 'watermark', 'watermark_text', 'watermark_color', 'as_image', 'image_dpi',
                  'open_folder', 'watermark_kind', 'watermark_logo', 'watermark_size', 'watermark_angle', 'watermark_gap',
-                 'watermark_strength', 'watermark_layout')
+                 'watermark_strength', 'watermark_layout', 'price_page')
 #: hauteur du logo dans l'en-tête de la page (mm) ; largeur au plus
 LOGO_H, LOGO_W = 10.0, 45.0
 _LOGOS: dict = {}
@@ -733,7 +735,10 @@ def plan_views(info: 'ProofInfo', FW: float, FH: float, area, pad: float) -> lis
 
 def build(doc: Document, info: ProofInfo, items=None) -> tuple[list[Prim], float, float]:
     """Primitives de la page (mm, origine en bas à gauche) et format ;
-    `items` : la sélection (voir `uses_selection`)."""
+    `items` : la sélection (voir `uses_selection`). Avec une page des prix (`price_page_wanted`), les prix n'y sont
+    pas."""
+    if price_page_wanted(info):
+        info = dataclasses.replace(info, prices=False)
     doc, items = _shown(doc, items)
     g = _geometry(doc, info, items)
     plate, ref, W0, H0, frame, FW, FH = g['plate'], g['ref'], g['W0'], g['H0'], g['frame'], g['FW'], g['FH']
@@ -928,6 +933,83 @@ def engraving_price(objs: list) -> str | None:
     return None
 
 
+def price_page_wanted(info: ProofInfo) -> bool:
+    """Les prix vont-ils sur leur page (question 29) ? Un plugin en donne une, « Prix du devis par gravure » et « Prix
+    sur une page à part » sont cochés. Sans calculer le devis : l'aperçu reste rapide. (Un plugin sans devis réglé ne
+    donne ni page ni prix par gravure : la page technique est la même.)"""
+    from ..plugins import REGISTRY
+    return bool(getattr(REGISTRY, 'bat_pages', [])) and bool(getattr(info, 'price_page', True)) \
+        and bool(getattr(info, 'prices', True))
+
+
+def price_pages(doc: Document, info: ProofInfo, items=None) -> list:
+    """Les pages des prix données par les plugins (question 29) : [(titre, [lignes])] ; [] sans plugin qui en donne,
+    ou quand « Prix du devis par gravure » ou « Prix sur une page à part » est décoché."""
+    from ..plugins import REGISTRY
+    if not price_page_wanted(info):
+        return []
+    eng = [it for it in engravings(doc, info, items) if it.bbox()]
+    out = []
+    for fn in REGISTRY.bat_pages:
+        try:
+            v = fn(doc, eng, info)
+        except Exception:                             # devis d'un plugin en défaut : pas de page des prix
+            v = None
+        if v and len(v) == 2 and v[1]:
+            out.append((str(v[0]), [str(x) for x in v[1]]))
+    return out
+
+
+#: page des prix : corps du titre, du texte, interligne, retrait d'une espace en tête de ligne (mm)
+PRICE_TITLE, PRICE_SIZE, PRICE_LEAD, PRICE_INDENT = 5.0, 3.0, 4.6, 1.2
+
+
+#: au plus tant de pages des prix pour une page donnée par un plugin (au-delà : « … » au bas de la dernière)
+PRICE_PAGES_MAX = 20
+
+
+def price_page_prims(info: ProofInfo, title: str, lines: list, PW: float, PH: float) -> list:
+    """Les pages des prix d'une page donnée par un plugin : [[primitives d'une page]]. Chacune : cadre et en-tête du
+    BAT (logos, entreprise), le titre (« (suite) » après la première), client, référence et date, puis les lignes,
+    coupées à la largeur de la page ; une liste trop longue continue sur la page suivante (au plus
+    `PRICE_PAGES_MAX`)."""
+    margin = float(info.margin)
+    theme = accent(info)
+    wide = theme if theme and getattr(info, 'theme_all', False) else None
+    x = margin + 4
+    width = PW - 2 * margin - 8
+    rows = []
+    for line in lines:
+        dx = (len(line) - len(line.lstrip(' '))) * PRICE_INDENT
+        rows.extend((dx, part) for part in (wrap_text(line.strip(), PRICE_SIZE, width - dx) or ['']))
+    ident = '   '.join(v for v in (info.client, info.reference, info.date) if str(v or '').strip())
+    pages: list = []
+    while True:
+        prims: list = [Prim(Path([geom.rect(margin, margin, PW - 2 * margin, PH - 2 * margin)]), wide or (0, 0, 0),
+                            0.5)]
+        _header(prims, info, PW, PH, margin, '')
+        y = PH - margin - LOGO_H - 9
+        prims.append(_label(title + (tr(' (suite)') if pages else ''), PRICE_TITLE, x, y, color=theme or (0, 0, 0)))
+        y -= PRICE_TITLE + 2
+        if ident:
+            prims.append(_label(ident, PRICE_SIZE, x, y, color=(0.35, 0.35, 0.35)))
+            y -= PRICE_LEAD
+        y -= 2
+        last = len(pages) + 1 >= PRICE_PAGES_MAX
+        while rows and y >= margin + PRICE_LEAD:
+            if last and len(rows) > 1 and y - PRICE_LEAD < margin + PRICE_LEAD:
+                prims.append(_label('…', PRICE_SIZE, x, y))
+                rows = []
+                break
+            dx, part = rows.pop(0)
+            if part:
+                prims.append(_label(part, PRICE_SIZE, x + dx, y))
+            y -= PRICE_LEAD
+        pages.append(_mono(prims, info))
+        if not rows:
+            return pages
+
+
 def readable_angle(ux: float, uy: float) -> float:
     """Angle d'écriture d'une cote de direction (ux, uy) : dans ]-90 ; 90], jamais la tête en bas ; une cote verticale se
     lit de bas en haut, comme les autres cotes de la page."""
@@ -1102,15 +1184,19 @@ def image_streams(item) -> tuple[int, int, bytes, bytes | None] | None:
             zlib.compress(alpha.tobytes(), 9) if (alpha != 255).any() else None)
 
 
-def pdf_bytes(content_ops: list[str], W: float, H: float, images: list, title: str = '') -> bytes:
-    """PDF d'une page (W × H points) : contenu, images (XObject /ImN) et infos."""
-    objs: list[bytes] = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>']
-    page_i = len(objs)
-    objs.append(b'')                                     # la page, écrite une fois les images numérotées
-    content = zlib.compress('\n'.join(content_ops).encode('ascii'), 6)   # 9 : 2 × plus lent pour 2 % de moins
-    objs.append(b'<< /Length ' + str(len(content)).encode() + b' /Filter /FlateDecode >>\nstream\n'
-                + content + b'\nendstream')
-    content_n = len(objs)
+def pdf_bytes(content_ops: list[str], W: float, H: float, images: list, title: str = '', more=()) -> bytes:
+    """PDF (W × H points) : la page de `content_ops`, puis une page par liste d'opérations de `more` (la page des
+    prix), les images (XObject /ImN, communes à toutes les pages) et les infos."""
+    objs: list[bytes] = [b'<< /Type /Catalog /Pages 2 0 R >>', b'']
+    at = []
+    for ops in [content_ops, *more]:
+        at.append(len(objs))
+        objs.append(b'')                                 # la page, écrite une fois les images numérotées
+        content = zlib.compress('\n'.join(ops).encode('ascii'), 6)   # 9 : 2 × plus lent pour 2 % de moins
+        objs.append(b'<< /Length ' + str(len(content)).encode() + b' /Filter /FlateDecode >>\nstream\n'
+                    + content + b'\nendstream')
+    kids = ' '.join(f'{i + 1} 0 R' for i in at)
+    objs[1] = f'<< /Type /Pages /Kids [{kids}] /Count {len(at)} >>'.encode()
     xobj = []
     for k, (w, h, rgb, alpha) in enumerate(images):
         smask = ''
@@ -1125,8 +1211,9 @@ def pdf_bytes(content_ops: list[str], W: float, H: float, images: list, title: s
         xobj.append(f'/Im{k} {len(objs)} 0 R')
     # /Resources est obligatoire, même sans rien à déclarer : sans elle Inkscape 1.3 s'arrête à l'ouverture
     res = f'/Resources << /XObject << {" ".join(xobj)} >> >> ' if xobj else '/Resources << /ProcSet [/PDF] >> '
-    objs[page_i] = (f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_f(W)} {_f(H)}] {res}'
-                    f'/Contents {content_n} 0 R >>').encode()
+    for i in at:                                         # objet i + 1 : la page ; i + 2 : son contenu
+        objs[i] = (f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_f(W)} {_f(H)}] {res}'
+                   f'/Contents {i + 2} 0 R >>').encode()
     title = ''.join(ch for ch in title if 32 <= ord(ch) < 127 and ch not in '()\\')
     objs.append(f'<< /Producer (VectorDrive) /Title ({title}) >>'.encode())
     out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
@@ -1215,7 +1302,8 @@ def write(doc: Document, path, info: ProofInfo | None = None, items=None) -> Non
     from ..core.text import ensure_outlines
     info = info or ProofInfo()
     ensure_outlines(doc)                             # textes jamais affichés : présents sur le BAT
-    prims, PW, PH = build(doc, info, items)
+    prims, PW, PH = build(doc, info, items)          # sans les prix s'ils ont leur page
+    pages = price_pages(doc, info, items)            # question 29 : les prix sur une page à part
     m = Affine.scaling(1 / PT_MM)
     ops = ['1 J 1 j']
     images = []
@@ -1227,6 +1315,20 @@ def write(doc: Document, path, info: ProofInfo | None = None, items=None) -> Non
             images.append(got[0])
             prims = [pr for pr in prims if pr.layer != 'dessin']
     shared: dict = {}                                    # la même image (filigrane répété) : un seul objet
+    _page_ops(prims, m, ops, images, shared)
+    more = []
+    for t, lines in pages:
+        for page in price_page_prims(info, t, lines, PW, PH):
+            more.append(['1 J 1 j'])
+            _page_ops(page, m, more[-1], images, shared)
+    title = 'BAT ' + (info.reference if info.reference else pathlib.Path(path).stem)
+    pathlib.Path(path).write_bytes(pdf_bytes(ops, PW / PT_MM, PH / PT_MM, images, title, more))
+
+
+def _page_ops(prims: list, m, ops: list, images: list, shared: dict) -> None:
+    """Les opérations PDF des primitives d'une page, ajoutées à `ops` ; leurs images ajoutées à `images` (une seule
+    fois chacune : `shared`, commun à toutes les pages)."""
+    from .pdf import path_ops
     for pr in prims:
         if pr.image is not None:
             if id(pr.image) not in shared:
@@ -1253,5 +1355,3 @@ def write(doc: Document, path, info: ProofInfo | None = None, items=None) -> Non
             ops.append('f*')
         else:
             ops.append('S')
-    title = 'BAT ' + (info.reference if info.reference else pathlib.Path(path).stem)
-    pathlib.Path(path).write_bytes(pdf_bytes(ops, PW / PT_MM, PH / PT_MM, images, title))

@@ -147,7 +147,7 @@ class BatDialog(QDialog):
                            ('legend', 'Légende des outils'), ('mono', 'Noir et blanc'),
                            ('fill', 'Coloriage (contours fermés remplis)'),
                            ('dims_each', 'Une cote par gravure'), ('show_bruts', 'Bruts des ensembles, cotés à part'),
-                           ('prices', 'Prix du devis par gravure')):
+                           ('prices', 'Prix du devis par gravure'), ('price_page', 'Prix sur une page à part')):
             c = QCheckBox(tr(label))
             c.setChecked(bool(getattr(info, key)))
             c.toggled.connect(self._later)
@@ -157,6 +157,12 @@ class BatDialog(QDialog):
                                           'pas de cote de l\'ensemble'))
         self.checks['dims_each'].setToolTip(tr('Chaque gravure cotée à côté d\'elle, jusqu\'à {0} gravures ; au-delà, le '
                                                'dessin est coté comme un tout').format(proof.MAX_ENGRAVINGS))
+        self.checks['price_page'].setToolTip(tr('Quand un plugin de devis en donne une : la page technique sans '
+                                                'les prix, puis une page des prix'))
+        from ..plugins import REGISTRY                   # sans plugin qui donne une page des prix : sans effet, grisé
+        self.checks['price_page'].setEnabled(bool(REGISTRY.bat_pages) and self.checks['prices'].isChecked())
+        self.checks['prices'].toggled.connect(
+            lambda on: self.checks['price_page'].setEnabled(bool(REGISTRY.bat_pages) and on))
         self.fill_mode = self._combo([('contour', tr('Couleur des contours (pleins et vides alternés)')),
                                       ('noir', tr('Logo en noir (contours fermés : pleins et vides alternés)')),
                                       ('teinte', tr('Teinte claire de la couleur de l\'outil'))],

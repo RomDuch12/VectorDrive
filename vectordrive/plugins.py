@@ -137,6 +137,8 @@ class Registry:
     defaults: dict = field(default_factory=dict)             # « famille » → {réglage: valeur}
     themes: list = field(default_factory=list)               # thèmes de l'interface (dict JSON)
     bat_prices: list = field(default_factory=list)           # fonction(objets) → prix écrit (BAT), ou None
+    #: page des prix du BAT (question 29) : fonction(dessin, gravures, réglage du BAT) → (titre, [lignes]) ou None
+    bat_pages: list = field(default_factory=list)
     nc_readers: list = field(default_factory=list)           # (libellé, extensions, lecture, reconnaissance)
     #: catalogues d'opérations machine : (libellé, fonction() → [cam.catalog.Entry ou dict])
     instruction_catalogs: list = field(default_factory=list)
@@ -275,6 +277,13 @@ class Api:
         """Prix d'une gravure sur le BAT : `fn(objets)` → texte (« 72,00 € HT »)
         ou None (pas de devis réglé) ; appelée pour chaque gravure."""
         self._r.bat_prices.append(fn)
+
+    def add_bat_page(self, fn: Callable) -> None:
+        """Page des prix du BAT (réponse du 15/11 à la question 29 : « BaT + devis devient un pdf de 2 pages
+        (technique séparé prix) ») : `fn(dessin, gravures, réglage du BAT)` → (titre, [lignes]) ou None (pas de
+        devis réglé). Quand elle en donne une, le BAT a deux pages et la page technique n'a plus de prix. Une ligne
+        qui commence par des espaces est décalée d'autant."""
+        self._r.bat_pages.append(fn)
 
     def add_translations(self, lang: str, table: dict) -> None:
         self._r.translations.setdefault(lang, {}).update(table)

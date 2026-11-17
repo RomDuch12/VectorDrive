@@ -292,5 +292,10 @@ def print_proof(doc, info, printer: QPrinter, items=None) -> None:
     p = QPainter(printer)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-    paint_prims(p, prims, _mm_transform(printer, PW, PH))
+    tf = _mm_transform(printer, PW, PH)
+    paint_prims(p, prims, tf)
+    for title, lines in proof.price_pages(doc, info, items):     # question 29 : la page des prix
+        for page in proof.price_page_prims(info, title, lines, PW, PH):
+            printer.newPage()
+            paint_prims(p, page, tf)
     p.end()

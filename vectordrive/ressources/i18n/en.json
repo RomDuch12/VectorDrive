@@ -7557,5 +7557,8 @@
  "Largeur de la découpe des gravures (mm)": "Width of the engravings’ cut (mm)",
  "{0} gravures : {1} trous de vis, filetage {2}.": "{0} engravings: {1} screw holes, thread {2}.",
  "{0} gravures sans aucun trou de la plaque dessous (trop petites, ou à déplacer).": "{0} engravings without any plate hole under them (too small, or to be moved).",
- "{0} gravures découpées : les vis restent hors de leur découpe.": "{0} engravings cut out: the screws stay clear of their cut."
+ "{0} gravures découpées : les vis restent hors de leur découpe.": "{0} engravings cut out: the screws stay clear of their cut.",
+ "Quand un plugin de devis en donne une : la page technique sans les prix, puis une page des prix": "When a quote plugin provides one: the technical page without the prices, then a price page",
+ "Prix sur une page à part": "Prices on a separate page",
+ " (suite)": " (continued)"
 }
