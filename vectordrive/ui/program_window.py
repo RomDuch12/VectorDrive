@@ -26,6 +26,18 @@ from .code_view import CodeView, fold_regions
 LIVE_KEY = 'fao/programme_direct'
 #: le plan du programme (la liste des séquences et des parcours, à gauche du texte) montré (retenu)
 OUTLINE_KEY = 'fao/programme_plan'
+#: la vue du programme (menu « Vue ») : taille du texte (0 : d'origine), numéros de ligne, retour à la ligne, couleurs
+VIEW_KEY = 'fao/programme_vue'
+#: les parties apportées par les plugins (`host_panel`) : dépliées ou repliées, retenu par clé
+SECTION_KEY = 'fao/programme_parties'
+#: tailles du texte permises (points)
+TEXT_SIZES = (6, 32)
+
+
+def _flag(v, default: bool) -> bool:
+    if v is None or v == '':
+        return default
+    return v in (True, 'true', '1', 1)
 #: au-delà de tant de comparaisons (lignes × parcours), les plages des parcours ne sont pas cherchées (un très long
 #: programme reste vif : numéros de ligne et blocs du langage seulement)
 MAX_SECTION_WORK = 4_000_000
@@ -191,17 +203,39 @@ class ProgramPanel(QWidget):
             row.addWidget(b)
         self.buttons['all'].hide()
         lay.addLayout(row)
+        from PySide6.QtWidgets import QSplitter as _Split
+        #: les parties des plugins (`host_panel`) : clé → (cadre, en-tête, contenu, titre) — NeoDrive, opérations…
+        self.hosted: dict = {}
+        self.sections_box = QWidget()
+        self._sections_lay = QVBoxLayout(self.sections_box)
+        self._sections_lay.setContentsMargins(0, 0, 0, 0)
+        self._sections_lay.setSpacing(2)
+        self.sections_box.hide()
+        self.viewer = QWidget()                          # le texte du programme : ce qui va au centre (▣) quand des
+        vlay = QVBoxLayout(self.viewer)                  # parties de plugin restent dans la colonne
+        vlay.setContentsMargins(0, 0, 0, 0)
+        self.vsplit = _Split(Qt.Orientation.Vertical)
+        self.vsplit.setChildrenCollapsible(False)
+        self.vsplit.addWidget(self.sections_box)
+        self.vsplit.addWidget(self.viewer)
+        self.vsplit.setStretchFactor(0, 0)
+        self.vsplit.setStretchFactor(1, 1)
+        lay.addWidget(self.vsplit, 1)
+        self.viewer.installEventFilter(self)             # le texte seul montré au centre : à jour comme le panneau
         self.file = QComboBox()
         self.file.setToolTip(tr('Le programme tient en plusieurs fichiers : celui qui est montré'))
         self.file.currentIndexChanged.connect(self._show_file)
         self.file.hide()
-        lay.addWidget(self.file)
+        vlay.addWidget(self.file)
         self.text = CodeView()                           # numéros de ligne, blocs repliables, plages surlignées
         self.text.setReadOnly(True)
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         f = QFont('Consolas')
         f.setStyleHint(QFont.StyleHint.Monospace)
         self.text.setFont(f)
+        self._base_size = 9.0                            # la taille « d'origine » (menu Vue), lue dans `apply_view`
+        self.colored = True                              # les couleurs du langage (menu Vue)
+        self._plain = False                              # programme trop long : sans couleurs de toute façon
         self.highlighter = Highlighter(self.text.document(), self._dark())
         from PySide6.QtWidgets import QHeaderView, QSplitter, QTreeWidget
         self.given: list = []                           # les plages données par le post (`program_preview`)
@@ -220,7 +254,7 @@ class ProgramPanel(QWidget):
         self.split.setStretchFactor(1, 1)
         self.split.setSizes([190, 600])
         self.outline.setVisible(win.settings.value(OUTLINE_KEY, 'true') in (True, 'true'))
-        lay.addWidget(self.split, 1)
+        vlay.addWidget(self.split, 1)
         self.status = QLabel('')
         self.status.setWordWrap(True)
         from PySide6.QtWidgets import QToolButton
@@ -230,6 +264,24 @@ class ProgramPanel(QWidget):
         unfold_tip = tr('Déplier tous les blocs du programme')
         center_tip = tr('Le programme au centre, à la place du dessin, entre les colonnes — ou de retour dans sa fenêtre')
         outline_tip = tr('Le plan du programme : la liste de ses séquences et de ses parcours, à gauche du texte')
+        from PySide6.QtWidgets import QMenu
+        b = self.buttons['view'] = QToolButton()         # Vue : taille, numéros, retour à la ligne, couleurs (retenu)
+        b.setText(tr('Vue'))
+        b.setAutoRaise(True)
+        b.setToolTip(tr('Régler la vue du programme : taille du texte, numéros de ligne, retour à la ligne, couleurs, '
+                        'plan, blocs repliés'))
+        b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.view_menu = QMenu(b)
+        self.view_menu.aboutToShow.connect(self._fill_view_menu)
+        b.setMenu(self.view_menu)
+        foot.addWidget(b)
+        b = self.buttons['update_here'] = QToolButton()  # ⟳ : le texte seul au centre se met à jour lui aussi
+        b.setText('⟳')
+        b.setAutoRaise(True)
+        b.setToolTip(tr('Refaire les parcours si le dessin a changé, et réécrire le programme'))
+        b.clicked.connect(lambda _=False: self.refresh(recompute=True))
+        b.hide()
+        foot.addWidget(b)
         b = self.buttons['outline'] = QToolButton()      # ☰ : le plan montré ou caché (retenu)
         b.setText('☰')
         b.setCheckable(True)
@@ -252,15 +304,158 @@ class ProgramPanel(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(lambda _=False, v=on: self.fold_paths(v))
             foot.addWidget(b)
-        lay.addLayout(foot)
+        vlay.addLayout(foot)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(LIVE_MS)
         self.timer.timeout.connect(self._live_refresh)
+        self.apply_view()
 
     def set_centered(self, on: bool) -> None:
-        """Le bouton ▣ dit si le programme est au centre, à la place du dessin."""
+        """Le bouton ▣ dit si le programme est au centre, à la place du dessin ; le texte seul au centre montre son
+        propre « Mettre à jour » (la rangée du haut est restée dans la colonne)."""
         self.buttons['center'].setChecked(bool(on))
+        self.buttons['update_here'].setVisible(bool(on) and self.viewer.parentWidget() is not self.vsplit)
+        self._sections_changed()
+
+    def dock_viewer(self) -> None:
+        """Le texte du programme rendu à son panneau, sous les parties des plugins (il était au centre)."""
+        self.vsplit.addWidget(self.viewer)
+        self.vsplit.setStretchFactor(1, 1)
+        self.viewer.show()
+        self._sections_changed()
+
+    # --- les parties apportées par les plugins (atelier SimPL, 17/11) -------------------------------------------
+    def host_panel(self, key: str, title: str, widget, shown: bool = True) -> None:
+        """`widget` devient une partie repliable de l'onglet Programme, au-dessus du texte : un en-tête (son titre,
+        ▾ / ▸) qui la replie ou la déplie (retenu) ; `shown` faux : cachée tant que sa machine n'est pas choisie."""
+        from PySide6.QtWidgets import QSizePolicy, QToolButton
+        frame = QWidget()
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(0)
+        head = QToolButton()
+        head.setCheckable(True)
+        head.setAutoRaise(True)
+        head.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        head.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        head.setStyleSheet('QToolButton { text-align: left; font-weight: bold; }')
+        head.setToolTip(tr('Replier ou déplier cette partie (retenu)'))
+        fl.addWidget(head)
+        fl.addWidget(widget, 1)
+        self.hosted[key] = (frame, head, widget, str(title))
+        self._sections_lay.addWidget(frame, 1)
+        head.setChecked(_flag(self.win.settings.value(f'{SECTION_KEY}/{key}', 'true'), True))
+        head.toggled.connect(lambda on, k=key: self.fold_section(k, not on))
+        frame.setVisible(bool(shown))
+        self.fold_section(key, not head.isChecked(), remember=False)
+
+    def fold_section(self, key: str, folded: bool, remember: bool = True) -> None:
+        """La partie `key` repliée sous son en-tête, ou dépliée ; retenu."""
+        if key not in self.hosted:
+            return
+        frame, head, widget, title = self.hosted[key]
+        widget.setVisible(not folded)
+        if head.isChecked() == bool(folded):
+            blocked = head.blockSignals(True)
+            head.setChecked(not folded)
+            head.blockSignals(blocked)
+        head.setText(('▸ ' if folded else '▾ ') + title)
+        self._sections_lay.setStretchFactor(frame, 0 if folded else 1)
+        if remember:
+            self.win.settings.setValue(f'{SECTION_KEY}/{key}', not folded)
+        self._sections_changed()
+
+    def show_section(self, key: str, on: bool) -> bool:
+        """La partie `key` montrée (sa machine choisie) ou cachée. Rend vrai si elle a changé."""
+        if key not in self.hosted:
+            return False
+        frame = self.hosted[key][0]
+        if frame.isHidden() != bool(on):
+            return False
+        frame.setVisible(bool(on))
+        self._sections_changed()
+        return True
+
+    def sections_shown(self) -> list:
+        """Les clés des parties de plugin montrées (pour la machine du dessin)."""
+        return [k for k, e in self.hosted.items() if not e[0].isHidden()]
+
+    def _sections_changed(self) -> None:
+        shown = self.sections_shown()
+        self.sections_box.setVisible(bool(shown))
+        opened = any(not self.hosted[k][2].isHidden() for k in shown)
+        if opened or self.viewer.parentWidget() is not self.vsplit:
+            self.sections_box.setMaximumHeight(16777215)     # (le texte au centre : les parties ont toute la place)
+            return
+        self._sections_lay.activate()
+        self.sections_box.setMaximumHeight(max(24, self.sections_box.sizeHint().height()))
+
+    # --- la vue (menu « Vue ») -----------------------------------------------------------------------------------
+    def view(self) -> dict:
+        """La vue retenue : {'taille' (points, 0 : d'origine), 'numeros', 'retour', 'couleurs'}."""
+        st = self.win.settings
+        try:
+            size = int(float(st.value(f'{VIEW_KEY}/taille', 0) or 0))
+        except (TypeError, ValueError):
+            size = 0
+        return {'taille': size if size == 0 else max(TEXT_SIZES[0], min(TEXT_SIZES[1], size)),
+                'numeros': _flag(st.value(f'{VIEW_KEY}/numeros', 'true'), True),
+                'retour': _flag(st.value(f'{VIEW_KEY}/retour', 'false'), False),
+                'couleurs': _flag(st.value(f'{VIEW_KEY}/couleurs', 'true'), True)}
+
+    def set_view(self, key: str, value) -> None:
+        """Un réglage de la vue changé, retenu et appliqué."""
+        self.win.settings.setValue(f'{VIEW_KEY}/{key}', value)
+        self.apply_view()
+
+    def apply_view(self) -> None:
+        v = self.view()
+        f = QFont('Consolas')                            # sans taille : celle de l'application (réglage des polices)
+        f.setStyleHint(QFont.StyleHint.Monospace)
+        if v['taille']:
+            f.setPointSizeF(float(v['taille']))
+        else:
+            self.text.setFont(f)
+            got = self.text.font().pointSizeF()
+            self._base_size = got if got > 0 else 9.0
+        self.text.setFont(f)
+        self.text.set_numbers(v['numeros'])
+        self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if v['retour']
+                                  else QPlainTextEdit.LineWrapMode.NoWrap)
+        self.colored = v['couleurs']
+        want = self.text.document() if self.colored and not self._plain else None
+        if self.highlighter.document() is not want:
+            self.highlighter.setDocument(want)
+
+    def zoom(self, step: int) -> int:
+        """Le texte un point plus grand (`step` 1), plus petit (-1), ou à sa taille d'origine (0). Rend la taille."""
+        size = self.view()['taille'] or int(round(self._base_size))
+        size = 0 if step == 0 else max(TEXT_SIZES[0], min(TEXT_SIZES[1], size + int(step)))
+        self.set_view('taille', size)
+        return size or int(round(self._base_size))
+
+    def _fill_view_menu(self) -> None:
+        m = self.view_menu
+        m.clear()
+        v = self.view()
+        for text, step in ((tr('Agrandir le texte'), 1), (tr('Réduire le texte'), -1), (tr('Taille d’origine'), 0)):
+            a = m.addAction(text)
+            a.triggered.connect(lambda _=False, s=step: self.zoom(s))
+        m.addSeparator()
+        for key, text in (('numeros', tr('Numéros de ligne')), ('retour', tr('Retour à la ligne')),
+                          ('couleurs', tr('Couleurs du langage'))):
+            a = m.addAction(text)
+            a.setCheckable(True)
+            a.setChecked(v[key])
+            a.toggled.connect(lambda on, k=key: self.set_view(k, bool(on)))
+        a = m.addAction(tr('Plan du programme'))
+        a.setCheckable(True)
+        a.setChecked(not self.outline.isHidden())
+        a.toggled.connect(lambda on: self.set_outline_shown(bool(on)))
+        m.addSeparator()
+        m.addAction(tr('Replier chaque parcours')).triggered.connect(lambda _=False: self.fold_paths(True))
+        m.addAction(tr('Tout déplier')).triggered.connect(lambda _=False: self.fold_paths(False))
 
     def _dark(self) -> bool:
         return self.palette().base().color().lightness() < 128
@@ -296,15 +491,25 @@ class ProgramPanel(QWidget):
     def notify(self) -> None:
         """Le panneau FAO ou le dessin a changé : en direct, le programme est réécrit sous peu (les changements à la
         suite n'en font qu'un) ; caché, il attend d'être montré."""
-        if self.live.isChecked() and self.isVisible():
+        if self.live.isChecked() and self._seen():
             self.timer.start()
+
+    def _seen(self) -> bool:
+        """Le programme est-il à l'écran : le panneau, ou son texte seul au centre (la fenêtre fermée) ?"""
+        return self.isVisible() or self.viewer.isVisible()
+
+    def eventFilter(self, obj, ev):                      # noqa: N802 (API Qt)
+        from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'viewer', None) and ev.type() == QEvent.Type.Show:
+            QTimer.singleShot(0, self._shown)            # le texte seul montré (au centre) : mis à jour
+        return super().eventFilter(obj, ev)
 
     def showEvent(self, ev):                             # noqa: N802 (API Qt)
         super().showEvent(ev)
         QTimer.singleShot(0, self._shown)
 
     def _shown(self) -> None:
-        if self.isVisible() and (self.live.isChecked() or not self.files):
+        if self._seen() and (self.live.isChecked() or not self.files):
             self._live_refresh()
 
     def _live_refresh(self) -> None:
@@ -357,7 +562,8 @@ class ProgramPanel(QWidget):
             bar = self.text.verticalScrollBar()
             at = bar.value()
             plain = len(text) > MAX_COLORED or any(len(line) > MAX_LINE for line in text.split('\n'))
-            want = None if plain else self.text.document()
+            self._plain = plain
+            want = None if plain or not getattr(self, 'colored', True) else self.text.document()
             if self.highlighter.document() is not want:
                 self.highlighter.setDocument(want)
             self.text.set_program(text, self.fold_ranges(i))
@@ -574,7 +780,7 @@ class ProgramPanel(QWidget):
         """L'opération choisie dans le panneau FAO retrouvée dans le programme : sa première ligne surlignée et,
         quand c'est le choix qui change (`scroll`), amenée à l'écran (dans son fichier). Rend cette ligne ; -1 sans
         elle. Fenêtre cachée : rien."""
-        if not self.isVisible() and scroll:
+        if not self._seen() and scroll:
             return -1
         cp = self.win.cam_panel
         self.text.setExtraSelections([])

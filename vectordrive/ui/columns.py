@@ -658,6 +658,10 @@ class Columns(QObject):
         return ov
 
     def toggle_overlay(self, dock) -> bool:
+        w = self.win
+        if dock is getattr(w, 'dock_program', None) and callable(getattr(w, 'program_centered', None)) and \
+                w.program_centered():
+            w.program_center(False)                      # pas de plein écran par-dessus le programme au centre
         ov = self.overlay(dock)
         on = ov.set_active(not ov.active)
         self._place_grip(dock)
@@ -935,7 +939,8 @@ class PanelRows(QWidget):
     def _central(self, dock) -> bool:
         w = self.columns.win
         centered = getattr(w, 'program_centered', None)
-        return dock is getattr(w, 'dock_program', None) and callable(centered) and bool(centered())
+        whole = getattr(w, '_program_part', None) is getattr(w, 'program_panel', None)   # texte seul : rangé
+        return dock is getattr(w, 'dock_program', None) and callable(centered) and bool(centered()) and whole
 
     def rows(self) -> list:
         """Les panneaux listés : ceux de la colonne d'où le tableau est ouvert d'abord, puis les autres, par nom."""

@@ -7487,5 +7487,14 @@
  "Forme à la base d’un parcours calculé, déplacée ou modifiée": "Shape used by a computed toolpath, moved or changed",
  "Son contour clignote 2 s (Ctrl+Z pour revenir)": "Its outline flashes for 2 s (Ctrl+Z to go back)",
  "Bloquée : la modification est défaite aussitôt": "Locked: the change is undone at once",
- "Aucune alarme (comme le mode FAO de TypeEdit)": "No alarm (like the TypeEdit CAM mode)"
+ "Aucune alarme (comme le mode FAO de TypeEdit)": "No alarm (like the TypeEdit CAM mode)",
+ "Régler la vue du programme : taille du texte, numéros de ligne, retour à la ligne, couleurs, plan, blocs repliés": "Set the program view: text size, line numbers, word wrap, colours, outline, folded blocks",
+ "Replier ou déplier cette partie (retenu)": "Fold or unfold this part (remembered)",
+ "Agrandir le texte": "Larger text",
+ "Réduire le texte": "Smaller text",
+ "Taille d’origine": "Original size",
+ "Numéros de ligne": "Line numbers",
+ "Retour à la ligne": "Word wrap",
+ "Couleurs du langage": "Syntax colours",
+ "Replier chaque parcours": "Fold each toolpath"
 }

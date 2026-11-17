@@ -6039,6 +6039,9 @@ class MainWindow(QMainWindow):
         détachée et sans place à elle (pas remise par la session, ou hors de l'écran) : posée sur la moitié droite du
         dessin."""
         if self.program_centered():                      # déjà au centre, à la place du dessin : mis à jour
+            if getattr(self, '_program_part', None) is not self.program_panel:
+                self.dock_program.setVisible(True)       # le texte seul au centre : sa fenêtre (machine, parties)
+                self.dock_program.raise_()               # rouverte
             self.program_panel.refresh()
             return
         d = self.dock_program
@@ -6082,10 +6085,14 @@ class MainWindow(QMainWindow):
                     lay.setContentsMargins(0, 0, 0, 0)
                     self.stage.addWidget(page)
                     d.visibilityChanged.connect(self._program_dock_shown)
-                d.setWidget(QWidget())                   # sa place dans sa fenêtre : vide pendant ce temps
-                page.layout().addWidget(p)
-                p.show()
-                d.hide()
+                part = p.viewer if p.sections_shown() else p    # des parties de plugin (NeoDrive, opérations) :
+                self._program_part = part                # elles restent dans la colonne, le texte seul au centre
+                if part is p:
+                    d.setWidget(QWidget())               # sa place dans sa fenêtre : vide pendant ce temps
+                page.layout().addWidget(part)
+                part.show()
+                if part is p:
+                    d.hide()
                 self.stage.setCurrentWidget(page)
             else:
                 back = getattr(self, '_stage_before', 0)     # le dessin, ou la pièce en 3D : ce qui était montré
@@ -6093,15 +6100,19 @@ class MainWindow(QMainWindow):
                 if not (0 <= back < self.stage.count()) or self.stage.widget(back) is page:
                     back = 0
                 self.stage.setCurrentIndex(back)
-                hold = d.widget()
-                d.setWidget(p)
-                if hold is not None and hold is not p:
-                    hold.deleteLater()
-                p.show()
-                shown = bool(getattr(self, '_program_dock_was', True))
-                d.setVisible(shown)
-                if shown:
-                    d.raise_()                           # devant ses voisins d'onglet, comme avant
+                if getattr(self, '_program_part', p) is not p:
+                    p.dock_viewer()                      # le texte seul : rendu à son panneau, sous les parties
+                else:
+                    hold = d.widget()
+                    d.setWidget(p)
+                    if hold is not None and hold is not p:
+                        hold.deleteLater()
+                    p.show()
+                    shown = bool(getattr(self, '_program_dock_was', True))
+                    d.setVisible(shown)
+                    if shown:
+                        d.raise_()                       # devant ses voisins d'onglet, comme avant
+                self._program_part = None
                 if self.panel3d is not None and self.stage.currentWidget() is self.panel3d:
                     if self.panel3d.stale:               # la pièce a changé pendant ce temps : refaite
                         self.panel3d.refresh()
@@ -6117,7 +6128,8 @@ class MainWindow(QMainWindow):
     def _program_dock_shown(self, on: bool) -> None:
         """La fenêtre du programme montrée d'ailleurs (fenêtre d'une colonne, onglet FAO, disposition remise) alors
         qu'il est au centre : il y retourne — jamais une fenêtre vide."""
-        if on and not getattr(self, '_program_moving', False) and self.program_centered():
+        whole = getattr(self, '_program_part', None) is self.program_panel    # le texte seul au centre : sa fenêtre
+        if on and whole and not getattr(self, '_program_moving', False) and self.program_centered():   # n'est pas vide
             self._program_dock_was = True
             self.program_center(False)
 
@@ -6606,6 +6618,10 @@ class MainWindow(QMainWindow):
             if spec.posts and spec.key in self.A:
                 self.A[spec.key].setVisible(shown(spec.posts))
         for spec in REGISTRY.panels:
+            hosted = getattr(getattr(self, 'program_panel', None), 'hosted', {})
+            if getattr(spec, 'host', '') == 'programme' and spec.posts and spec.key in hosted:
+                self.program_panel.show_section(spec.key, shown(spec.posts))    # une partie de l'onglet Programme
+                continue
             dock = self.plugin_docks.get(spec.key) if hasattr(self, 'plugin_docks') else None
             if dock is not None and spec.posts:
                 on = shown(spec.posts)
@@ -6614,6 +6630,11 @@ class MainWindow(QMainWindow):
                 dock.setVisible(on)
                 if on and not was:
                     self.dock_full_height(dock)           # le panneau de la machine choisie : devant, sur la colonne
+        prog = getattr(self, 'program_panel', None)
+        if prog is not None and self.program_centered() and \
+                bool(prog.sections_shown()) == (getattr(self, '_program_part', None) is prog):
+            self.program_center(False)                   # des parties apparues ou disparues : au centre, le texte
+            self.program_center(True)                    # seul (parties dans la colonne) ou tout le panneau
         kind = m.kind if m is not None else ''
         if kind != getattr(self, '_machine_kind', ''):   # fraiseuse ↔ laser : la palette ne montre que ses parcours
             self._machine_kind = kind
@@ -6637,6 +6658,9 @@ class MainWindow(QMainWindow):
             except Exception as ex:                       # un plugin ne casse jamais la fenêtre
                 self.statusBar().showMessage(tr('Plugin : {0}').format(ex), 10000)
                 continue
+            if getattr(spec, 'host', '') == 'programme' and getattr(self, 'program_panel', None) is not None:
+                self.program_panel.host_panel(spec.key, tr(spec.title), w, shown=not spec.posts)
+                continue                                 # une partie de l'onglet Programme, pas un panneau à part
             d = QDockWidget(tr(spec.title), self)
             d.setObjectName(f'plugin_{spec.key}')
             if getattr(spec, 'short', ''):               # son libellé court, pour son onglet (`columns.short_title`)
@@ -9775,6 +9799,8 @@ class MainWindow(QMainWindow):
         self.finish_typing()                             # le texte qui s'écrit est fini avant d'être gardé
         if self.program_centered():                      # le programme rentre dans sa fenêtre : la session la retient
             self._program_dock_was = True                # ouverte, comme on l'a laissée
+            if getattr(self, '_program_part', None) is not self.program_panel:
+                self.dock_program.setVisible(True)       # (le texte seul au centre : sa fenêtre aussi)
             self.program_center(False)
         saved = False
         if self.session_dir is not None:                 # session silencieuse : tout est gardé, sans question

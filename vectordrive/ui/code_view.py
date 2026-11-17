@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
@@ -78,6 +78,7 @@ class CodeView(QPlainTextEdit):
         self._hidden: set = set()                        # les lignes cachées en ce moment (`_apply_folds`)
         self._ends: dict = {}                            # première ligne → dernière ligne de son bloc (`end_of`)
         self._ends_of = None                             # … calculé pour cette liste `regions`
+        self.numbers = True                              # les numéros de ligne dans la marge (`set_numbers`)
         self.gutter = _Gutter(self)
         self.blockCountChanged.connect(lambda _n: self._margins())
         self.updateRequest.connect(self._scrolled)
@@ -85,6 +86,8 @@ class CodeView(QPlainTextEdit):
 
     # --- la marge --------------------------------------------------------------------------------
     def gutter_width(self) -> int:
+        if not getattr(self, 'numbers', True):           # sans numéros : les marques de repli seules
+            return 6 + FOLD_W
         digits = max(3, len(str(max(1, self.blockCount()))))
         return 8 + self.fontMetrics().horizontalAdvance('9') * digits + FOLD_W
 
@@ -103,6 +106,23 @@ class CodeView(QPlainTextEdit):
         super().resizeEvent(ev)
         cr = self.contentsRect()
         self.gutter.setGeometry(QRect(cr.left(), cr.top(), self.gutter_width(), cr.height()))
+
+    def set_numbers(self, on: bool) -> None:
+        """Les numéros de ligne montrés dans la marge, ou cachés (les marques de repli restent)."""
+        self.numbers = bool(on)
+        self._refit()
+
+    def _refit(self) -> None:
+        """La marge refaite à sa largeur (numéros, police)."""
+        self._margins()
+        cr = self.contentsRect()
+        self.gutter.setGeometry(QRect(cr.left(), cr.top(), self.gutter_width(), cr.height()))
+        self.gutter.update()
+
+    def changeEvent(self, ev) -> None:                                    # noqa: N802
+        super().changeEvent(ev)
+        if ev.type() == QEvent.Type.FontChange:          # un texte plus grand : des numéros plus larges
+            self._refit()
 
     def _shown_blocks(self):
         """(bloc, haut, hauteur) des lignes montrées à l'écran, de haut en bas."""
@@ -137,8 +157,9 @@ class CodeView(QPlainTextEdit):
             if any(a <= n <= b for a, b in self.bands):
                 p.fillRect(QRectF(0, top, 3, h), BAND_EDGE)
             p.setPen(ink)
-            p.drawText(QRectF(0, top, w - FOLD_W - 4, fh), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       str(n + 1))
+            if self.numbers:
+                p.drawText(QRectF(0, top, w - FOLD_W - 4, fh),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(n + 1))
             if n in heads:
                 p.setPen(pal.text().color())
                 p.drawText(QRectF(w - FOLD_W, top, FOLD_W, fh), Qt.AlignmentFlag.AlignCenter,

@@ -7009,3 +7009,9 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Une forme usinée par un parcours calculé, déplacée ou modifiée** : son contour clignote en rouge pendant 2 secondes et la barre d'état rappelle Ctrl+Z pour revenir.
 - **Réglage** (F10 › FAO › « Forme à la base d'un parcours calculé, déplacée ou modifiée ») : clignoter (d'office) ; **bloquer** (la modification est défaite aussitôt, sans Ctrl+Y pour la refaire) ; **aucune alarme**, comme le mode FAO de TypeEdit.
 - Seules comptent les formes que le calcul a lues : une forme dessinée après dans la même couleur n'alarme pas. Défaire ou refaire, la date du jour posée avant un calcul, un autre dessin ne déclenchent rien ; une forme supprimée ne clignote pas (la liste des parcours le signale déjà).
+### v0.923.0 — Onglet Programme : les fonctions de la machine et une vue réglable
+
+- **Les fonctions propres à une machine** (apportées par un plugin) peuvent maintenant se ranger dans l'onglet **Programme**, au-dessus du texte du programme, en parties repliables (▾ / ▸ sur leur en-tête, retenu) ; elles n'apparaissent que lorsque leur machine est choisie.
+- **Au centre** (bouton ▣) : quand ces parties sont montrées, seul le texte du programme prend la place du dessin, entre les colonnes ; la machine et les parties restent dans la colonne, à portée de main.
+- Au centre, le texte a son propre bouton ⟳ (mettre à jour) ; « Programme machine » rouvre la fenêtre de la colonne.
+- **Menu « Vue »** du programme : agrandir ou réduire le texte, taille d'origine, numéros de ligne, retour à la ligne, couleurs du langage, plan du programme, replier chaque parcours ou tout déplier — retenus d'une fois sur l'autre.
