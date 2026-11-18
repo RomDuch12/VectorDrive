@@ -141,7 +141,7 @@ def program_one(src: str, out: str, tpl: dict | None = None, key: str = '', *, r
             tps, origin, box = post.oriented(tps, how, (box[0], box[1], box[3], box[4]), origin, box)
         results = [(part, post.run(k, part, s, title=src_p.stem,
                                    stem=f'{out_p.name}_{suffix}' if suffix else out_p.name,
-                                   box_mm=box, out_dir=str(out_p.parent), origin=origin))
+                                   box_mm=box, out_dir=str(out_p.parent), origin=origin, **post.attach_kw()))
                    for suffix, part in post.program_groups(tps, s.program_group, plan_of(doc, s))]
         files = [(out_p.parent / name, text, r.encoding) for _p, r in results for name, text in r.files]
         warnings = [w for _p, r in results for w in r.warnings]
@@ -165,9 +165,18 @@ def program_one(src: str, out: str, tpl: dict | None = None, key: str = '', *, r
         for f, text, enc in files:
             f.write_text(text, encoding=enc, errors='replace', newline='\r\n')
             taken[str(f.resolve()).lower()] = src
+        joined = []                                  # les fichiers joints (l'image de l'aperçu…), à côté
+        for _p, r in results:
+            skip = [f for f, _d in post.attachment_paths(r, out_p.parent)
+                    if str(f.resolve()).lower() in mine or (f.exists() and (not overwrite or _is_drawing(f)))
+                    or str(f.resolve()).lower() in taken]
+            for f in post.write_attachments(r, out_p.parent, skip):
+                taken[str(f.resolve()).lower()] = src
+                joined.append(f)
+            warnings += [w for w in r.warnings if w.startswith('fichier joint non écrit')]
         for part, r in results:                      # programme relu et comparé aux parcours, comme au post-traitement
             warnings = postcheck.verify(r.files, part, s, origin) + warnings
-        return 'fait', src, [str(f) for f, _t, _e in files], warnings
+        return 'fait', src, [str(f) for f, _t, _e in files] + [str(f) for f in joined], warnings
     except progress.Cancelled:
         raise
     except Exception as ex:                          # un dessin abîmé n'arrête pas le lot

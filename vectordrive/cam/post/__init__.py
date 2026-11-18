@@ -33,6 +33,44 @@ class PostResult:
     #: numérotées de 0, 'kind' : 'sequence', 'parcours'…, 'label' : son nom, 'path' : rang du parcours parmi ceux
     #: reçus (absent : aucun)}] ; la fenêtre du programme en fait son plan, ses blocs repliables et ses surlignages
     sections: list = field(default_factory=list)
+    #: facultatif — fichiers binaires joints au programme, écrits à côté de lui : [(nom de fichier, octets)] (l'image
+    #: de l'aperçu du programme Datron…) ; donnés seulement quand le post est appelé avec `attach` (à l'écriture)
+    attachments: list = field(default_factory=list)
+
+
+def attach_kw() -> dict:
+    """{'attach': True} pour `run` à l'écriture ; {} si `run` a été remplacé par une fonction qui ne connaît pas ce
+    paramètre (un essai, un plugin qui l'enveloppe) : l'écriture reste celle d'avant."""
+    return {'attach': True} if _named(run, 'attach') else {}
+
+
+def attachment_paths(res, folder) -> list:
+    """Les chemins où iront les fichiers joints de `res` dans `folder` (nom seul ; contenus en octets seulement)."""
+    out = []
+    for name, data in list(getattr(res, 'attachments', None) or ()):
+        name = pathlib.Path(str(name)).name
+        if name and isinstance(data, (bytes, bytearray)):
+            out.append((pathlib.Path(folder) / name, bytes(data)))
+    return out
+
+
+def write_attachments(res, folder, skip=()) -> list:
+    """Les fichiers joints de `res` écrits dans `folder` ; rend leurs chemins. Un nom avec un dossier est ramené à
+    son nom seul (rien n'est écrit ailleurs) ; un contenu qui n'est pas en octets est laissé de côté ; `skip` : chemins
+    à ne pas écrire. Un fichier qui ne s'écrit pas (verrouillé…) est noté dans les avertissements de `res`, sans
+    arrêter le reste."""
+    out = []
+    banned = {str(pathlib.Path(x)).lower() for x in skip}
+    for f, data in attachment_paths(res, folder):
+        if str(f).lower() in banned:
+            continue
+        try:
+            f.write_bytes(data)
+        except OSError as ex:
+            res.warnings = list(res.warnings) + [f'fichier joint non écrit : {f.name} ({ex})']
+            continue
+        out.append(f)
+    return out
 
 
 def ascii_only(s: str) -> str:
@@ -429,7 +467,8 @@ def doc_operations(key: str, doc) -> int:
 
 
 def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str = 'programme',
-        box_mm=None, out_dir: str = '', origin=None, doc=None, preview: bool = False) -> PostResult:
+        box_mm=None, out_dir: str = '', origin=None, doc=None, preview: bool = False,
+        attach: bool = False) -> PostResult:
     """Programme machine des parcours par le post-processeur `key` (d'un
     plugin, ou tiré d'une fiche machine par le plugin qui sait la lire) ;
     `out_dir` : dossier où les fichiers seront écrits — un post-processeur
@@ -440,7 +479,8 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
     `doc` (et `origin`, s'il l'a aussi) pour qu'il écrive les opérations
     propres à la machine que le dessin porte (voir `doc_operations`) ;
     `preview` : un aperçu (fenêtre Programme), dit au post qui a ce paramètre
-    — il peut y écrire plus vite (calculs longs laissés à l'écriture)."""
+    — il peut y écrire plus vite (calculs longs laissés à l'écriture) ; `attach` : l'écriture du programme, dite au
+    post qui a ce paramètre — il y joint ses fichiers binaires (`PostResult.attachments`)."""
     fn, machine = _resolve(key, machine)
     if fn is None:
         raise PostError(f'post-processeur « {key} » absent (il est apporté par un plugin)')
@@ -471,6 +511,8 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
             extra['origin'] = origin
     if preview and _named(fn, 'preview'):
         extra['preview'] = True
+    if attach and not preview and _named(fn, 'attach'):
+        extra['attach'] = True
     res = fn(toolpaths, setup, title=title, machine=machine, stem=stem, box_mm=box_mm, **extra)
     if not res.files and res.text:                     # texte vide : export refusé ou rien à écrire
         res.files = [(stem + res.extension, res.text)]

@@ -7070,3 +7070,8 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Dans le panneau Couleur, un double clic sur une couleur ouvre la nouvelle fenêtre de couleur (le clic droit aussi) : une roue des teintes (la saturation va du centre au bord) et une barre de luminosité, des curseurs Rouge / Vert / Bleu, Teinte / Saturation / Luminosité et Cyan / Magenta / Jaune / Noir, chacun avec son champ, et le code hexadécimal (#RRVVBB ou #RVB).
 - La couleur de départ et la nouvelle sont côte à côte ; un clic sur la couleur de départ y revient.
 - La même fenêtre sert au tableau des outils (double clic sur une couleur) et à Édition › Couleur… (la couleur propre des objets).
+### v0.934.0 — Fichiers joints au programme machine
+
+- Un post-processeur peut joindre des fichiers au programme qu’il écrit (une image d’aperçu, par exemple) : ils sont écrits à côté du programme, au post-traitement, à la parcellisation et au post-traitement en série.
+- Ils ne sont faits qu’à l’écriture, jamais pour l’aperçu du programme. Un nom de fichier joint qui désigne un autre dossier est ramené à son nom seul.
+- Pour les plugins : `PostResult.attachments` ([(nom, octets)]) et le paramètre `attach` du post-processeur.

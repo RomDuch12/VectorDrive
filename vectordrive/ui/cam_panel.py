@@ -6437,12 +6437,14 @@ class CamPanel(QWidget):
         self.win.settings.setValue('dossier/programmes', str(out.parent))
         groups = post.program_groups(tps, s.program_group, self._plan_of_path)
         results = [(part, post.run(key, part, s, title=title, stem=f'{out.stem}_{suffix}' if suffix else out.stem, box_mm=box,
-                                   out_dir=str(out.parent), origin=origin,
+                                   out_dir=str(out.parent), origin=origin, **post.attach_kw(),
                                    doc=mine_doc if gi == len(groups) - 1 else None))      # une seule fois : à la fin
                    for gi, (suffix, part) in enumerate(groups)]
         others = [out.with_name(name) for _p, r in results for name, _t in r.files if out.with_name(name) != out]
         others = [f.name for f in others if f.exists()]          # le nom choisi a déjà été confirmé par la fenêtre
-        if others and len(results) > 1 and QMessageBox.question(
+        joined = [f.name for _p, r in results for f, _d in post.attachment_paths(r, out.parent) if f.exists()]
+        others += [n for n in joined if n not in others]          # un fichier joint (l'image…) qui existe : demandé
+        if others and (len(results) > 1 or joined) and QMessageBox.question(
                 self, tr('Programme machine'), tr('Ces fichiers existent déjà. Les remplacer ?') + '\n\n' + '\n'.join(others[:20])
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -6454,6 +6456,7 @@ class CamPanel(QWidget):
                 f = out.with_name(name)
                 f.write_text(text, encoding=r.encoding, errors='replace', newline='\r\n')
                 written.append(f.name)
+            written += [f.name for f in post.write_attachments(r, out.parent)]   # l'image de l'aperçu…
             try:                                         # programme relu et comparé aux parcours (sans les
                 r.warnings = run(self.win, tr('Contrôle du programme écrit'), postcheck.verify,  # opérations propres
                                  getattr(r, 'check_files', None) or r.files, part, s, origin) + r.warnings  # à la machine)
@@ -6552,13 +6555,14 @@ class CamPanel(QWidget):
             origin = p.origin(where)
             stem = f'{out.stem}_P{p.rank:02d}'
             res = post.run(key, cut[p.rank], s, title=f'{title} - {p.rank}/{len(panels)}', stem=stem, box_mm=box,
-                           out_dir=str(out.parent), origin=origin)
+                           out_dir=str(out.parent), origin=origin, **post.attach_kw())
             if not res.files:
                 warnings.append(tr('Panneau {0} : aucun programme.').format(p.rank))
             for name, text in res.files:
                 f = out.with_name(name)
                 f.write_text(text, encoding=res.encoding, errors='replace', newline='\r\n')
                 written.append(f)
+            written += post.write_attachments(res, out.parent)
             names[p.rank] = res.files[0][0] if res.files else stem
             try:
                 problems = run(self.win, tr('Contrôle du programme écrit'), postcheck.verify, res.files, cut[p.rank], s,
