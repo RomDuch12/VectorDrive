@@ -301,7 +301,10 @@ class Api:
         dans le dessin), 'label', 'tool', 'tip', 'enabled'}] ; facultatifs : `provider.label` (colonne Stratégie),
         `provider.posts` (clés des post-processeurs qui les écrivent ; vide : tous), `set_enabled(dessin, ref, oui)`,
         `edit(fenêtre, ref)` (double clic, Modifier), `reload(fenêtre, ref, identifiants des formes)` → vrai si fait
-        (⟳), `remove(fenêtre, ref)` → vrai si retirée (Suppr). Une ligne neuve s'ajoute en fin de liste ; ↑ / ↓ la
+        (⟳), `remove(fenêtre, ref)` → vrai si retirée (Suppr), `rename(dessin, ref, nom)` → vrai si renommée (double
+        clic sur le nom, Renommer… ; avec `renamable(dessin, ref)` → faux : la ligne ne se renomme pas et son double
+        clic l'ouvre ; `name_of(dessin, ref)` : le nom proposé ; `undo_keys` : les clés de `doc.extra` que Ctrl+Z
+        rend). Une ligne neuve s'ajoute en fin de liste ; ↑ / ↓ la
         placent entre les parcours ; le post-processeur reçoit, à son rang, un parcours dont le cycle est
         `{'kind': 'instruction', 'name': 'externe', 'params': {'provider', 'ref', …}}`. Le plugin rafraîchit la liste
         (`fenêtre.cam_panel.refresh()`) quand ses opérations changent."""

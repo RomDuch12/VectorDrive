@@ -711,6 +711,8 @@ class MainWindow(QMainWindow):
         _QA.instance().installEventFilter(self)
         from . import wheelguard
         wheelguard.install(_QA.instance())               # la molette ne change pas une liste déroulante au survol
+        from . import pathmemory
+        pathmemory.install()                             # chaque fenêtre de fichier rouvre là où l'on a choisi
         from . import fullclose
         fullclose.install(_QA.instance())                # toute fenêtre en plein écran : un « ✕ » pour la fermer
         self.vd_own_close = True                         # (sauf celle-ci : ses boutons sont dans le ruban)
@@ -1258,8 +1260,8 @@ class MainWindow(QMainWindow):
           tip=tr('Personnaliser l\'interface : thèmes sur aperçu, couleurs de l\'interface et du plan de '
                  'travail, import et export'))
         a('ribbon_collapse', tr('Réduire le ruban'), self._set_ribbon_collapsed, 'Ctrl+F1', 'ribbon', checkable=True,
-          tip=tr('Ruban réduit aux onglets (un clic sur un onglet le déplie le temps d\'une commande ; '
-                 'double-clic sur un onglet : réduire ou déplier)'))
+          tip=tr('Ruban réduit aux onglets ; seul le petit bouton ˄ / ˅ au bout de la rangée des onglets (ou '
+                 'Ctrl+F1) le plie et le déplie'))
         self.A['tool_colors'].setChecked(True)
         # vues de TypeEdit : Ctrl+1 à Ctrl+6 (Ctrl+7 sens, Ctrl+8 couleur des traits, Ctrl+9 remplissage)
         a('view_2d', tr('2D'), lambda: self.set_view_mode('2d'), 'Ctrl+1', 'view_2d',
@@ -3574,7 +3576,6 @@ class MainWindow(QMainWindow):
             cx, cy = (bb[0] + bb[2]) / 2 - ox, (bb[1] + bb[3]) / 2 - oy
             txt = (f'{n} {kind} (L {w:.3f} mm, H {h:.3f} mm)  '
                    f'[ Cx {cx:.3f} mm  Cy {cy:.3f} mm ]')
-            short = txt                                  # le ruban garde le texte court : la place y est comptée
             # barre d'état, toujours : le périmètre des contours fermés, la longueur des ouverts (demande du 15/11,
             # 19 h 35)
             closed, opened = self.selection_lengths(limit=PERIMETER_LIVE_LIMIT) or (0.0, 0.0)
@@ -3583,10 +3584,11 @@ class MainWindow(QMainWindow):
             if opened > 0:
                 txt += '  ' + tr('Longueur {0:.3f} mm').format(opened)
         else:
-            txt = short = ''
+            txt = ''
         self.lbl_sel.setText(txt)
         self.lbl_sel.setToolTip(txt)                     # fenêtre étroite : le texte coupé se lit dans la bulle
-        self.ribbon.info.setText(short)
+        self.ribbon.info.clear()                         # la barre d'état seule, au pied de la fenêtre : plus rien dans
+        #                                                  la rangée des onglets (demande du 18/11 soir)
         self.dims.refresh()
 
     def _text_context(self, raise_tab: bool = False) -> None:
@@ -8465,6 +8467,10 @@ class MainWindow(QMainWindow):
             self.canvas.update()
         st = t.view_state if keep_view else None
         self.canvas.set_solo(st.get('solo') if st else None)
+        # le pas des flèches saisi (Ctrl+flèche) : celui de cet onglet ; un onglet neuf, celui des options (demande
+        # du 18/11 soir : « pas déplacement flèche propre à chaque onglet »)
+        step = st.get('arrow_step') if st else None
+        self.canvas.arrow_step = float(step) if isinstance(step, (int, float)) and step > 0 else None
         if st:
             self._apply_view_state(st)
         self.layers_panel.refresh()
@@ -8492,7 +8498,7 @@ class MainWindow(QMainWindow):
         zooms précédents, calque seul, 2D / 3D, caméra 3D, affichages."""
         c = self.canvas
         st = {'views': list(c._views), 'solo': c.solo_layer, 'mode': self.view_mode(),
-              'flags': {k: bool(getattr(c, k)) for k in self.VIEW_FLAGS}}
+              'flags': {k: bool(getattr(c, k)) for k in self.VIEW_FLAGS}, 'arrow_step': c.arrow_step}
         v = getattr(self.panel3d, 'view', None) if self.panel3d is not None else None
         if v is not None:
             st['cam3d'] = {k: getattr(v, k) for k in self.VIEW_3D}

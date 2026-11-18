@@ -172,7 +172,7 @@ class StatusBar(WithWindow):
         self.assertIn('Longueur 15.000 mm', text)
         self.assertEqual(self.w.lbl_sel.toolTip(), text)                     # coupé dans une fenêtre étroite : la bulle
         self.assertNotIn('Périmètre', self.w.ribbon.info.text())             # le ruban garde le texte court
-        self.assertIn('2 ', self.w.ribbon.info.text())
+        self.assertEqual(self.w.ribbon.info.text(), '')                    # la barre d'état seule (18/11 soir)
         self.w.canvas.select([])
         self.assertEqual((self.w.lbl_sel.text(), self.w.ribbon.info.text()), ('', ''))
         self.assertEqual(geom.Path([geom.rect(0, 0, 3, 4), geom.polyline([(0, 0), (3, 4)], closed=False)]).lengths(),

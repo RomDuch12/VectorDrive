@@ -7604,5 +7604,15 @@
  "{0} objet(s) coupé(s)": "{0} object(s) cut",
  "Rien à retirer ici": "Nothing to remove here",
  "Orientation de sortie : les opérations propres à la machine (celles de son plugin) ne sont pas écrites, elles ne suivent pas l'orientation": "Output orientation: the machine-specific operations (those of its plugin) are not written, they do not follow the orientation",
- "Opérations propres à la machine (celles de son plugin) : non écrites dans les programmes par panneau": "Machine-specific operations (those of its plugin): not written in the per-panel programs"
+ "Opérations propres à la machine (celles de son plugin) : non écrites dans les programmes par panneau": "Machine-specific operations (those of its plugin): not written in the per-panel programs",
+ "Opération de {0} : double clic sur son nom pour la renommer, ailleurs pour la régler": "{0} operation: double-click on its name to rename it, elsewhere to set it",
+ "Le nom de l'opération dans la liste (aussi : double clic sur son nom)": "The name of the operation in the list (also: double-click on its name)",
+ "« {0} » : son plugin ne la renomme pas": "“{0}”: its plugin does not rename it",
+ "Nom de l'opération :": "Operation name:",
+ "Renommer l'opération": "Rename the operation",
+ "Opération renommée : {0}": "Operation renamed: {0}",
+ "Ruban réduit aux onglets ; seul le petit bouton ˄ / ˅ au bout de la rangée des onglets (ou Ctrl+F1) le plie et le déplie": "Ribbon reduced to its tabs; only the small ˄ / ˅ button at the end of the tab row (or Ctrl+F1) folds and unfolds it",
+ "Plier le ruban (Ctrl+F1)": "Fold the ribbon (Ctrl+F1)",
+ "Déplier le ruban (Ctrl+F1)": "Unfold the ribbon (Ctrl+F1)",
+ "Ruban réduit aux onglets (Ctrl+F1, ou le bouton ˄ / ˅ au bout des onglets)": "Ribbon reduced to its tabs (Ctrl+F1, or the ˄ / ˅ button at the end of the tabs)"
 }

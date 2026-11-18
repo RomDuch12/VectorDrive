@@ -2266,8 +2266,7 @@ class CamPanel(QWidget):
         self.ops.verticalHeader().hide()
         self.ops.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.ops.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.ops.doubleClicked.connect(lambda i: None if i.column() in (self.EYE_COL, self.REFRESH_COL) else
-                                       self.edit_op())
+        self.ops.doubleClicked.connect(lambda i: self._op_double_clicked(i))
         self.ops.itemChanged.connect(self._op_checked)
         self.ops.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.ops.customContextMenuRequested.connect(lambda pos: self.op_menu(pos))
@@ -2934,7 +2933,10 @@ class CamPanel(QWidget):
             if external.is_external(o):                  # opération d'un plugin : ce qu'il en dit
                 cols = external.columns(o)
                 cols = (tr(cols[0]),) + cols[1:]
-                it.setToolTip(o.params.get('tip') or tr('Opération de {0} : double clic pour la régler').format(cols[0]))
+                it.setToolTip(o.params.get('tip') or (
+                    tr('Opération de {0} : double clic sur son nom pour la renommer, ailleurs pour la régler')
+                    if external.can_rename(o, self.doc) else tr('Opération de {0} : double clic pour la régler')
+                ).format(cols[0]))
             for c, v in enumerate(cols, start=1):
                 cell = QTableWidgetItem(v)
                 if c == 2 and t is not None:
@@ -3717,6 +3719,8 @@ class CamPanel(QWidget):
         a.setEnabled(has_sel)
         a.setToolTip(tr('Mêmes réglages, sur les objets sélectionnés ; parcours recalculé'))
         m.addAction(tr('Modifier…'), self.edit_op).setShortcut('Ctrl+M')
+        a = m.addAction(tr('Renommer…'), lambda: self.rename_op())
+        a.setToolTip(tr('Le nom de l\'opération dans la liste (aussi : double clic sur son nom)'))
         m.addAction(tr('Dupliquer'), self.duplicate_op)
         m.addAction(tr('Supprimer'), self.remove_op).setShortcut('Del')
         _s, r, op = self._current_op()
@@ -3770,6 +3774,81 @@ class CamPanel(QWidget):
             m.exec(self.ops.viewport().mapToGlobal(pos) if pos is not None else self.cursor().pos())
             m.deleteLater()
         return m
+
+    def _op_double_clicked(self, index) -> None:
+        """Double clic dans la liste des opérations : sur le nom d'une opération, la renommer (demande du 18/11
+        soir) ; ailleurs, la modifier. L'œil et ⟳ ont leur propre clic."""
+        c = index.column()
+        if c in (self.EYE_COL, self.REFRESH_COL):
+            return
+        n = getattr(self, '_n_ops', None)
+        if c == 0 and n is not None and index.row() < n:
+            from ..cam import external
+            s, _r, op = self._current_op()
+            if op is not None and (not external.is_external(op) or external.can_rename(op, self.doc)):
+                self.rename_op()
+                return                                   # (une ligne que son plugin ne renomme pas : elle s'ouvre)
+        self.edit_op()
+
+    def rename_op(self, name: str | None = None) -> bool:
+        """Renommer l'opération choisie (double clic sur son nom, clic droit › Renommer…). Un nom vide : le nom
+        d'office (son type). Une opération de plugin : son plugin la renomme (son nom suit sa ligne). Ctrl+Z rend
+        l'ancien nom ; les parcours déjà calculés prennent le neuf (commentaires et noms du programme). `name` :
+        réponse donnée d'avance (essais). False : rien de changé."""
+        s, r, op = self._current_op()
+        if op is None:
+            return False
+        from ..cam import external
+        default = tr(model.op_kinds().get(op.kind, op.kind))
+        ext = external.is_external(op)
+        if ext and not external.can_rename(op, self.doc):
+            self.win.statusBar().showMessage(tr('« {0} » : son plugin ne la renomme pas').format(
+                self.op_label(op)), 8000)
+            return False
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+            shown = (external.call(op, 'name_of', self.doc, external.ref_of(op), default=None) if ext else None) \
+                or op.name or default
+            name, ok = QInputDialog.getText(self, tr('Renommer'), tr('Nom de l\'opération :'), text=str(shown))
+            if not ok:
+                return False
+        name = ' '.join(str(name).split())
+        push = getattr(self.win, 'push_undo', None)
+        if ext:
+            if not name:
+                return False
+            import contextlib
+            one = getattr(self.win, 'one_undo', None)
+            with (one(tr('Renommer l\'opération'), with_cam=True, keys=external.undo_keys(op)) if callable(one)
+                  else contextlib.nullcontext({})) as step:
+                done = external.call(op, 'rename', self.doc, external.ref_of(op), name, default=None)
+                step['used'] = done is True              # rien de changé : pas de pas d'annulation
+            if done is not True:
+                self.win.statusBar().showMessage(tr('« {0} » : son plugin ne la renomme pas').format(
+                    self.op_label(op)), 8000)
+                return False
+            self.save(s)                                 # la liste relit les lignes du plugin : le nom neuf
+            self._rename_toolpaths(s)
+            self._select_row(self.ops, r)
+            return True
+        new = '' if name == default else name
+        if new == (op.name or ''):
+            return False
+        if callable(push):
+            push(tr('Renommer l\'opération'), with_cam=True)
+        op.name = new
+        self.save(s)
+        self._rename_toolpaths(s)
+        self._select_row(self.ops, r)
+        self.win.statusBar().showMessage(tr('Opération renommée : {0}').format(self.op_label(op)), 5000)
+        return True
+
+    def _rename_toolpaths(self, s) -> None:
+        """Les parcours déjà calculés prennent le nom de leur opération (il s'écrit dans le programme)."""
+        names = {o.id: o.name for o in s.operations}
+        for tp in self.toolpaths:
+            if tp.op_id in names:
+                tp.name = names[tp.op_id]
 
     def _current_op(self):
         s = self.setup()

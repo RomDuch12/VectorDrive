@@ -42,7 +42,8 @@ class TestOpMenu(unittest.TestCase):
     def test_menu_and_update(self):
         m = self.cp.op_menu(exec_menu=False)
         texts = [a.text() for a in m.actions() if not a.isSeparator()]
-        self.assertEqual(texts, ['Mettre à jour avec le dessin sélectionné', 'Modifier…', 'Dupliquer', 'Supprimer',
+        self.assertEqual(texts, ['Mettre à jour avec le dessin sélectionné', 'Modifier…', 'Renommer…', 'Dupliquer',
+                                 'Supprimer',
                                  'Lier au parcours précédent', 'Informations…', 'Compte rendu parcours outil…',
                                  'Afficher ou cacher le parcours', 'Inverser le sens du parcours',
                                  'Retirer le parcours calculé',

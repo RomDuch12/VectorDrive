@@ -30,6 +30,22 @@ def provider_of(op):
     return providers().get(str((getattr(op, 'params', None) or {}).get('provider', '')))
 
 
+def can_rename(op, doc) -> bool:
+    """Son plugin renomme-t-il cette opération (`rename`, et `renamable(dessin, ref)` s'il le dit) ?"""
+    p = provider_of(op)
+    if p is None or not callable(getattr(p, 'rename', None)):
+        return False
+    if not callable(getattr(p, 'renamable', None)):
+        return True
+    return bool(call(op, 'renamable', doc, ref_of(op), default=False))
+
+
+def undo_keys(op) -> tuple:
+    """Les réglages du dessin (`doc.extra`) où son plugin garde ses opérations : Ctrl+Z les rend."""
+    keys = getattr(provider_of(op), 'undo_keys', ()) or ()
+    return tuple(str(k) for k in keys) if isinstance(keys, (tuple, list)) else ()
+
+
 #: (fournisseur, ses post-processeurs, post-processeur du dessin) → s'il écrit avec lui : une fiche machine se
 #: résout en lisant des fichiers, et la liste des opérations se refait souvent
 _MATCHES: dict = {}

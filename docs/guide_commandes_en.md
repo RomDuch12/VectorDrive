@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.938.0
+# Command guide — VectorDrive 0.940.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -199,7 +199,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Dark mode |  | Switch from the preferred light theme to the preferred dark theme (F10 > Appearance) |
 | Customize |  | Customize the interface: themes with preview, interface and workspace colours, import and export |
 | Customize the ribbon |  | Your own tabs, named and placed where you want: your commands in groups, with the label you choose; shown tabs. Right-click a ribbon command: add it to one of your tabs |
-| Collapse the ribbon | Ctrl+F1 | Ribbon reduced to its tabs (clicking a tab unfolds it for one command; double-click a tab: collapse or expand) |
+| Collapse the ribbon | Ctrl+F1 | Ribbon reduced to its tabs; only the small ˄ / ˅ button at the end of the tab row (or Ctrl+F1) folds and unfolds it |
 | Colour-blind colours |  | CAM toolpaths and intersection marks in colours that can be told apart without red and green (Okabe–Ito palette) |
 | Full screen | F12, Shift+F11 | VectorDrive on the whole screen, without title bar; F12 a 2nd time: the Windows taskbar stays visible and usable; a 3rd time: the window; remembered at the next start |
 | Keep the taskbar |  | Full screen: the Windows taskbar stays visible and usable (VectorDrive without frame on the rest of the screen) |

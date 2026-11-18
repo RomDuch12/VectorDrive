@@ -89,7 +89,7 @@ SPEC: list[tuple[str, list[Opt]]] = [
           [('place', 'Repliés en familles quand la place manque'),
            ('toujours', 'Toujours repliés en familles (un clic déroule la barre)')],
           tip='Le ruban ne défile jamais : une famille repliée est un bouton, un clic dessus déroule sa barre'),
-        B('vue/ruban_reduit', 'Ruban réduit aux onglets (Ctrl+F1, double-clic sur un onglet)', False),
+        B('vue/ruban_reduit', 'Ruban réduit aux onglets (Ctrl+F1, ou le bouton ˄ / ˅ au bout des onglets)', False),
         C('vue/disposition', 'Disposition du ruban', 'theme',
           [('theme', 'Selon le thème (TypeEdit 13 : celle de TypeEdit 13)'), ('vectordrive', 'VectorDrive'),
            ('typeedit13', 'TypeEdit 13 (lue dans le TypeEdit 13 du poste)')]),

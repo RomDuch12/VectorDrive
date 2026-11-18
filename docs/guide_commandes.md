@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.938.0
+# Guide des commandes — VectorDrive 0.940.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -199,7 +199,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Mode sombre |  | Passer du thème clair préféré au thème sombre préféré (F10 > Apparence) |
 | Personnaliser |  | Personnaliser l'interface : thèmes sur aperçu, couleurs de l'interface et du plan de travail, import et export |
 | Personnaliser le ruban |  | Onglets à soi, nommés et placés où l'on veut : vos commandes en groupes, au libellé choisi ; onglets affichés. Clic droit sur une commande du ruban : l'ajouter à un onglet à soi |
-| Réduire le ruban | Ctrl+F1 | Ruban réduit aux onglets (un clic sur un onglet le déplie le temps d'une commande ; double-clic sur un onglet : réduire ou déplier) |
+| Réduire le ruban | Ctrl+F1 | Ruban réduit aux onglets ; seul le petit bouton ˄ / ˅ au bout de la rangée des onglets (ou Ctrl+F1) le plie et le déplie |
 | Couleurs pour daltoniens |  | Parcours FAO et repères d'intersection dans des couleurs qui se distinguent sans le rouge et le vert (palette d'Okabe et Ito) |
 | Plein écran | F12, Shift+F11 | VectorDrive sur tout l'écran, sans barre de titre ; F12 une 2e fois : la barre des tâches de Windows reste visible et utilisable ; une 3e fois : la fenêtre ; retenu au lancement suivant |
 | Garder la barre des tâches |  | Plein écran : la barre des tâches de Windows reste visible et utilisable (VectorDrive sans cadre sur le reste de l'écran) |

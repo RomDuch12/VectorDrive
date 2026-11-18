@@ -262,9 +262,7 @@ class TestWindow(unittest.TestCase):
         w.A['ribbon_collapse'].setChecked(True)
         self.assertLess(w.ribbon.height(), full / 2)
         self.assertEqual(w.settings.value('vue/ruban_reduit') in (True, 'true'), True)
-        w.ribbon._tab_clicked(w.ribbon.currentIndex())                  # un clic déplie le temps d'une commande
-        self.assertEqual(w.ribbon.height(), full)
-        w.ribbon._command_done()
+        w.ribbon._tab_clicked(w.ribbon.currentIndex())                  # un clic d'onglet ne déplie plus (18/11 soir)
         self.assertLess(w.ribbon.height(), full / 2)
         w.A['ribbon_collapse'].setChecked(False)
         for k in ('vue/ruban_icones', 'vue/ruban_libelles'):

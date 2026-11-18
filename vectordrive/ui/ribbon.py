@@ -1,8 +1,8 @@
-"""Ruban façon TypeEdit : onglets, groupes d'icônes titrés, et zone
-d'informations sur la sélection en bout de ruban. Réglable (F10 >
+"""Ruban façon TypeEdit : onglets et groupes d'icônes titrés (la sélection :
+dans la barre d'état, au pied de la fenêtre). Réglable (F10 >
 Apparence) : taille des icônes, libellés, légendes des groupes ; réduit
-aux onglets par un double-clic (un clic sur un onglet le déplie le temps
-d'une commande).
+aux onglets par son petit bouton ˄ / ˅ au bout de la rangée des onglets (ou
+Ctrl+F1), et par lui seul.
 
 Jamais de défilement horizontal : quand la fenêtre est trop étroite pour un
 onglet, ses petits boutons perdent d'abord leur libellé (icône seule, le nom
@@ -519,14 +519,14 @@ class Ribbon(QTabWidget):
         #: mode simple : fonction(commande) → son bouton est-il montré ? None (mode expert) : tous
         self.mode_filter = None
         self._refreshing = False
-        self.tabBarDoubleClicked.connect(lambda _i: self.toggle_collapsed())
-        self.tabBarClicked.connect(self._tab_clicked)
+        self.tabBarClicked.connect(self._tab_clicked)    # (plus de pliage au double clic : le bouton seul, 18/11 soir)
         self.setDocumentMode(True)
         self.setMaximumHeight(118)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.info = QLabel('')
         self.info.setObjectName('ribbonInfo')
         self.info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.info.hide()                                 # la sélection : dans la barre d'état seule (18/11 soir)
         # onglets tout à droite (Options, Aide) : leur propre barre, dans le coin
         from PySide6.QtWidgets import QTabBar
         self.right_bar = QTabBar()
@@ -535,7 +535,6 @@ class Ribbon(QTabWidget):
         self.right_bar.setDrawBase(False)
         self.right_bar.setExpanding(False)
         self.right_bar.tabBarClicked.connect(self._right_clicked)
-        self.right_bar.tabBarDoubleClicked.connect(lambda _j: self.toggle_collapsed())
         self._right_pages: list[QWidget] = []
         self._right_visible: dict[int, bool] = {}
         self._syncing = False
@@ -545,6 +544,17 @@ class Ribbon(QTabWidget):
         cl.setSpacing(12)
         cl.addWidget(self.info)
         cl.addWidget(self.right_bar, 0, Qt.AlignmentFlag.AlignBottom)
+        # plier / déplier le ruban : ce petit bouton seul (demande du 18/11 soir : « bouton plier/replier discret seul
+        # acteur ») — et Ctrl+F1, la commande « Réduire le ruban »
+        from ..i18n import tr
+        self.fold_btn = QToolButton()
+        self.fold_btn.setObjectName('ribbonFold')
+        self.fold_btn.setAutoRaise(True)
+        self.fold_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.fold_btn.setText('˄')
+        self.fold_btn.setToolTip(tr('Plier le ruban (Ctrl+F1)'))
+        self.fold_btn.clicked.connect(lambda: self.toggle_collapsed())
+        cl.addWidget(self.fold_btn, 0, Qt.AlignmentFlag.AlignBottom)
         self._corner_layout = cl
         self.setCornerWidget(corner, Qt.Corner.TopRightCorner)
         #: dernier onglet de gauche (FAO) : les onglets ajoutés ensuite se placent avant lui
@@ -869,6 +879,12 @@ class Ribbon(QTabWidget):
     # --- ruban réduit ------------------------------------------------------------------
     def set_collapsed(self, on: bool) -> None:
         self.collapsed, self._peek = bool(on), False
+        b = getattr(self, 'fold_btn', None)
+        if b is not None:
+            from ..i18n import tr
+            b.setText('˅' if self.collapsed else '˄')
+            b.setToolTip(tr('Déplier le ruban (Ctrl+F1)') if self.collapsed else tr('Plier le ruban (Ctrl+F1)'))
+            b.setAutoRaise(not self.collapsed)           # plié : un vrai bouton, qu'on voit (seul moyen de déplier)
         self._apply_height()
 
     def toggle_collapsed(self) -> None:
@@ -876,9 +892,9 @@ class Ribbon(QTabWidget):
         self.collapsedChanged.emit(self.collapsed)
 
     def _tab_clicked(self, i: int) -> None:
-        if self.collapsed:
-            self._peek = not (self._peek and i == self.currentIndex())
-            self._apply_height()
+        """Un clic sur un onglet : sa page (le ruban plié le reste — seul son bouton le déplie ; il ne s'ouvrait le temps
+        d'une commande que pour se refermer seul)."""
+        return None
 
     def _command_done(self) -> None:
         if self.collapsed and self._peek:

@@ -7095,3 +7095,12 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 ### v0.938.0 — Les avis du panneau FAO ne nomment plus de logiciel de machine
 
 - Les opérations propres à une machine, qu’un plugin ajoute à la liste des opérations, sont dites « celles de son plugin » dans les avis du panneau FAO (orientation de sortie, programmes par panneau), sans nommer de logiciel tiers.
+### v0.939.0 — Barre d’état au pied de la fenêtre seulement, pas des flèches par onglet, renommer une opération FAO
+
+- La taille et le centre de la sélection ne sont plus écrits dans la rangée des onglets du ruban : la barre d’état, au pied de la fenêtre, les montre seule (avec le périmètre et la longueur).
+- Le pas des flèches saisi par Ctrl+flèche est propre à chaque onglet : chaque dessin ouvert garde le sien ; un onglet neuf part du pas des options.
+- Liste des opérations FAO : un double clic sur le nom d’une opération la renomme (ailleurs sur la ligne, il ouvre toujours ses réglages) ; aussi par clic droit › Renommer…. Un nom vide redonne le nom de son type. Ctrl+Z rend l’ancien nom ; les parcours déjà calculés prennent le nouveau (il s’écrit dans le programme). Une opération ajoutée par un plugin est renommée par son plugin ; une ligne qu’il ne renomme pas s’ouvre au double clic.
+### v0.940.0 — Les fenêtres de fichier rouvrent là où l’on a choisi, le ruban plié par son bouton seul
+
+- Toutes les fenêtres de choix de fichier ou de dossier (ouvrir, enregistrer, exporter, importer, dossiers des réglages, et celles des plugins) retiennent le dossier où l’on a choisi, chacune le sien, et y rouvrent quand rien de précis n’est proposé (un nom de fichier seul, le dossier personnel ou Documents) ; le nom de fichier proposé est gardé. Un chemin voulu est gardé : le dossier du dessin pour son programme, la valeur du champ d’un bouton « … ». Une fenêtre jamais ouverte part du dernier dossier choisi dans l’application. Un dossier disparu (clé USB) n’est pas proposé ; un partage réseau n’est pas testé (un serveur hors d’atteinte ne gèle pas la fenêtre).
+- Le ruban ne se plie plus au double clic sur un onglet, et plié il ne s’ouvre plus au clic d’un onglet pour se refermer après la commande : un petit bouton ˄ / ˅ au bout de la rangée des onglets le plie et le déplie (et Ctrl+F1, Affichage › Réduire le ruban) ; plié, c’est un vrai bouton, bien visible.
