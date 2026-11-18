@@ -1944,13 +1944,8 @@ class Canvas(QWidget):
         touchés."""
         from ..core import eraser as ER
         region = ER.eraser_region(points, radius)
-        shapes = [s for s in _leaves(self.selection) if isinstance(s, Shape)] if self.selection else \
-            [s for L in self.doc.layers if self.layer_shown(L) for s in _leaves(L.items, True)
-             if isinstance(s, Shape) and s.visible]
         changes = []
-        for s in shapes:
-            if s.locked:
-                continue
+        for s in self._punch_targets():                  # comme l'emporte-pièce : ni caché, ni verrouillé
             new = ER.erase(s.path, region)
             if new is not None:
                 changes.append((s, new))
@@ -1965,19 +1960,19 @@ class Canvas(QWidget):
             else:
                 gone.add(id(s))
         if gone:
-            for L in self.doc.layers:
-                L.items = [it for it in L.items if id(it) not in gone]
-            self.selection = [it for it in self.selection if id(it) not in gone]
+            self._drop_leaves(gone)                      # une forme gommée en entier quitte aussi son groupe
         self.invalidate()
         self.documentChanged.emit()
         self.update()
         return len(changes)
 
     # --- emporte-pièce à la souris (demande du 18/11) -----------------------------------------
-    def _punch_targets(self) -> list:
+    def _punch_targets(self, among=None) -> list:
         """Les formes que l'emporte-pièce peut couper : les formes visibles et libres des calques montrés et non
-        verrouillés — celles de la sélection seulement, s'il y en a une."""
-        chosen = {id(s) for s in _leaves(self.selection)} if self.selection else None
+        verrouillés — celles de la sélection seulement, s'il y en a une. `among` : des objets (groupes compris) à la
+        place de la sélection ; une liste vide : tout le dessin."""
+        pool = self.selection if among is None else among
+        chosen = {id(s) for s in _leaves(pool)} if pool else None
         return [s for L in self.doc.layers if self.layer_shown(L) and not getattr(L, 'locked', False)
                 for s in _leaves(L.items, True)
                 if isinstance(s, Shape) and s.visible and not s.locked and (chosen is None or id(s) in chosen)]
@@ -2000,11 +1995,11 @@ class Canvas(QWidget):
             L.items = keep(L.items)
         self.selection = keep(list(self.selection))
 
-    def _punch_nearest(self, dp, reach: float):
+    def _punch_nearest(self, dp, reach: float, among=None):
         """(forme, rang du contour) du contour le plus proche de `dp` à moins de `reach` mm ; None : aucun."""
         from ..core import punchtool as PT
         best = None
-        for s in self._punch_targets():
+        for s in self._punch_targets(among):
             b = s.bbox()
             if not b or dp[0] < b[0] - reach or dp[0] > b[2] + reach or dp[1] < b[1] - reach or dp[1] > b[3] + reach:
                 continue
@@ -2026,15 +2021,17 @@ class Canvas(QWidget):
         size = float(spec.get('diameter', 0.0)) if kind == 'cercle' else float(spec.get('width', 0.0))
         return PT.region(kind, dp, size, float(spec.get('height', 0.0)), float(spec.get('angle', 0.0))), None
 
-    def punch_at(self, dp, spec: dict) -> int:
-        """L'emporte-pièce appliqué au point `dp` : segment — le contour le plus proche (à 12 px) perd la longueur
-        réglée ; rectangle, cercle — tout ce que la forme couvre est retiré. Annulable ; rend le nombre de formes
-        changées."""
+    def punch_at(self, dp, spec: dict, among=None, reach: float | None = None, before=None) -> int:
+        """L'emporte-pièce appliqué au point `dp` : segment — le contour le plus proche (à 12 px, ou à `reach` mm)
+        perd la longueur réglée ; rectangle, cercle — tout ce que la forme couvre est retiré. `among` : voir
+        `_punch_targets` ; `before()` : appelé à la place du pas d'annulation, juste avant de changer le dessin
+        (l'assistant). Annulable ; rend le nombre de formes changées."""
         from ..core import punchtool as PT
         kind = spec.get('kind', 'segment')
         changes = []
         if kind == 'segment':
-            hit = self._punch_nearest(dp, max(12.0 / max(self.scale, 1e-9), 1e-6))
+            near = max(12.0 / max(self.scale, 1e-9), 1e-6) if reach is None else max(float(reach), 1e-6)
+            hit = self._punch_nearest(dp, near, among)
             if hit is not None:
                 s, i, _d = hit
                 rest = PT.remove_length(s.path.contours[i], dp, float(spec.get('length', 0.0)))
@@ -2043,13 +2040,15 @@ class Canvas(QWidget):
         else:
             shape, _pc = self.punch_preview(dp, spec)
             if shape is not None:
-                for s in self._punch_targets():
+                for s in self._punch_targets(among):
                     new = PT.punch_region(s.path, shape, bool(getattr(s, 'filled', False)))
                     if new is not None:
                         changes.append((s, new))
         if not changes:
             return 0
-        if self.undo_push:
+        if before is not None:
+            before()
+        elif self.undo_push:
             self.undo_push()
         gone = set()
         for s, new in changes:

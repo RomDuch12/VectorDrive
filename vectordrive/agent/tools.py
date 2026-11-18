@@ -1,7 +1,8 @@
 """Les outils qu'un assistant (Claude, par le protocole MCP) peut appeler sur le dessin ouvert dans VectorDrive
 (demande du 15/11 : « Possibilité de connecter un agent claude ou chatgpt pour créer des dessins 2d et 3d ? », puis
 « queue serveur MCP ») : lire le dessin, ajouter des formes et du texte, déplacer, tourner, mettre à l'échelle,
-supprimer, réunir ou soustraire, sélectionner, prendre une capture, annuler.
+supprimer, réunir ou soustraire, lisser un contour, retirer un morceau à l'emporte-pièce, sélectionner, prendre une
+capture, annuler.
 
 - Millimètres ; X vers la droite, Y vers le haut — comme le dessin.
 - Chaque outil qui change le dessin fait UN pas d'annulation : Ctrl+Z le défait, comme une commande de la fenêtre.
@@ -22,6 +23,10 @@ MAX_LISTED = 500
 MAX_POINTS = 2000
 MAX_CONTOURS = 200
 MAX_GIVEN = 20000
+#: courbe lisse : longueur de lissage minimale (mm) ; au plus tant de fois la longueur de lissage dans le tracé (au-delà,
+#: des dizaines de milliers de morceaux : la fenêtre figée)
+MIN_SMOOTH = 0.05
+MAX_SMOOTH_RATIO = 20000
 #: une cote ou une position au-delà (mm) est refusée : rien de tel ne se grave, et un nombre infini casse le dessin
 LIMIT = 1.0e6
 
@@ -252,6 +257,23 @@ class ToolSet:
           'shapes are replaced by the result.',
           _schema({'operation': {'type': 'string', 'enum': ['union', 'intersect', 'difference']}, 'ids': IDS},
                   ['operation', 'ids']), self.boolean, True)
+        a('smooth_curve', 'Replace the contours of shapes (and of the shapes inside groups) by a smooth curve '
+          'that approximates them: no corner, continuous curvature. length: details whose path is shorter than this '
+          '(mm) fade out (at least 0.05 mm); sharpness 1 (soft) to 4 (overall shape better kept, slight ripples near '
+          'corners); tolerance: allowed tracing error (mm, default 0.01). Open contours keep their ends. Texts and '
+          'images are not handled. Returns the maximum deviation from the original (mm).',
+          _schema({'ids': IDS, 'length': NUM, 'sharpness': NUM, 'tolerance': NUM}, ['ids', 'length']),
+          self.smooth_curve, True)
+        a('punch', 'Punch out part of the contours at the point (x, y). shape "segment" (length, optional reach): '
+          'the contour nearest to the point, within reach (mm, default 1), loses a length (mm) measured along it, '
+          'centred on the point (a closed contour opens). shape "rectangle" (width, height, optional angle in '
+          'degrees, counter-clockwise) or "circle" (diameter), centred on the point: everything it covers is removed '
+          '(lines are cut at its edge, filled shapes are hollowed). Only the objects in ids when given (groups: their '
+          'shapes), else every visible, unlocked shape of the shown layers. Texts and images are not cut. Returns '
+          'the ids of the changed and of the removed objects.',
+          _schema({'shape': {'type': 'string', 'enum': ['segment', 'rectangle', 'circle']}, 'x': NUM, 'y': NUM,
+                   'length': NUM, 'width': NUM, 'height': NUM, 'angle': NUM, 'diameter': NUM, 'reach': NUM,
+                   'ids': IDS}, ['shape', 'x', 'y']), self.punch, True)
         a('select_objects', 'Select objects in the window (an empty list clears the selection).',
           _schema({'ids': {'type': 'array', 'items': {'type': 'string'}}}, ['ids']), self.select_objects, True)
         a('capture', 'A PNG picture of the drawing as shown in the window.',
@@ -455,6 +477,80 @@ class ToolSet:
         return {'ids': [new.id] if new is not None else [], 'bbox': _box(new.bbox()) if new is not None else None,
                 'empty': new is None}
 
+    def smooth_curve(self, args: dict) -> dict:
+        from ..core import smoothcurve as SC
+        from ..core.document import Group, Shape
+        pairs = self._items(args.get('ids'))
+        self._free(pairs)
+        shapes = []
+        for _l, it in pairs:
+            leaves = [it] if isinstance(it, Shape) else [x for x in _shapes_in(it)] if isinstance(it, Group) else []
+            if not leaves:
+                raise ToolError(f'object {it.id} is not a shape (texts and images are not handled)')
+            shapes += [x for x in leaves if not x.locked]
+        if not shapes:
+            raise ToolError('only locked shapes in these groups')
+        length = _num(args, 'length', positive=True)
+        if length < MIN_SMOOTH:
+            raise ToolError(f'"length" must be at least {MIN_SMOOTH:g} mm')
+        sharp = _num(args, 'sharpness', 1.0)
+        if not 1.0 <= sharp <= 4.0:
+            raise ToolError('"sharpness" must be from 1 to 4')
+        tol = _num(args, 'tolerance', 0.01, positive=True)
+        if not 1e-4 <= tol <= 1.0:
+            raise ToolError('"tolerance" must be from 0.0001 to 1 mm')
+        total = sum(float(seg.length()) for x in shapes for c in x.path.contours for seg in c.segments)
+        if total / length > MAX_SMOOTH_RATIO:            # des dizaines de milliers de morceaux : la fenêtre figée
+            raise ToolError(f'"length" is too small for these shapes: at least {total / MAX_SMOOTH_RATIO:.3g} mm')
+        report: dict = {}
+        new = [SC.smooth(x.path, length, sharp, tol, report) for x in shapes]
+        if all(a is b for x, n in zip(shapes, new) for a, b in zip(x.path.contours, n.contours)):
+            raise ToolError('nothing to smooth: these contours are too short (fewer than 3 points)')
+        self._step()
+        for x, n in zip(shapes, new):                    # sur place : chaque objet garde son identifiant
+            x.path = n
+        items = [it for _l, it in pairs]
+        self.win.canvas.select(items)
+        return {'ids': [it.id for it in items], 'bbox': _box(_union(it.bbox() for it in items)),
+                'max_deviation': round(float(report.get('deviation', 0.0)), 4),
+                'segments': sum(n.segment_count() for n in new)}
+
+    def punch(self, args: dict) -> dict:
+        kind = {'segment': 'segment', 'rectangle': 'rectangle', 'circle': 'cercle'}.get(args.get('shape'))
+        if kind is None:
+            raise ToolError('"shape" must be segment, rectangle or circle')
+        needed, optional = {'segment': (('length',), ('reach',)), 'rectangle': (('width', 'height'), ('angle',)),
+                            'cercle': (('diameter',), ())}[kind]
+        unused = sorted(set(args) - {'shape', 'x', 'y', 'ids', *needed, *optional})
+        if unused:
+            raise ToolError(f'shape "{args["shape"]}" does not use: ' + ', '.join(unused))
+        missing = [k for k in needed if k not in args]
+        if missing:
+            raise ToolError(f'shape "{args["shape"]}" needs: ' + ', '.join(missing))
+        at = (_num(args, 'x'), _num(args, 'y'))
+        spec = {'kind': kind, 'angle': _num(args, 'angle', 0.0)}
+        for k in needed:
+            spec[k] = _num(args, k, positive=True)
+        reach = _num(args, 'reach', 1.0, positive=True)
+        canvas = self.win.canvas
+        among = []
+        if 'ids' in args:
+            pairs = self._items(args.get('ids'))
+            self._free(pairs)
+            among = [it for _l, it in pairs]
+            if not canvas._punch_targets(among):
+                raise ToolError('none of these objects can be punched: only visible, unlocked shapes on shown layers '
+                                '(not texts or images)')
+        targets = canvas._punch_targets(among)
+        before = {id(x): (x.id, x.path) for x in targets}
+        n = canvas.punch_at(at, spec, among=among, reach=reach, before=self._step)
+        if not n:
+            raise ToolError('nothing to punch out there' + (' (no contour within reach)' if kind == 'segment' else ''))
+        left = {id(x): x for L in self.doc.layers for x in _shapes_in_list(L.items)}
+        removed = [i for k, (i, _p) in before.items() if k not in left]
+        changed = [i for k, (i, path) in before.items() if k in left and left[k].path is not path]
+        return {'changed_ids': changed, 'removed_ids': removed}
+
     def select_objects(self, args: dict) -> dict:
         ids = args.get('ids')
         if not isinstance(ids, list):
@@ -481,6 +577,22 @@ class ToolSet:
     def undo(self, _args: dict) -> dict:
         self.win.undo()
         return {'objects': sum(len(L.items) for L in self.doc.layers)}
+
+
+def _shapes_in(group):
+    """Les formes d'un groupe, à tout niveau."""
+    return _shapes_in_list(group.children)
+
+
+def _shapes_in_list(items):
+    from ..core.document import Group, Shape
+    out = []
+    for it in items:
+        if isinstance(it, Group):
+            out += _shapes_in_list(it.children)
+        elif isinstance(it, Shape):
+            out.append(it)
+    return out
 
 
 def _union(boxes):
