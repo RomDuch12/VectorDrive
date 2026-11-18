@@ -7602,5 +7602,7 @@
  "Emporte-pièce : un clic retire ce que couvre le cercle Ø {0} mm": "Punch-out: one click removes what the Ø {0} mm circle covers",
  " — Tab : autre forme ; [ ] : taille": " — Tab: other shape; [ ]: size",
  "{0} objet(s) coupé(s)": "{0} object(s) cut",
- "Rien à retirer ici": "Nothing to remove here"
+ "Rien à retirer ici": "Nothing to remove here",
+ "Orientation de sortie : les opérations propres à la machine (celles de son plugin) ne sont pas écrites, elles ne suivent pas l'orientation": "Output orientation: the machine-specific operations (those of its plugin) are not written, they do not follow the orientation",
+ "Opérations propres à la machine (celles de son plugin) : non écrites dans les programmes par panneau": "Machine-specific operations (those of its plugin): not written in the per-panel programs"
 }

@@ -7092,3 +7092,6 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - L’assistant IA (panneau « Assistant IA », ou un assistant branché par le serveur MCP) sait maintenant faire la **courbe lisse** (longueur de lissage, netteté, écart de tracé ; il annonce l’écart maxi au contour d’origine) et se servir de l’**emporte-pièce** : retirer x mm d’un contour à un point donné, ou ce que couvre un rectangle ou un cercle. Par exemple : « retire 5 mm de la ligne du haut, au milieu ».
 - Chaque action de l’assistant reste un pas d’annulation (Ctrl+Z) ; un objet lissé garde son identifiant ; un groupe se lisse forme par forme. Une longueur de lissage trop petite pour le tracé (la fenêtre serait figée) est refusée, avec la plus petite possible.
 - La gomme suit les règles de l’emporte-pièce : elle ne touche plus un objet caché ni un objet d’un calque verrouillé, et une forme gommée en entier quitte aussi son groupe.
+### v0.938.0 — Les avis du panneau FAO ne nomment plus de logiciel de machine
+
+- Les opérations propres à une machine, qu’un plugin ajoute à la liste des opérations, sont dites « celles de son plugin » dans les avis du panneau FAO (orientation de sortie, programmes par panneau), sans nommer de logiciel tiers.

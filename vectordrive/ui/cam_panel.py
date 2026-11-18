@@ -2795,7 +2795,7 @@ class CamPanel(QWidget):
             tps = self._writable(self.checked_paths())
             if tps and self.outdated():
                 out['note'] = tr('Le dessin a changé depuis le calcul : « Mettre à jour » refait les parcours')
-        mine = post.doc_operations(key, self.doc)          # opérations propres à la machine (NeoDrive…)
+        mine = post.doc_operations(key, self.doc)          # opérations propres à la machine (d'un plugin)
         if not tps and not mine:
             out['note'] = tr('Aucun parcours montré : « Mettre à jour » les calcule')
             return out
@@ -6400,7 +6400,7 @@ class CamPanel(QWidget):
 
     def machine_ops(self) -> int:
         """Les opérations propres à la machine que le dessin porte et que son post-processeur écrit lui-même
-        (NeoDrive sur le Datron) : avec elles, le programme s'écrit même sans parcours."""
+        (celles d'un plugin de la machine) : avec elles, le programme s'écrit même sans parcours."""
         from ..cam import post
         s = self.setup()
         available = post.posts(self.machines_dir())
@@ -6408,8 +6408,8 @@ class CamPanel(QWidget):
         return post.doc_operations(key, self.doc)
 
     def _orient_note(self) -> str:
-        return tr('Orientation de sortie : les opérations propres à la machine (NeoDrive…) ne sont pas écrites, '
-                  'elles ne suivent pas l\'orientation')
+        return tr('Orientation de sortie : les opérations propres à la machine (celles de son plugin) ne sont pas '
+                  'écrites, elles ne suivent pas l\'orientation')
 
     def post_process(self) -> None:
         from ..cam import post
@@ -6604,9 +6604,9 @@ class CamPanel(QWidget):
             except Cancelled:
                 problems = res.warnings
             warnings += [tr('Panneau {0} : {1}').format(p.rank, w) for w in problems]
-        if self.machine_ops():                           # NeoDrive… : pas dans les programmes par panneau
-            warnings.insert(0, tr('Opérations propres à la machine (NeoDrive…) : non écrites dans les programmes par '
-                                  'panneau'))
+        if self.machine_ops():                           # celles d'un plugin : pas dans les programmes par panneau
+            warnings.insert(0, tr('Opérations propres à la machine (celles de son plugin) : non écrites dans les '
+                                  'programmes par panneau'))
         when = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
         text = PN.report(panels, cut, s, bounds, out.stem, names=names, overlap=overlap, where=where, when=when,
                          spec=TM.spec_from_settings(self.win.settings))
