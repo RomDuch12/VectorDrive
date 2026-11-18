@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.934.0
+# Command guide — VectorDrive 0.936.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -357,6 +357,8 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Boundary |  | Boundary: clicking in an area closed by strokes (open or closed, crossing) creates its shape, islands as holes (Shift: without islands); right-click on the button: gap tolerated between strokes |
 | Fillet between two strokes |  | Fillet between two strokes: click the 1st stroke then the 2nd, on the side to keep — extended or trimmed and joined by an arc (fillet radius; Shift: sharp corner) |
 | Eraser |  | Eraser: drag to erase what it covers (shapes of the selection, otherwise all); [ and ]: smaller, larger |
+| Punch-out |  | Punch-out: one click removes a given length from a contour (centred on the click), or what a rectangle or a circle covers; Tab: the shape; [ and ]: the size (shapes only: convert a text to curves first) |
+| Punch-out settings… |  | Punch-out: its shape (segment, rectangle, circle) and its sizes |
 | Chamfer between two strokes |  | Chamfer between two strokes: click the 1st stroke then the 2nd, on the side to keep — extended or trimmed and joined by a chamfer (chamfer size; Shift: sharp corner) |
 
 ### Distortions
@@ -558,6 +560,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Clean up overlaps |  | Overlapping straight strokes (edges drawn twice, adjoining shapes): merged so they are engraved only once, per tool |
 | Arcs and lines |  | Replace Bézier curves with tangent circular arcs and lines |
 | Approximation |  | Replace runs of small segments with smooth curves (DXF, tracing) |
+| Smooth curve… |  | Replace the chosen contours with a smooth curve that approximates them, with no corner and continuous curvature: details whose path is shorter than the smoothing length fade out; Shift: the original stays |
 | Segmentation |  | Replace curves with straight segments |
 
 ### Transform

@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.934.0
+# Guide des commandes — VectorDrive 0.936.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -357,6 +357,8 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Contour de zone |  | Contour de zone : cliquer dans une zone fermée par des traits (ouverts ou fermés, qui se croisent) crée sa forme, îlots en trous (Maj : sans les îlots) ; clic droit sur le bouton : écart toléré entre les traits |
 | Raccord entre deux traits |  | Raccord entre deux traits : cliquer le 1er trait puis le 2e, du côté à garder — prolongés ou coupés et raccordés par un arc (rayon des congés ; Maj : coin vif) |
 | Gomme |  | Gomme : glisser efface ce qu'elle couvre (formes de la sélection, sinon toutes) ; [ et ] : plus petite, plus grande |
+| Emporte-pièce |  | Emporte-pièce : un clic retire d'un contour une longueur donnée (centrée sur le clic), ou ce que couvre un rectangle ou un cercle ; Tab : la forme ; [ et ] : la taille (formes seulement : un texte est à convertir en courbes d'abord) |
+| Réglages de l'emporte-pièce… |  | Emporte-pièce : sa forme (segment, rectangle, cercle) et ses tailles |
 | Chanfrein entre deux traits |  | Chanfrein entre deux traits : cliquer le 1er trait puis le 2e, du côté à garder — prolongés ou coupés et reliés par un chanfrein (taille des chanfreins ; Maj : coin vif) |
 
 ### Déformations
@@ -558,6 +560,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Nettoyer les superpositions |  | Traits droits qui se recouvrent (bords dessinés deux fois, formes accolées) : fusionnés pour n'être gravés qu'une fois, par outil |
 | Arcs et segments |  | Remplacer les courbes de Bézier par des arcs de cercle tangents et des droites |
 | Approximation |  | Remplacer les suites de petits segments par des courbes lisses (DXF, vectorisation) |
+| Courbe lisse… |  | Remplacer les contours choisis par une courbe lisse qui les approche, sans coin et à courbure continue : les détails au tracé plus court que la longueur de lissage s’effacent ; Maj : l’original reste |
 | Segmentation |  | Remplacer les courbes par des segments de droite |
 
 ### Transformation

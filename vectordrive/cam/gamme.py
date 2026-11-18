@@ -52,6 +52,11 @@ def problem(setup, steps: list, depth: float) -> str:
     pairs = ranked(setup, steps, depth)
     if not pairs:
         return 'Choisissez au moins un outil.'
+    if len(pairs) < len(steps):                          # une ligne sans outil (demande du 18/11)
+        return 'Choisissez un outil pour chaque ligne de la gamme.'
+    ids = [t.id for _s, t in pairs]
+    if len(set(ids)) < len(ids):                         # sinon : une reprise des restes de son propre outil
+        return 'Le même outil est sur deux lignes : chaque ligne de la gamme a son outil.'
     if depth <= 0:
         return 'La profondeur de la gamme doit être positive.'
     angles = [t.angle for _s, t in pairs if is_cone(t)]

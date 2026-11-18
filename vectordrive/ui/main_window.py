@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
     #: commandes que Maj applique à une copie de la sélection (TypeEdit : « Conserver la sélection ») : celles qui agissent
     #: d'un coup. Pas les outils à la souris ; pas En segment, En angle, Portion en arc, où Maj désigne l'autre portion.
     KEEP_ORIGINAL = frozenset(('combine', 'uncombine', 'to_curves', 'remove_loops', 'explode', 'punch', 'to_arcs', 'segment',
-                               'reverse', 'approximate', 'chain', 'fillet', 'chamfer', 'join', 'node_refine', 'node_align_h',
+                               'reverse', 'approximate', 'smooth_curve', 'chain', 'fillet', 'chamfer', 'join', 'node_refine', 'node_align_h',
                                'node_align_v', 'node_line', 'node_curve', 'align_left', 'align_right', 'align_top',
                                'align_bottom', 'align_hcenter', 'align_vcenter', 'align_center', 'align_left_out',
                                'align_right_out', 'align_top_out', 'align_bottom_out', 'align_plate_left', 'align_plate_right',
@@ -1373,6 +1373,7 @@ class MainWindow(QMainWindow):
                               ('relief_probe', tr('Sonde de relief'), 'ruler'),
                               ('shaper', tr('Crayon (formes reconnues)'), 'bezier'),
                               ('eraser', tr('Gomme'), 'delete'),
+                              ('punchout', tr('Emporte-pièce'), 'punch'),
                               ('blob', tr('Pinceau à aplat'), 'fill'),
                               ('spline', tr('Courbe par points'), 'bezier'),
                               ('sym_ox', tr('Courbe symétrique (axe OX)'), 'sym_ox'),
@@ -1489,6 +1490,11 @@ class MainWindow(QMainWindow):
                  'plus petite, plus grande')
         self.A['tool_eraser'].setToolTip(tip)
         self.A['tool_eraser'].setStatusTip(tip)
+        tip = tr('Emporte-pièce : un clic retire d\'un contour une longueur donnée (centrée sur le clic), ou ce que '
+                 'couvre un rectangle ou un cercle ; Tab : la forme ; [ et ] : la taille (formes seulement : un '
+                 'texte est à convertir en courbes d\'abord)')
+        self.A['tool_punchout'].setToolTip(tip)
+        self.A['tool_punchout'].setStatusTip(tip)
         tip = tr('Pinceau à aplat : glisser peint une surface pleine qui se fond avec les formes fermées de '
                  'l\'outil courant qu\'elle touche ; [ et ] : taille')
         self.A['tool_blob'].setToolTip(tip)
@@ -1729,6 +1735,12 @@ class MainWindow(QMainWindow):
                  'rognage'))
         a('approximate', tr('Approximation'), self.approximate_dialog, None, 'approximate',
           tip=tr('Remplacer les suites de petits segments par des courbes lisses (DXF, vectorisation)'))
+        a('smooth_curve', tr('Courbe lisse…'), lambda _=False: self.smooth_curve_dialog(), None, 'approximate',
+          tip=tr('Remplacer les contours choisis par une courbe lisse qui les approche, sans coin et à courbure '
+                 'continue : les détails au tracé plus court que la longueur de lissage s’effacent ; Maj : '
+                 'l’original reste'))
+        a('punchout_options', tr('Réglages de l\'emporte-pièce…'), lambda _=False: self.punchout_options(), None,
+          'punch', tip=tr('Emporte-pièce : sa forme (segment, rectangle, cercle) et ses tailles'))
         a('segment', tr('Segmentation'), self.segment_dialog, None, 'segment',
           tip=tr('Remplacer les courbes par des segments de droite'))
         a('to_arcs', tr('Arcs et segments'), self.arcs_dialog, None, 'to_arcs',
@@ -2823,6 +2835,8 @@ class MainWindow(QMainWindow):
         g.add(A['tool_boundary'])
         g.add(A['tool_fillet2'], big=False)
         g.add(A['tool_eraser'], big=False)
+        g.add(A['tool_punchout'], big=False)
+        g.add(A['punchout_options'], big=False)
         g.add(A['tool_chamfer2'], big=False)
         g = t.group(tr('Déformations'))
         for k in ('fx_zigzag', 'fx_roughen', 'fx_pucker', 'fx_twist', 'fx_scallop'):
@@ -2858,7 +2872,8 @@ class MainWindow(QMainWindow):
                   'tool_liquify', 'liquify_options', 'blend',
                   'blend_curve',
                   'stroke',
-                  'var_stroke', 'tool_width', 'nib_stroke', 'normalize', 'remove_loops', 'overkill', 'to_arcs', 'approximate', 'segment'):
+                  'var_stroke', 'tool_width', 'nib_stroke', 'normalize', 'remove_loops', 'overkill', 'to_arcs', 'approximate', 'smooth_curve',
+                  'segment'):
             g.add(A[k], big=False)
         g = t.group(tr('Transformation'))
         for k in ('mirror_h', 'mirror_v', 'rot90'):
@@ -7719,6 +7734,7 @@ class MainWindow(QMainWindow):
                   'relief_probe': lambda: T.ReliefProbeTool(self.canvas),
                   'shaper': lambda: T.ShaperTool(self.canvas),
                   'eraser': lambda: T.EraserTool(self.canvas),
+                  'punchout': lambda: T.PunchTool(self.canvas, self.punchout_spec(), self._punchout_keep),
                   'blob': lambda: T.BlobBrushTool(self.canvas),
                   'spline': lambda: T.SplineTool(self.canvas),
                   'sym_ox': lambda: T.SymCurveTool(self.canvas, 'ox'),
@@ -16497,6 +16513,82 @@ class MainWindow(QMainWindow):
         if spec is not None:
             self._fit_selection(tr('Approximation'),
                                 lambda p: fitcurve.approximate(p, spec.tolerance, spec.corner, spec.curves))
+
+    def smooth_curve_dialog(self, params: dict | None = None):
+        """Courbe lisse (demande du 18/11 : « approximation courbe Cinfini d'un contour (parametrable user) ») : les
+        contours choisis remplacés par une courbe lisse qui les approche (filtrée C∞, tracée en B-spline cubique : à
+        courbure continue). Rend l'écart maxi au contour d'origine (mm),
+        None si rien n'est fait. `params` : réponses données d'avance (essais)."""
+        from ..core import smoothcurve as SC
+        shapes = self._selected_shapes()
+        if not shapes:
+            QMessageBox.information(self, tr('Courbe lisse'), tr('Sélectionnez au moins un objet.'))
+            return None
+        spec = [('length', float, 2.0, tr('Longueur de lissage (mm de tracé) : les détails au tracé plus court s’effacent')),
+                ('sharpness', float, 1.0, tr('Netteté (1 : doux ; jusqu’à 4 : forme mieux gardée, légères ondulations près des coins)')),
+                ('tolerance', float, 0.01, tr('Écart de tracé des courbes (mm)'))]
+        p = self._ask('courbe_lisse', tr('Courbe lisse'), spec, params=params)
+        if p is None:
+            return None
+        length, sharp = max(0.0, float(p['length'])), min(4.0, max(1.0, float(p['sharpness'])))
+        tol = max(1e-4, float(p['tolerance']))
+        before = [s.path for s in shapes]
+        report: dict = {}
+        self._fit_selection(tr('Courbe lisse'), lambda path: SC.smooth(path, length, sharp, tol, report))
+        after = [s.path for s in self._selected_shapes()]
+        if len(after) != len(before) or all(a is b for a, b in zip(after, before)):
+            return None                                  # abandonné
+        worst = float(report.get('deviation', 0.0))
+        self.statusBar().showMessage(tr('Courbe lisse : écart maxi {0} mm au contour d’origine, {1} segment(s)').format(
+            f'{worst:.3f}'.replace('.', ','), sum(a.segment_count() for a in after)), 10000)
+        return worst
+
+    PUNCHOUT_DEFAULT = {'kind': 'segment', 'length': 5.0, 'width': 10.0, 'height': 5.0, 'diameter': 5.0, 'angle': 0.0}
+
+    def punchout_spec(self) -> dict:
+        """Les réglages retenus de l'emporte-pièce (forme et tailles)."""
+        from ..core import punchtool as PT
+        out = dict(self.PUNCHOUT_DEFAULT)
+        last = self.settings.value('cad/emporte_piece', None)
+        if isinstance(last, dict):
+            for k, v in last.items():
+                if k == 'kind' and v in PT.KINDS:
+                    out[k] = v
+                elif k in out and k != 'kind':
+                    try:
+                        out[k] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+        for k in ('length', 'width', 'height', 'diameter'):
+            out[k] = max(0.01, out[k])
+        return out
+
+    def _punchout_keep(self, spec: dict) -> None:
+        """Les réglages changés au clavier dans l'outil (Tab, [ et ]) : retenus."""
+        self.settings.setValue('cad/emporte_piece', dict(self.punchout_spec(), **spec))
+
+    def punchout_options(self, params: dict | None = None):
+        """Les réglages de l'emporte-pièce ; ils valent aussi pour l'outil en cours, et le prennent en main."""
+        cur = self.punchout_spec()
+        kinds = [('segment', tr('Segment : une longueur du contour')), ('rectangle', tr('Rectangle')),
+                 ('cercle', tr('Cercle'))]
+        spec = [('kind', str, cur['kind'], tr('Forme de l’emporte-pièce')),
+                ('length', float, cur['length'], tr('Segment : longueur retirée (mm)')),
+                ('width', float, cur['width'], tr('Rectangle : largeur (mm)')),
+                ('height', float, cur['height'], tr('Rectangle : hauteur (mm)')),
+                ('angle', float, cur['angle'], tr('Rectangle : angle (°)')),
+                ('diameter', float, cur['diameter'], tr('Cercle : diamètre (mm)'))]
+        self.settings.setValue('cad/emporte_piece', cur)         # la fenêtre part des réglages en cours
+        p = self._ask('emporte_piece', tr('Emporte-pièce'), spec, choices={'kind': kinds}, params=params)
+        if p is None:
+            return None
+        self.settings.setValue('cad/emporte_piece', p)
+        got = self.punchout_spec()
+        if self.canvas.tool == 'punchout':
+            self.canvas.tool_obj.set_spec(got)
+        else:
+            self.set_tool('punchout')
+        return got
 
     def segment_dialog(self) -> None:
         from ..core import fitcurve

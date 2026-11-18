@@ -7075,3 +7075,15 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Un post-processeur peut joindre des fichiers au programme qu’il écrit (une image d’aperçu, par exemple) : ils sont écrits à côté du programme, au post-traitement, à la parcellisation et au post-traitement en série.
 - Ils ne sont faits qu’à l’écriture, jamais pour l’aperçu du programme. Un nom de fichier joint qui désigne un autre dossier est ramené à son nom seul.
 - Pour les plugins : `PostResult.attachments` ([(nom, octets)]) et le paramètre `attach` du post-processeur.
+### v0.935.0 — Gamme multi-outils : la liste des outils
+
+- « Ajouter un outil » remettait l’outil d’une ligne existante dès que tous les outils du document étaient dans la gamme. La nouvelle ligne prend maintenant le premier outil qui n’y est pas encore, sinon « — Choisir un outil — ».
+- Deux lignes avec le même outil, ou une ligne sans outil, sont refusées avec un message (avant : la gamme reprenait les restes de son propre outil).
+- La liste des outils est celle du formulaire d’opération : icône, libellé court, fiche en infobulle, puis « Choisir un outil (Mes outils, bibliothèques)… ». Un outil pris dans Mes outils ou dans une bibliothèque est copié dans le document quand la gamme est validée.
+- La colonne « Outil » prend la largeur de son plus long libellé, et la fenêtre celle de la table.
+- Gamme relief : la même liste pour la finition, et « Ajouter une ébauche… » pour prendre une ébauche dans Mes outils ou une bibliothèque.
+### v0.936.0 — Courbe lisse et emporte-pièce
+
+- **Courbe lisse…** (onglet des contours, à côté d’Approximation) : les contours choisis sont remplacés par une courbe lisse qui les approche, sans aucun coin et à courbure continue. Trois réglages : la longueur de lissage (les détails dont le tracé est plus court s’effacent), la netteté (de 1, doux, à 4 : la forme d’ensemble mieux gardée, au prix de légères ondulations près des coins) et l’écart de tracé. Un trait ouvert garde ses deux bouts ; l’écart maxi au contour d’origine est annoncé dans la barre d’état. Un petit contour fermé ne rétrécit pas ; Maj garde l’original.
+- **Emporte-pièce** (groupe Tronquer) : un clic retire d’un contour une longueur donnée, centrée sur le point cliqué et mesurée le long du contour — sur une ligne, exactement la longueur demandée. Deux autres formes : un rectangle ou un cercle, qui retirent tout ce qu’ils couvrent (traits coupés à leur bord, surfaces évidées). Ce qui partira est montré en rouge sous la souris ; Tab change de forme, [ et ] la taille ; « Réglages de l’emporte-pièce… » pour les valeurs exactes.
+- L’emporte-pièce agit sur la sélection, sinon sur tout ce qui est visible ; jamais sur un objet caché ou verrouillé, ni sur un calque verrouillé. Un objet vidé quitte le dessin, même dans un groupe ; une surface ouverte par un segment devient un trait. Les textes sont à convertir en courbes d’abord. Chaque clic s’annule à part.

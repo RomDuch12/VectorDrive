@@ -4257,6 +4257,98 @@ class EraserTool(Tool):
         self.pts = []
 
 
+class PunchTool(Tool):
+    """Emporte-pièce (demande du 18/11) : un clic retire d'un contour une longueur donnée (segment : centrée sur le
+    point cliqué, mesurée le long du contour), ou ce que couvre un rectangle ou un cercle posé sur le clic. Ce qui
+    partira est montré en rouge sous la souris. Tab : la forme suivante ; [ et ] : plus petit, plus grand. L'outil
+    reste actif ; chaque clic s'annule à part."""
+    cursor = Qt.CursorShape.CrossCursor
+    SIZE = {'segment': 'length', 'rectangle': 'width', 'cercle': 'diameter'}
+
+    def __init__(self, canvas, spec: dict | None = None, changed=None):
+        super().__init__(canvas)
+        self.spec = dict({'kind': 'segment', 'length': 5.0, 'width': 10.0, 'height': 5.0, 'diameter': 5.0,
+                          'angle': 0.0}, **(spec or {}))
+        self.changed = changed                           # fonction(réglages) : la fenêtre les retient
+        self.hover = None
+        self.shown = (None, None)                        # (forme posée, morceau retiré) : calculé au mouvement
+        self._say()
+
+    def _say(self) -> None:
+        from ..i18n import tr
+        s = self.spec
+        text = {'segment': tr('Emporte-pièce : un clic retire {0} mm du contour').format(f'{s["length"]:g}'),
+                'rectangle': tr('Emporte-pièce : un clic retire ce que couvre le rectangle {0} × {1} mm').format(
+                    f'{s["width"]:g}', f'{s["height"]:g}'),
+                'cercle': tr('Emporte-pièce : un clic retire ce que couvre le cercle Ø {0} mm').format(
+                    f'{s["diameter"]:g}')}[s['kind']]
+        self.c.measured.emit(text + tr(' — Tab : autre forme ; [ ] : taille'))
+
+    def _look(self) -> None:
+        self.shown = self.c.punch_preview(self.hover, self.spec) if self.hover is not None else (None, None)
+        self.c.overlay_update()
+
+    def set_spec(self, spec: dict) -> None:
+        self.spec.update(spec)
+        self._say()
+        self._look()
+
+    def move(self, sp, dp, ev):
+        self.hover = dp
+        self._look()
+
+    def press(self, sp, dp, ev):
+        from ..i18n import tr
+        n = self.c.punch_at(dp, self.spec)
+        self.c.measured.emit(tr('{0} objet(s) coupé(s)').format(n) if n else tr('Rien à retirer ici'))
+        self.hover = dp
+        self._look()
+
+    def wants_key(self, ev) -> bool:
+        return ev.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+
+    def key(self, ev):
+        from ..core.punchtool import KINDS
+        k = ev.key()
+        if k in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            step = -1 if k == Qt.Key.Key_Backtab else 1
+            self.spec['kind'] = KINDS[(KINDS.index(self.spec['kind']) + step) % len(KINDS)]
+        elif k in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            f = 1 / 1.25 if k == Qt.Key.Key_BracketLeft else 1.25
+            name = self.SIZE[self.spec['kind']]
+            self.spec[name] = max(0.01, round(self.spec[name] * f, 3))
+            if self.spec['kind'] == 'rectangle':
+                self.spec['height'] = max(0.01, round(self.spec['height'] * f, 3))
+        else:
+            return False
+        if self.changed is not None:
+            self.changed(dict(self.spec))
+        self._say()
+        self._look()
+        return True
+
+    def paint(self, p):
+        if self.hover is None:
+            return
+        shape, pc = self.shown
+        if shape is not None:
+            self.preview(p, shape, '#e00000')
+        if pc is not None:
+            from .canvas import to_qpath
+            p.save()
+            p.setTransform(self.c.view())
+            pen = QPen(QColor('#e00000'), 3.0)
+            pen.setCosmetic(True)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(to_qpath(pc))
+            p.restore()
+
+    def cancel(self):
+        self.hover = None
+        self.shown = (None, None)
+
+
 class BlobBrushTool(EraserTool):
     """Pinceau à aplat : glisser peint une surface (rond de rayon
     canvas.eraser_radius) qui se fond avec les formes fermées de l'outil

@@ -5289,7 +5289,14 @@ class CamPanel(QWidget):
     def gamme_dialog(self, s, steps: list, depth: float):
         """La fenêtre de la gamme (à part : les essais la remplissent sans l'ouvrir)."""
         from .gamme_dialog import GammeDialog
-        return GammeDialog(self, s, steps, depth)
+        return GammeDialog(self, s, steps, depth, library=self.pick_library(), settings=self.win.settings,
+                           machine=self._gamme_machine(s))
+
+    def _gamme_machine(self, s) -> tuple:
+        """(clé, libellé) de la machine du réglage : « Choisir un outil… » n'y montre que ses outils."""
+        key = getattr(s, 'post', '') or ''
+        label = self.post.currentText() if hasattr(self, 'post') else key
+        return (key, label or key)
 
     def _gamme_of_steps(self, s, steps: list, depth: float, stock: float, contour_ref: str, skip_frame: bool, z_start: float):
         """Les opérations d'une gamme de plusieurs outils, liées et calculées. None : rien à usiner, ou gamme impossible."""
@@ -5364,18 +5371,43 @@ class CamPanel(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle(tr('Gamme relief'))
         f = QFormLayout(dlg)
+        from ..cam import toollib
+        from .gamme_dialog import chosen_tool, tool_combo
+        from .tool_filters import tool_icon
+        library = {t.id: t for t in self.pick_library() if t.kind != 'laser'}
+        machine = self._gamme_machine(s)
         tools = sorted((t for t in s.tools if t.kind != 'laser'), key=lambda t: -t.diameter)
         rough = QListWidget()
-        for k, t in enumerate(tools):
-            it = QListWidgetItem(f'T{t.number} {t.name}')
+
+        def rough_row(t, checked: bool):
+            it = QListWidgetItem(tool_icon(t), toollib.short_label(t))     # comme la liste des opérations
+            it.setToolTip(toollib.summary(t))
             it.setData(Qt.ItemDataRole.UserRole, t.id)
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            it.setCheckState(Qt.CheckState.Checked if k == 0 and t.kind == 'fraise' else Qt.CheckState.Unchecked)
+            it.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
             rough.addItem(it)
-        fin = QComboBox()
-        fin.addItem(tr('Aucune'), '')
-        for t in tools:
-            fin.addItem(f'T{t.number} {t.name}', t.id)
+        for k, t in enumerate(tools):
+            rough_row(t, k == 0 and t.kind == 'fraise')
+        more = tool_combo([], library, self.win.settings, none_label=tr('Ajouter une ébauche…'), machine=machine)
+
+        def add_rough(_i: int = 0) -> None:
+            """Un outil de Mes outils ou d'une bibliothèque ajouté aux ébauches, coché (copié dans le document)."""
+            tid = chosen_tool(more, s, library)
+            more.blockSignals(True)
+            more.setCurrentIndex(0)
+            more._last = 0
+            more.blockSignals(False)
+            t = s.tool(tid) if tid else None
+            if t is None:
+                return
+            for i in range(rough.count()):
+                if rough.item(i).data(Qt.ItemDataRole.UserRole) == tid:
+                    rough.item(i).setCheckState(Qt.CheckState.Checked)
+                    return
+            rough_row(t, True)
+        more.currentIndexChanged.connect(add_rough)
+        dlg.add_rough = more
+        fin = tool_combo(tools, library, self.win.settings, none_label=tr('Aucune'), machine=machine)
         balls = [t for t in tools if t.kind == 'boule']
         if balls:
             fin.setCurrentIndex(max(0, fin.findData(balls[-1].id)))
@@ -5386,6 +5418,8 @@ class CamPanel(QWidget):
             sp.setSuffix(' mm')
             sp.setValue(v)
         f.addRow(tr('Ébauche : du plus gros au plus petit'), rough)
+        if library:
+            f.addRow('', more)
         f.addRow(tr('Finition'), fin)
         f.addRow(tr('Surépaisseur 3D laissée pour la finition : en XY et en Z'), sp_stock)
         f.addRow(tr('Profondeur (0 : toute la hauteur du relief)'), sp_depth)
@@ -5398,7 +5432,7 @@ class CamPanel(QWidget):
             return None
         ids = [rough.item(i).data(Qt.ItemDataRole.UserRole) for i in range(rough.count())
                if rough.item(i).checkState() == Qt.CheckState.Checked]
-        return ids, fin.currentData(), sp_stock.value(), sp_depth.value()
+        return ids, chosen_tool(fin, s, library), sp_stock.value(), sp_depth.value()
 
     # --- réglage ----------------------------------------------------------------------------------
     def setup_menu(self) -> None:

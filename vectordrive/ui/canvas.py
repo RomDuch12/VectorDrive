@@ -1973,6 +1973,100 @@ class Canvas(QWidget):
         self.update()
         return len(changes)
 
+    # --- emporte-pièce à la souris (demande du 18/11) -----------------------------------------
+    def _punch_targets(self) -> list:
+        """Les formes que l'emporte-pièce peut couper : les formes visibles et libres des calques montrés et non
+        verrouillés — celles de la sélection seulement, s'il y en a une."""
+        chosen = {id(s) for s in _leaves(self.selection)} if self.selection else None
+        return [s for L in self.doc.layers if self.layer_shown(L) and not getattr(L, 'locked', False)
+                for s in _leaves(L.items, True)
+                if isinstance(s, Shape) and s.visible and not s.locked and (chosen is None or id(s) in chosen)]
+
+    def _drop_leaves(self, gone: set) -> None:
+        """Les objets d'identité dans `gone` retirés du dessin, où qu'ils soient (dans un groupe aussi : un groupe
+        vidé part avec eux) ; la sélection suit."""
+        def keep(items):
+            out = []
+            for it in items:
+                if id(it) in gone:
+                    continue
+                if isinstance(it, Group):
+                    it.children = keep(it.children)
+                    if not it.children:
+                        continue
+                out.append(it)
+            return out
+        for L in self.doc.layers:
+            L.items = keep(L.items)
+        self.selection = keep(list(self.selection))
+
+    def _punch_nearest(self, dp, reach: float):
+        """(forme, rang du contour) du contour le plus proche de `dp` à moins de `reach` mm ; None : aucun."""
+        from ..core import punchtool as PT
+        best = None
+        for s in self._punch_targets():
+            b = s.bbox()
+            if not b or dp[0] < b[0] - reach or dp[0] > b[2] + reach or dp[1] < b[1] - reach or dp[1] > b[3] + reach:
+                continue
+            i, d = PT.nearest_contour(s.path, dp)
+            if i >= 0 and d <= reach and (best is None or d < best[2]):
+                best = (s, i, d)
+        return best
+
+    def punch_preview(self, dp, spec: dict):
+        """Ce que l'emporte-pièce montre sous la souris : (forme posée ou None, morceau retiré ou None)."""
+        from ..core import punchtool as PT
+        kind = spec.get('kind', 'segment')
+        if kind == 'segment':
+            hit = self._punch_nearest(dp, max(12.0 / max(self.scale, 1e-9), 1e-6))
+            if hit is None:
+                return None, None
+            pc = PT.removed_piece(hit[0].path.contours[hit[1]], dp, float(spec.get('length', 0.0)))
+            return None, (Path([pc]) if pc is not None and pc.segments else None)
+        size = float(spec.get('diameter', 0.0)) if kind == 'cercle' else float(spec.get('width', 0.0))
+        return PT.region(kind, dp, size, float(spec.get('height', 0.0)), float(spec.get('angle', 0.0))), None
+
+    def punch_at(self, dp, spec: dict) -> int:
+        """L'emporte-pièce appliqué au point `dp` : segment — le contour le plus proche (à 12 px) perd la longueur
+        réglée ; rectangle, cercle — tout ce que la forme couvre est retiré. Annulable ; rend le nombre de formes
+        changées."""
+        from ..core import punchtool as PT
+        kind = spec.get('kind', 'segment')
+        changes = []
+        if kind == 'segment':
+            hit = self._punch_nearest(dp, max(12.0 / max(self.scale, 1e-9), 1e-6))
+            if hit is not None:
+                s, i, _d = hit
+                rest = PT.remove_length(s.path.contours[i], dp, float(spec.get('length', 0.0)))
+                if rest is not None:
+                    changes.append((s, Path(list(s.path.contours[:i]) + rest + list(s.path.contours[i + 1:]))))
+        else:
+            shape, _pc = self.punch_preview(dp, spec)
+            if shape is not None:
+                for s in self._punch_targets():
+                    new = PT.punch_region(s.path, shape, bool(getattr(s, 'filled', False)))
+                    if new is not None:
+                        changes.append((s, new))
+        if not changes:
+            return 0
+        if self.undo_push:
+            self.undo_push()
+        gone = set()
+        for s, new in changes:
+            kept = [c for c in new.contours if c.segments]
+            if kept:
+                s.path = Path(kept)
+                if getattr(s, 'filled', False) and not any(c.closed for c in kept):
+                    s.filled = False                     # une surface ouverte par l'emporte-pièce : un trait
+            else:
+                gone.add(id(s))
+        if gone:
+            self._drop_leaves(gone)
+        self.invalidate()
+        self.documentChanged.emit()
+        self.update()
+        return len(changes)
+
     #: saisie de point en cours : ('m2p', [points]) ou ('from', [base]) ; None sinon
     point_mode = None
     #: décalage demandé pour « Depuis » : fonction() → (dx, dy) ou None (fenêtre principale)
