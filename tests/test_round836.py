@@ -125,7 +125,8 @@ class Order(Base):
         self.c.select([a, b])
         with mock.patch('vectordrive.ui.main_window.QMessageBox.information') as say:
             self.win.punch_items()
-        say.assert_called_once()
+        say.assert_not_called()                                  # demande du 19/11 : la barre d'état
+        self.assertIn('Poinçonner', self.win.statusBar().currentMessage())
 
     def test_fit_takes_the_first(self):
         logo = self.rect(50.0, 50.0, 4.0, 4.0)

@@ -47,6 +47,10 @@ DENIED_KEYS = frozenset((
 SCRIPT_STEPS = 200000
 SCRIPT_SEGMENTS = 20000
 MAX_COMMANDS = 300
+#: les outils du panneau par groupe, qu'une option retire
+TOOL_GROUPS = {'memory_read': 'memory', 'memory_write': 'memory', 'list_scripts': 'scripts', 'read_script': 'scripts',
+               'run_script': 'scripts', 'save_script': 'scripts', 'list_commands': 'commands',
+               'run_command': 'commands'}
 MAX_DOC = 12000
 
 NUM = {'type': 'number'}
@@ -155,12 +159,14 @@ class ToolSet:
     """Les outils, sur la fenêtre `win`. `run(fonction)` exécute une fonction dans le fil de l'interface et rend son
     résultat (d'office : sur place — le serveur local en donne un qui passe par le fil de l'interface)."""
 
-    def __init__(self, win, run=None, extended: bool = False):
+    def __init__(self, win, run=None, extended: bool = False, without=()):
         self.win = win
         self.run = run or (lambda fn: fn())
         self._tools: dict = {}
-        #: les outils du panneau de l'assistant (mémoire, scripts, documentation, commandes) en plus
+        #: les outils du panneau de l'assistant (mémoire, scripts, documentation, commandes) en plus ; `without` :
+        #: les groupes de ceux-ci retirés par les options ('memory', 'scripts', 'commands')
         self.extended = extended
+        self.without = frozenset(without)
         self._declare()
 
     # --- le registre --------------------------------------------------------------------------------
@@ -660,8 +666,9 @@ class ToolSet:
           f'rewrites it all (an empty text clears it). At most {MAX_MEMORY} characters in all; keep it short.',
           _schema({'text': {'type': 'string'}, 'mode': {'type': 'string', 'enum': ['append', 'replace']}}, ['text']),
           self.memory_write, True)
-        a('list_scripts', 'List the shape scripts: the user\'s own (folder "user") and those of TypeEdit when it is '
-          'installed ("typeedit"). They are examples and templates for new scripts.', _schema({}), self.list_scripts)
+        a('list_scripts', 'List the shape scripts: the user\'s own (folder "user"), the templates chosen by the user '
+          '("templates") and those of TypeEdit when it is installed ("typeedit"). They are examples for new scripts; '
+          'start from a template when one fits.', _schema({}), self.list_scripts)
         a('read_script', 'The text of a shape script, by name.', _schema({'name': {'type': 'string'}}, ['name']),
           self.read_script)
         a('run_script', 'Run a shape script and add what it draws to the drawing (one undo step): the script named '
@@ -687,6 +694,9 @@ class ToolSet:
           'close drawings, switch tabs, change the settings or clear the history are refused. '
           'A command that opens a window waits until the user closes it.',
           _schema({'key': {'type': 'string'}}, ['key']), self.run_command, True)
+        for name, group in TOOL_GROUPS.items():         # retirés par les options (F10 › Assistant)
+            if group in self.without:
+                self._tools.pop(name, None)
 
     # --- la mémoire, les scripts, la documentation, les commandes (demande du 18/11 soir) ---------------------
     def memory_read(self, _args: dict) -> dict:
@@ -713,7 +723,18 @@ class ToolSet:
         from ..core import shapescript as SS
         te = getattr(self.win, '_te_script_folder', None)
         te = te() if callable(te) else None
-        return [('user', SS.user_dir())] + ([('typeedit', te)] if te else [])
+        try:                                             # les modèles (options › Assistant)
+            from ..ui.assistant_options import templates_dir
+            tpl = templates_dir(getattr(self.win, 'settings', None))
+        except Exception:                                # noqa: BLE001 — sans interface
+            tpl = None
+        user = SS.user_dir()
+        try:
+            if tpl is not None and tpl.resolve() == user.resolve():
+                tpl = None                               # le même dossier : listé une fois
+        except OSError:
+            pass
+        return [('user', user)] + ([('templates', tpl)] if tpl else []) + ([('typeedit', te)] if te else [])
 
     def list_scripts(self, _args: dict) -> dict:
         from ..core import shapescript as SS

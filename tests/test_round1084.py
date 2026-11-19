@@ -176,7 +176,8 @@ class Window(unittest.TestCase):
         w = self.w
         w.canvas.selection = [self.add(geom.polyline([(0, 0), (60, 0)]))]
         w.punch_command()
-        self.assertTrue(self.said.called)
+        self.assertFalse(self.said.called)                       # demande du 19/11 : plus de fenêtre, la barre d'état
+        self.assertIn('Poinçonner', w.statusBar().currentMessage())
         self.assertNotEqual(w.canvas.tool, 'punchout')
 
     def test_shift_keeps_the_old_punch(self):

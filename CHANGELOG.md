@@ -7131,3 +7131,32 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Scripts de forme : il les liste, les lit, les lance (un script existant, ou un qu’il écrit ; ses boîtes de saisie prennent leur valeur par défaut) et en enregistre de nouveaux — jamais sous le nom d’un script existant ; les scripts déjà là lui servent de modèles. Un script ne lit ni n’écrit de fichier.
 - Documentation et commandes : il lit le langage des scripts et le guide des commandes, et peut lancer les commandes du ruban comme vous — sauf celles qui enregistrent, exportent, impriment, écrivent un fichier ou un réglage, ouvrent, créent ou ferment un dessin, changent d’onglet ou effacent l’historique, et celles des greffons : rien de ce qu’il fait n’écrase un fichier.
 - Ces outils sont ceux du panneau de l’assistant ; le serveur MCP garde les siens.
+### v0.947.0 — Poinçonner et Couteau sans fenêtre d’information, la discussion de l’assistant copiée en texte
+
+- Poinçonner et Couteau (et leurs variantes avec Maj) n’ouvrent plus de fenêtre d’information quand la sélection ne convient pas : ce qu’il faut sélectionner s’écrit dans la barre d’état.
+- Rappel : Poinçonner **retire** ce que couvre la forme fermée pointeur (une encoche dans les formes, les traits coupés à son bord) ; Couteau **sépare** le long du tracé du pointeur, sans rien retirer (les formes en morceaux fermés, les traits coupés à chaque croisement).
+- La discussion de l’assistant se copie en texte seul (Ctrl+C, menu du clic droit, glisser-déposer) : avant, la copie y joignait du HTML, du Markdown et de l’OpenDocument, que bien des applications collaient à la place du texte.
+### v0.948.0 — Options › Assistant : tout l’assistant se règle dans son onglet
+
+- Un onglet **Assistant** dans les options (F10, et son bouton dans l’onglet Options du ruban) :
+  - **fournisseur et modèles** : le fournisseur, le modèle de chacun (vide : celui d’office), l’adresse du serveur Mistral (ou d’un serveur local du même format), les tours au plus pour une demande ;
+  - **clés d’API** de chaque fournisseur : retenir, oublier (gestionnaire d’identifiants de Windows, jamais les réglages), le lien pour en obtenir une ;
+  - **outils permis** : sa mémoire, les scripts de forme, les commandes du ruban — chacun peut lui être retiré ;
+  - **consignes personnelles**, données à chaque nouvelle discussion ;
+  - **mémoire** : la voir, la corriger, l’effacer (ce qu’il y ajoute pendant que la fenêtre est ouverte est gardé) ;
+  - **scripts et modèles** : un dossier de modèles de scripts (d’office « modeles » dans le dossier des scripts, un premier modèle mis s’il est vide), qui lui servent d’exemples ; les deux dossiers s’ouvrent d’un clic ;
+  - **affichage de la discussion** : taille du texte, couleurs de vos demandes, de ses réponses, des valeurs et des outils, valeurs en couleur ou non, outils montrés ou non.
+- La recherche des options trouve aussi les clés, les consignes, la mémoire et les scripts.
+### v0.949.0 — Lettres prismatiques : la matière laissée par l’outil d’avant
+
+- Lettres prismatiques en relief, nouvelle case **« Reste jusqu’à l’outil d’avant (XY) »** : la matière que les opérations d’avant (une poche, un détourage à la fraise) ont laissée entre les lettres et le passage de leur outil est enlevée à l’outil conique — les écarts trop étroits pour la fraise entre deux lettres, les coins rentrants, la surépaisseur le long des lettres.
+- À chaque niveau, avant le flanc : des tours autour des lettres, au pas du fond (celui du « Débordement »), de l’extérieur vers elles, coupés à ce qui reste ; puis le milieu des écarts, là où les tours des deux lettres se rejoignent.
+- Seulement près du passage de l’outil d’avant, à moins de son rayon des lettres : un mot dont il ne s’est pas approché n’est pas touché, la matière ouverte sur un grand espace non plus ; jamais dans une lettre (le cône s’en tient loin à chaque hauteur). Une paroi gardée à moins de ce rayon d’une lettre serait prise pour du reste.
+- Seules comptent les opérations d’avant allées jusqu’au fond des lettres (un surfaçage peu profond, non) ; sans elles, rien de plus, et l’avis le dit. Calculée aussi depuis son formulaire (OK), et refaite quand une opération d’avant change. En creux : l’avis dit que la case est pour le relief.
+### v0.950.0 — Colonnes : les onglets toujours en bas, un onglet par panneau
+
+- **Les onglets d’une colonne sont toujours tout en bas** : les panneaux rangés hors des onglets (« Sortir des onglets », « Au-dessus de », « Au-dessous de ») s’empilent au-dessus du groupe d’onglets, jamais dessous — aussi au lancement suivant.
+- **Un panneau montré dans une colonne y prend son onglet**, dans le groupe d’onglets de la colonne : il ne se colle plus à un panneau que vous avez rangé à part (Dimensions au-dessus de Calques, par exemple).
+- « Au-dessous de » un panneau en onglets : les deux quittent les onglets et se rangent au-dessus d’eux.
+- **Clic droit sur une ligne du tableau des panneaux** (fenêtre d’une colonne, ou en tête du menu d’un panneau) : le menu de ce panneau — Au-dessus de, Au-dessous de, Sortir des onglets, Détacher seul…
+- « Détacher » devient **« Détacher seul »** : lui seul quitte la colonne, les autres onglets restent.

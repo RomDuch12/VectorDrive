@@ -7174,6 +7174,10 @@ class MainWindow(QMainWindow):
         io_smb.LIVE_TEXTS = bool(option(st, 'symboles/textes_vivants'))   # l'export en SMB aussi
         from . import symbols as ui_symbols
         ui_symbols.SHOW_HIDDEN = bool(option(st, 'navigateur/caches'))
+        dock = getattr(self, 'dock_assistant', None)     # F10 › Assistant : son panneau, s'il est fait
+        panel = dock.widget() if dock is not None else None
+        if hasattr(panel, 'apply_settings'):
+            panel.apply_settings()
         self.canvas.nudge_mm = option(st, 'options/deplacement')
         self.canvas.step_gap_mm = option(st, 'options/ecart_pas')
         if str(st.value('options/delai_deplacement_929', '') or '') != '1':   # l'ancien défaut (600 ms) : 250 ms, une fois
@@ -11056,13 +11060,12 @@ class MainWindow(QMainWindow):
         objet sélectionné (qui reste) ; rend le nombre de morceaux."""
         sel = list(self.canvas.selection)
         if len(sel) < 2:
-            QMessageBox.information(self, tr('Couteau'),
-                                    tr('Sélectionnez les formes à couper puis, en dernier, le trait qui les coupe.'))
+            self._say_tool(tr('Couteau'), tr('Sélectionnez les formes à couper puis, en dernier, le trait qui les coupe.'))
             return 0
         blade = sel[-1]
         bpath = blade.path if isinstance(blade, Shape) else None
         if bpath is None or not bpath.contours:
-            QMessageBox.information(self, tr('Couteau'), tr('Le dernier objet sélectionné doit être un trait ou une forme.'))
+            self._say_tool(tr('Couteau'), tr('Le dernier objet sélectionné doit être un trait ou une forme.'))
             return 0
         targets = [s for s in sel[:-1] if isinstance(s, Shape) and any(c.closed for c in s.path.contours)]
         return self._knife_cut(targets, bpath)
@@ -16385,8 +16388,7 @@ class MainWindow(QMainWindow):
         autres objets sélectionnés ; elle reste en place. Ctrl : le type de perforage."""
         frame, targets = self._frame_in(list(self.canvas.selection))
         if frame is None:
-            QMessageBox.information(self, tr('Poinçonner'),
-                                    tr('Sélectionnez la forme fermée qui troue, puis les objets à trouer.'))
+            self._say_tool(tr('Poinçonner'), tr('Sélectionnez la forme fermée qui troue, puis les objets à trouer.'))
             return
         options = self._cut_options(False)
         if options is not None:
@@ -16714,11 +16716,32 @@ class MainWindow(QMainWindow):
             self.punch_items()
             return
         if self._stamp_pick(True) is None:
-            QMessageBox.information(self, tr('Poinçonner'),
-                                    tr('Sélectionnez d\'abord la forme fermée qui troue : elle devient le pointeur '
-                                       '(puis, au besoin, les objets à trouer).'))
+            self._say_tool(tr('Poinçonner'), tr('Sélectionnez d\'abord la forme fermée qui troue : elle devient le '
+                                                'pointeur (puis, au besoin, les objets à trouer).'))
             return
         self.set_tool('punchout')
+
+    def _say_tool(self, title: str, text: str) -> None:
+        """Poinçonner, Couteau : ce qui manque, dans la barre d'état (demande du 19/11 : plus de fenêtre
+        d'information), gardé 10 s : l'info-bulle d'état du bouton du ruban, quittée par la souris, l'effacerait."""
+        import time
+        bar = self.statusBar()
+        self._tool_said = (f'{title} : {text}', time.monotonic() + 10.0)
+        if not getattr(self, '_tool_said_hooked', False):
+            self._tool_said_hooked = True
+            bar.messageChanged.connect(self._keep_tool_said)
+        bar.showMessage(self._tool_said[0], 10000)
+
+    def _keep_tool_said(self, message: str) -> None:
+        import time
+        said = getattr(self, '_tool_said', None)
+        if message or said is None:
+            return
+        left = said[1] - time.monotonic()
+        if left > 0.2:                                   # effacé avant l'heure : remis
+            QTimer.singleShot(0, lambda t=said[0], ms=int(left * 1000): self.statusBar().showMessage(t, ms))
+        else:
+            self._tool_said = None
 
     def _knife_tool(self):
         from . import tools as T
@@ -16738,9 +16761,8 @@ class MainWindow(QMainWindow):
             return
         got = self._stamp_pick(False)
         if got is None:
-            QMessageBox.information(self, tr('Couteau'),
-                                    tr('Sélectionnez d\'abord le trait ou la forme qui coupe : il devient le pointeur '
-                                       '(puis, au besoin, les formes à couper).'))
+            self._say_tool(tr('Couteau'), tr('Sélectionnez d\'abord le trait ou la forme qui coupe : il devient le '
+                                             'pointeur (puis, au besoin, les formes à couper).'))
             return
         self._knife_blade = got
         self.canvas.select([])

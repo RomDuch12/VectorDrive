@@ -999,6 +999,8 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
         return any_ring
 
     if hollow:
+        if getattr(op, 'prism_rest', False):
+            tp.warnings.append('lettres prismatiques : le reste jusqu\'à l\'outil d\'avant est pour les lettres en relief')
         zs = [-k * step for k in range(1, int(H / step + 1e-9) + 1) if k * step < H - 1e-9] + [-H]
         for z in zs:
             d = -z * tan_h
@@ -1015,7 +1017,10 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
             z += step
         zs.reverse()
         ext = max(0.0, getattr(op, 'extension', 0.0) or 0.0)
+        rest = _PrismRest.of(setup, tool, tp, reg, H, tan_h, region_right) if getattr(op, 'prism_rest', False) else None
         for z in zs:
+            if rest is not None:                          # le reste laissé par l'outil d'avant, à ce niveau
+                rest.cut(em, here, z)
             for z2 in (zs[zs.index(z):] if lateral else [z]):
                 d = (H + z2) * tan_h
                 if d <= 1e-9 and ext > 0:                 # « Débordement » : le fond autour des lettres, de l'extérieur vers elles
@@ -1058,6 +1063,89 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
         tp.warnings.append(f'lettres prismatiques : arêtes non reprises sur {failed} forme(s) (squelette impossible à calculer)')
 
 
+class _PrismRest:
+    """Lettres prismatiques en relief, « reste jusqu'à l'outil d'avant » (demande du 19/11) : la matière que les
+    parcours d'avant ont laissée entre les lettres et leur passage — la bande le long des lettres, les écarts trop
+    étroits pour leur outil, les coins rentrants. C'est la fermeture (au rayon de coupe au fond de leur plus gros outil,
+    plus le pas) de ce qu'ils ont creusé jusqu'au fond et des lettres, sans eux, et seulement ce qui touche à leur
+    passage : jamais un écart entre des lettres dont ils ne se sont pas approchés, ni la matière ouverte sur un grand
+    espace. Une paroi gardée à moins de ce rayon d'une lettre est prise pour du reste (rien ne la distingue, dans les
+    parcours, d'une surépaisseur laissée le long de la lettre). À chaque niveau, les anneaux autour des lettres, au pas
+    du fond (celui du « Débordement »), de l'extérieur vers elles, coupés à cette bande éloignée de la matière gardée
+    du rayon du cône à la surface. Le cône ne touche jamais une lettre : il s'élargit vers le haut, elles se
+    rétrécissent."""
+
+    @classmethod
+    def of(cls, setup, tool, tp, reg, H: float, tan_h: float, region_right: bool):
+        """None : rien à reprendre (dit dans les avis)."""
+        from shapely.geometry import LineString
+        from shapely.ops import unary_union
+        from . import linkprev
+        bottom = -H + 1e-3
+        prev, radii = [], []
+        for p in linkprev.cutting(S.previous_toolpaths()):
+            t = setup.tool(p.tool_id)
+            low = min((m.z for m in p.moves if m.kind != 'rapid'), default=0.0)
+            if t is None or t.kind == 'laser' or low > bottom:
+                continue                                  # ni laser, ni ce qui n'est pas allé jusqu'au fond
+            prev.append(p)
+            radii.append(t.radius_at(max(0.0, -H - low)))   # son rayon de coupe au fond des lettres
+        done = linkprev.cleared(prev, setup, bottom, setup.tolerance) if prev else None
+        if done is None or done.is_empty:
+            tp.warnings.append('lettres prismatiques : reste jusqu\'à l\'outil d\'avant — aucune opération d\'avant '
+                               'n\'a creusé jusqu\'au fond des lettres : rien à reprendre')
+            return None
+        self = cls()
+        self.pitch = max(0.02, 2 * (tool.tip / 2 + FLAT_RIDGE * tan_h))
+        self.tip, self.tan_h, self.qs = tool.tip, tan_h, S._quad_segs(max(setup.tolerance, 1e-3), setup.tolerance)
+        w = max(radii) + self.pitch
+        self.closed = done.union(reg).buffer(w, quad_segs=self.qs).buffer(-w, quad_segs=self.qs)
+        band = self.closed.difference(done.buffer(-1e-4)).difference(reg)
+        band = band.intersection(reg.buffer(w, quad_segs=self.qs)).buffer(-1e-3).buffer(1e-3)
+        touch = done.buffer(self.pitch, quad_segs=self.qs)   # seulement ce qui touche au passage de l'outil d'avant
+        band = unary_union([g for g in getattr(band, 'geoms', [band]) if g.geom_type == 'Polygon' and g.intersects(touch)])
+        if band.is_empty:
+            tp.warnings.append('lettres prismatiques : reste jusqu\'à l\'outil d\'avant — rien de laissé près des '
+                               'lettres')
+            return None
+        self.band, self.reg, self.H, self.region_right, self.tol = band, reg, H, region_right, setup.tolerance
+        self.rings = []                                   # les anneaux autour des lettres, du plus loin au plus près
+        for k in range(int(w / self.pitch + 1e-9) + 1, 0, -1):
+            ring = S.buffer_checked(reg, k * self.pitch, self.qs)
+            if ring.intersects(band):
+                self.rings.append(S.rings_of(ring, region_right))
+        near = band.buffer(self.pitch)                    # le bord des lettres voisines : balayé par le flanc
+        self.edge = [(pts, True) for pts in S.rings_of(reg, region_right)
+                     if near.intersects(LineString([p[:2] for p in pts]))]
+        return self
+
+    def cut(self, em, here, z: float) -> None:
+        """Le reste enlevé à la cote `z` ; puis, là où les anneaux se sont rejoints (le milieu d'un écart), le tour
+        de ce qu'ils ont laissé (`spiral_leftover`), jamais plus près d'une lettre que le cône ne le permet."""
+        from shapely.geometry import LineString
+        free = self.band.intersection(self.closed.buffer(-(self.tip / 2 - z * self.tan_h), quad_segs=self.qs))
+        if free.is_empty:
+            return
+        done = []
+        for rings in self.rings:
+            chains = []
+            for pts in rings:
+                piece = LineString([p[:2] for p in pts]).intersection(free)
+                for g in getattr(piece, 'geoms', [piece]):
+                    if g.geom_type == 'LineString' and g.length > 1e-6:
+                        chains.append(([tuple(c) for c in g.coords], False))
+            for pts, closed in S.order_chains(chains, em.pos or here):
+                S.cut_chain(em, pts, closed, [z])
+                done.append((pts, closed))
+        safe = max(0.0, self.tip / 2 - (self.H + z) * self.tan_h) + 1e-3
+        centers = free.difference(self.reg.buffer(safe, quad_segs=self.qs))
+        if centers.is_empty:
+            return
+        for pts in S.spiral_leftover([done + self.edge], centers, self.pitch / 2, self.region_right, self.qs,
+                                     self.tol)[0]:
+            S.cut_chain(em, pts, True, [z])
+
+
 def _prismatic(doc, setup, op, tool, tp, em, here) -> None:
     """Lettres prismatiques (TypeEdit) : lettres en relief au profil
     triangulaire, arête au milieu. La pointe de l'outil conique suit le
@@ -1079,6 +1167,9 @@ def _prismatic(doc, setup, op, tool, tp, em, here) -> None:
     if getattr(op, 'prism_rule', 0) >= 882:
         _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h)
         return
+    if getattr(op, 'prism_rest', False):
+        tp.warnings.append('lettres prismatiques : le reste jusqu\'à l\'outil d\'avant demande le trajet relevé dans TE13 '
+                           '(règle 882)')
     rt = tool.tip / 2
     h_top, h_low = prismatic_heights(reg, tool)
     H = abs(op.depth) if op.depth else h_top

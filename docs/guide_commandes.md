@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.946.0
+# Guide des commandes — VectorDrive 0.950.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -1023,6 +1023,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Mises à jour |  | Options (F10), onglet « Mises à jour » |
 | Plugins |  | Options (F10), onglet « Plugins » |
 | Performances |  | Options (F10), onglet « Performances » |
+| Assistant |  | Options (F10), onglet « Assistant » |
 
 ### Configuration
 

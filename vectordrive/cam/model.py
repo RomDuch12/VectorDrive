@@ -269,6 +269,9 @@ class Operation:
     finish_3d_only: bool = False     # finition : les tirés d'angle et les parties étroites, sans le contour
     prism_hollow: bool = False       # lettres prismatiques : en creux (le fond sous le contour décalé) ; sinon en relief
     prism_lateral: bool = False      # lettres prismatiques : passes latérales (à chaque niveau, les contours décalés jusqu'au bord)
+    #: lettres prismatiques en relief : la matière laissée par les opérations d'avant entre les lettres et le passage de
+    #: leur outil (XY), enlevée à chaque niveau (demande du 19/11)
+    prism_rest: bool = False
     gamme_rule: int = 0              # gamme : 885, le trajet relevé dans TE13 (voir `gamme.cone_step`) ; 0, celui d'avant
     prism_rule: int = 882            # lettres prismatiques : 882, le trajet relevé dans TE13 ; avant, le contour décalé de la pointe à chaque niveau
     vcarve_edges_only: bool = False  # gravure 2,5D : bords et tirés d'angle seulement (finition TypeEdit)

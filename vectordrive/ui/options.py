@@ -351,13 +351,42 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Lissage des traits et des arêtes de la vue 3D ; moins sollicite moins la carte graphique '
               '(aucun en rendu logiciel)'),
     ]),
+    ('Assistant', [                                       # demande du 19/11 ; la suite : ui/assistant_options.py
+        C('assistant/fournisseur', 'Fournisseur', 'anthropic',
+          [('anthropic', 'Claude (Anthropic)'), ('openai', 'ChatGPT (OpenAI)'), ('mistral', 'Mistral')],
+          tip='Celui de la discussion ; aussi choisi dans le panneau de l’assistant'),
+        Opt('assistant/modele_anthropic', 'Modèle Claude', 'text', '',
+            tip='Vide : celui d’office ; un autre nom peut être écrit'),
+        Opt('assistant/modele_openai', 'Modèle ChatGPT', 'text', '',
+            tip='Vide : celui d’office ; un autre nom peut être écrit'),
+        Opt('assistant/modele_mistral', 'Modèle Mistral', 'text', '',
+            tip='Vide : celui d’office ; un autre nom peut être écrit'),
+        Opt('assistant/adresse_mistral', 'Adresse du serveur Mistral', 'text', '',
+            tip='Vide : celle de Mistral ; un serveur local du même format convient'),
+        I('assistant/tours_max', 'Tours au plus pour une demande', 40, 1, 200,
+          tip='Un tour : le modèle répond ou appelle ses outils'),
+        B('assistant/outils_memoire', 'Il lit et écrit sa mémoire', True),
+        B('assistant/outils_scripts', 'Il lance les scripts de forme et en enregistre', True),
+        B('assistant/outils_commandes', 'Il lance les commandes du ruban', True,
+          tip='Jamais celles qui enregistrent, exportent, impriment, ferment ou touchent aux réglages'),
+        Opt('assistant/dossier_modeles', 'Dossier des modèles de scripts', 'folder', '',
+            tip='Vide : « modeles » dans le dossier des scripts'),
+        I('assistant/taille_texte', 'Discussion : taille du texte', 0, 0, 40, ' pt',
+          tip='0 : celle de l’interface'),
+        Opt('assistant/couleur_vous', 'Discussion : vos demandes', 'color', '', tip='Vide : bleu'),
+        Opt('assistant/couleur_assistant', 'Discussion : ses réponses', 'color', '', tip='Vide : vert'),
+        Opt('assistant/couleur_valeurs', 'Discussion : les valeurs de ses réponses', 'color', '', tip='Vide : orange'),
+        Opt('assistant/couleur_outils', 'Discussion : ses outils', 'color', '', tip='Vide : gris'),
+        B('assistant/valeurs_couleur', 'Discussion : valeurs des réponses en couleur', True),
+        B('assistant/montrer_outils', 'Discussion : montrer les outils appelés', True),
+    ]),
 ]
 BY_KEY = {o.key: o for _t, opts in SPEC for o in opts}
 #: onglets de la fenêtre, repris en boutons dans l'onglet Options du ruban : titre → (clé, icône)
 PAGES = {'Général': ('general', 'options'), 'Apparence': ('apparence', 'themes'), 'Dessin': ('dessin', 'bezier'),
          'Affichage': ('affichage', 'view_2d'), 'Fichiers': ('fichiers', 'open'), 'FAO': ('fao', 'cam'),
          'BAT': ('bat', 'pdf'), 'Impression': ('impression', 'print'), 'Mises à jour': ('maj', 'update'), 'Plugins': ('plugins', 'ribbon'),
-         'Performances': ('performances', 'view_3d')}
+         'Performances': ('performances', 'view_3d'), 'Assistant': ('assistant', 'assistant_ia')}
 assert list(PAGES) == [t for t, _o in SPEC], 'un bouton par onglet des options'
 #: réglages d'apparence : un changement réapplique le thème
 APPEARANCE = [o.key for o in dict(SPEC)['Apparence']]
@@ -442,6 +471,7 @@ class OptionsDialog(QDialog):
         self.settings = settings
         self.widgets: dict[str, QWidget] = {}
         self._rows: list = []                            # (onglet, formulaire, champ, texte cherché)
+        self.on_accept: list = []                        # à OK : ce que les parties faites à part gardent
         lay = QVBoxLayout(self)
         from PySide6.QtWidgets import QLineEdit
         self.search = QLineEdit()
@@ -522,6 +552,9 @@ class OptionsDialog(QDialog):
                 b = QPushButton(tr('Éditeur de thèmes…'))
                 b.clicked.connect(self._theme_editor)
                 form.addRow(b)
+            if title == 'Assistant':
+                from . import assistant_options
+                assistant_options.build(self, form, parent)
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setWidget(page)
@@ -789,4 +822,6 @@ class OptionsDialog(QDialog):
     def accept(self) -> None:
         for key in self.widgets:
             self.settings.setValue(key, self.read(key))
+        for keep in self.on_accept:
+            keep()
         super().accept()

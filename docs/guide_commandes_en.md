@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.946.0
+# Command guide — VectorDrive 0.950.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -1023,6 +1023,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Updates |  | Options (F10), “Updates” tab |
 | Plugins |  | Options (F10), “Plugins” tab |
 | Performance |  | Options (F10), “Performance” tab |
+| Assistant |  | Options (F10), “Assistant” tab |
 
 ### Configuration
 

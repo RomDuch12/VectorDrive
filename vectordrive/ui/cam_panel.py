@@ -62,6 +62,8 @@ LABELS = {
     'hole_diameter': 'Ø du trou (mm, 0 = celui du cercle)',
     'extension': 'Débordement (mm)', 'face_angle': 'Angle des passes (°)', 'face_direction': 'Sens des passes',
     'prism_hollow': 'En creux (sinon en relief)', 'prism_lateral': 'Passes latérales',
+    'prism_rest': 'Reste jusqu’à l’outil d’avant (XY) : la matière que les opérations d’avant ont laissée près des '
+                  'lettres',
     'instruction': 'Instruction', 'params': 'Réglages de l\'instruction',
     'finish_skip_frame': 'Finition : pas de passe sur le cadre (gravure en relief)',
     'finish_shut_levels': 'Finition à toutes les cotes là où l’ébauche n’a pas ouvert la matière (zone étroite, '
@@ -465,7 +467,7 @@ OP_SECTIONS = [
     ('Profondeurs', ('z_start', 'depth', 'step_down', 'pass_depths', 'pass_order', 'link_passes', 'stock', 'vcarve_finish', 'stock_z', 'finish',
                      'finish_skip_frame', 'finish_shut_levels',
                      'contour_ref', 'trace_mode', 'knife_mode', 'knife_angle', 'knife_angle_max',
-                     'chamfer_width', 'prism_hollow', 'prism_lateral',
+                     'chamfer_width', 'prism_hollow', 'prism_lateral', 'prism_rest',
                      'vcarve_edges_only', 'finish_3d_only', 'vcarve_mode', 'vcarve_offset', 'vcarve_max_steps', 'vcarve_step', 'vcarve_walls', 'emboss_edge', 'emboss_width', 'emboss_start_angle',
                      'emboss_end_angle', 'emboss_side', 'emboss_passes')),
     ('Entrées et liaisons', ('ramp_max', 'ramp_helix', 'start_policy', 'lead_mode', 'lead_in', 'lead_out', 'lead_angle',
@@ -541,7 +543,7 @@ KIND_FIELDS = {
                   'foot_pull_max', 'link_previous'},
     'vcarve': {'stock', 'vcarve_finish', 'resolution', 'vcarve_edges_only', 'finish_3d_only', 'finish_skip_frame', 'vcarve_mode', 'vcarve_offset', 'vcarve_max_steps',
                'vcarve_step', 'vcarve_walls', 'link_previous', 'stepover_mm', 'pocket_outside_in', 'corner_pull_angle', 'ramp', 'ramp_angle'},
-    'prismatique': {'climb', 'extension', 'prism_hollow', 'prism_lateral'},
+    'prismatique': {'climb', 'extension', 'prism_hollow', 'prism_lateral', 'prism_rest'},
     'relief': {'resolution', 'invert', 'raster_dir', 'stock', 'scan_mode', 'raster_angle', 'raster_turn',
                'spiral_outward', 'parallel_slices', 'follow_profile', 'climb'},
     'surface3d': {'model_path', 'resolution', 'raster_dir', 'stock', 'faces3d', 'contours3d', 'extension',
@@ -2608,7 +2610,8 @@ class CamPanel(QWidget):
                 mine = {k: v for k, v in d.items() if k not in ('enabled', 'name', 'restart_from', 'restart_to', 'restart_sig')}
                 own = strategies._digest((mine, tools.get(str(d.get('tool_id'))), tools.get(str(d.get('ref_tool_id')))))
                 # poche, seulement le reste : les opérations d'avant comptent aussi (retouchées, ou l'ordre changé)
-                ops[str(d.get('id', ''))] = strategies._digest((own, before)) if d.get('rest_previous') and \
+                after = d.get('rest_previous') or (d.get('kind') == 'prismatique' and d.get('prism_rest'))
+                ops[str(d.get('id', ''))] = strategies._digest((own, before)) if after and \
                     own is not None and None not in before else own
                 before = before + [own]
         state = (strategies._doc_signature(doc), strategies._digest(rest), ops)
@@ -5205,6 +5208,8 @@ class CamPanel(QWidget):
         try:
             if op.link_previous:                         # gamme : la matière laissée par les parcours d'avant
                 tp = run(self.win, tr('Calcul du parcours'), self._linked, s, op)
+            elif self._needs_previous(op):               # lettres prismatiques, reste jusqu'à l'outil d'avant
+                tp = run(self.win, tr('Calcul du parcours'), self._with_previous, s, op)
             else:
                 tp = run(self.win, tr('Calcul du parcours'), strategies.compute, self.doc, s, op)
         except Cancelled:
@@ -5271,6 +5276,11 @@ class CamPanel(QWidget):
         """Parcours de `op` lié au parcours précédent : avec les parcours des
         opérations actives d'avant (ceux de la liste `paths`, calculés s'il en
         manque)."""
+        return strategies.compute_linked(self.doc, s, op, self._previous_paths(s, op, paths))
+
+    def _previous_paths(self, s: model.CamSetup, op: model.Operation, paths=None) -> list:
+        """Les parcours des opérations actives d'avant `op` : ceux de la liste `paths` (d'office la liste du panneau),
+        calculés s'il en manque."""
         k = next((i for i, o in enumerate(s.operations) if o.id == op.id), len(s.operations))
         before = [o for o in s.operations[:k] if o.enabled]
         have = {}
@@ -5279,13 +5289,25 @@ class CamPanel(QWidget):
                 have.setdefault(t.op_id, t)
         if all(o.id in have for o in before):
             from ..cam import restart
-            prev = [restart.whole(have[o.id]) for o in before]      # une reprise ne remet pas la matière enlevée
-        else:
-            import copy
-            prefix = copy.copy(s)
-            prefix.operations = list(s.operations[:k])
-            prev = strategies.compute_all(self.doc, prefix)
-        return strategies.compute_linked(self.doc, s, op, prev)
+            return [restart.whole(have[o.id]) for o in before]      # une reprise ne remet pas la matière enlevée
+        import copy
+        prefix = copy.copy(s)
+        prefix.operations = list(s.operations[:k])
+        return strategies.compute_all(self.doc, prefix)
+
+    @staticmethod
+    def _needs_previous(op) -> bool:
+        """Opération qui lit les parcours d'avant sans leur être liée : lettres prismatiques, reste jusqu'à l'outil
+        d'avant (demande du 19/11)."""
+        return op.kind == 'prismatique' and bool(getattr(op, 'prism_rest', False))
+
+    def _with_previous(self, s: model.CamSetup, op: model.Operation, paths=None):
+        """`op` calculée avec les parcours d'avant (`strategies.previous_toolpaths`)."""
+        token = strategies._PREVIOUS.set(self._previous_paths(s, op, paths))
+        try:
+            return strategies.compute(self.doc, s, op)
+        finally:
+            strategies._PREVIOUS.reset(token)
 
     def _rest_after(self, s: model.CamSetup, op: model.Operation) -> set:
         """Poches « seulement le reste » actives après `op`, déjà calculées : ce qu'elles usinent dépend de `op`."""
@@ -5294,7 +5316,8 @@ class CamPanel(QWidget):
             return set()
         have = {t.op_id for t in self.toolpaths if t.op_id}
         return {o.id for o in s.operations[ids.index(op.id) + 1:]
-                if o.enabled and o.kind == 'poche' and getattr(o, 'rest_previous', False) and o.id in have}
+                if o.enabled and o.id in have and ((o.kind == 'poche' and getattr(o, 'rest_previous', False))
+                                                   or self._needs_previous(o))}
 
     def _relink_after(self, s: model.CamSetup, op: model.Operation, tps: list) -> list:
         """Opérations liées après `op` déjà calculées : refaites avec le
@@ -5313,6 +5336,8 @@ class CamPanel(QWidget):
             try:
                 if o.link_previous:
                     tps[at] = run(self.win, tr('Calcul du parcours'), self._linked, s, o, tps)
+                elif self._needs_previous(o):
+                    tps[at] = run(self.win, tr('Calcul du parcours'), self._with_previous, s, o, tps)
                 else:
                     tps[at] = run(self.win, tr('Calcul du parcours'), strategies.compute, self.doc, s, o)
             except Cancelled:                            # celle-ci et les suivantes gardent leur ancien parcours

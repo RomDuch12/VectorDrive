@@ -152,7 +152,7 @@ class Bars(Base):
         self.assertEqual([t for t in acts if t not in (tr('En onglet avec'), tr('Sortir des onglets'),
                                                        tr('Au-dessus de'), tr('Au-dessous de'),     # 1028
                                                        'Titres entiers dans les onglets')],         # 1049
-                         [tr('Plein écran translucide'), tr('Détacher'), tr('Colonne de gauche'),
+                         [tr('Plein écran translucide'), tr('Détacher seul'), tr('Colonne de gauche'),   # 1093
                           tr('Colonne de droite'), tr('Fermer')])                # 1013 : et les onglets
         self.assertTrue(acts[tr('Colonne de droite')].isChecked())
         self.assertFalse(acts[tr('Colonne de droite')].isEnabled())     # il y est déjà

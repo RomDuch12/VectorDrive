@@ -4951,7 +4951,9 @@ def compute_all(doc: Document, setup: CamSetup, only=None) -> list[Toolpath]:
             if key is not None:                          # brut du dessin 2D : traversé ou non (surfaçage avant elle)
                 key = key + (('brut2d', stock_top(doc, setup, op)),)
             linked = bool(getattr(op, 'link_previous', False))
-            after = linked or bool(getattr(op, 'rest_previous', False))     # poche, seulement le reste : aussi
+            rest_prism = op.kind == 'prismatique' and bool(getattr(op, 'prism_rest', False))
+            # poche, seulement le reste ; prismatique, reste jusqu'à l'outil d'avant : aussi
+            after = linked or bool(getattr(op, 'rest_previous', False)) or rest_prism
             if after and key is not None:                # le résultat dépend aussi des parcours d'avant
                 key = key + (tuple(prev_keys),) if all(k is not None for k in prev_keys) else None
             hit = _TP_CACHE.get(key) if key else None
@@ -4964,7 +4966,8 @@ def compute_all(doc: Document, setup: CamSetup, only=None) -> list[Toolpath]:
                     if linked:                           # gamme : seulement la matière laissée par les parcours d'avant
                         tp = compute_linked(doc, setup, op, out, here)
                     else:
-                        token_prev = _PREVIOUS.set(None)
+                        # prismatique, reste jusqu'à l'outil d'avant : les parcours d'avant, sans en être liée
+                        token_prev = _PREVIOUS.set(list(out) if rest_prism else None)
                         try:
                             tp = compute(doc, setup, op, here)
                         finally:

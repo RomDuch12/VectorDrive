@@ -3,7 +3,9 @@
 - Chaque panneau ancrable a la même barre de titre : son nom, puis « plein écran translucide », « détacher »
   (ou ancrer) et « fermer ». Un clic droit sur la barre, ou sur l'onglet du panneau quand plusieurs partagent une
   colonne, donne les mêmes fonctions, plus « Colonne de gauche » / « Colonne de droite ».
-- Un panneau envoyé dans une colonne s'y range en onglet avec ceux qui y sont déjà ; sa colonne est retenue.
+- Un panneau envoyé dans une colonne y prend son onglet, dans le groupe d'onglets de la colonne — jamais avec un
+  panneau rangé à part ; sa colonne est retenue. Le groupe d'onglets est toujours en bas de la colonne : les panneaux
+  rangés hors des onglets s'empilent au-dessus de lui (demande du 19/11).
 - « En onglet avec › » un autre panneau de sa colonne (Dimensions (F2) et Calques, par exemple), « Sortir des
   onglets » : deux panneaux partagent un onglet, ou non ; retenu pour les lancements suivants. D'office, Dimensions
   (F2) et Calques partagent le même groupe d'onglets.
@@ -139,6 +141,8 @@ class Columns(QObject):
         self._scan_due = False
         self._titling = False                            # le titre court posé par nous : pas un nouveau titre
         self._dress_due = False
+        self._settling = False                           # la colonne refaite : pas de nouveau tour
+        self._settle_due = False
         self._adopt_new()
         self.restore()
         win.installEventFilter(self)                     # panneaux et barres d'onglets nés plus tard
@@ -313,12 +317,15 @@ class Columns(QObject):
         hidden = dock.isHidden()
         self.win._docks_before_cam = None                # la disposition d'avant la FAO n'est plus à rendre
         front = [d for d in others if self.in_front(d)] if not show else []
+        group = self.main_group(side, without=dock)      # son onglet dans le groupe de la colonne (demande du 19/11)
+        if not group and not [d for d in others if not d.isHidden()]:
+            group = [d for d in there if d.objectName() not in self.placed()][:1]   # colonne cachée : son groupe
 
         def do():
             dock.setFloating(False)
             self.win.addDockWidget(AREAS[side], dock)
-            if others:
-                self.win.tabifyDockWidget(max(others, key=lambda d: len(self.win.tabifiedDockWidgets(d))), dock)
+            if group:
+                self.win.tabifyDockWidget(group[0], dock)
             if show:
                 dock.setVisible(True)
                 dock.raise_()
@@ -334,6 +341,8 @@ class Columns(QObject):
             st.remove(f'{KEY}/seul/{dock.objectName()}')
             st.remove(f'{KEY}/partage/{dock.objectName()}')  # ni au-dessus ou au-dessous d'un autre
             self._unsplit_from(dock.objectName())        # ni repère de ceux qui l'étaient par rapport à lui
+        if show:
+            self.settle(side)
 
     def restore(self) -> None:
         """Au lancement : chaque panneau dans la colonne retenue pour lui, sans le montrer ni le mettre devant ; un
@@ -362,6 +371,133 @@ class Columns(QObject):
                 self.split_with(d, other, where != 'dessus', remember=False, show=False)
         self._f2_with_layers()
         self._cad_names = [n for n in str(self._st().value(f'{KEY}/rangees_cad', '') or '').split(',') if n]
+        self._settle_due = True                          # les onglets en bas : à la première fois montrée
+
+    # --- le groupe d'onglets toujours en bas de la colonne (demande du 19/11) ---------------------------------------
+    def placed(self) -> set:
+        """Les panneaux rangés à part, hors du groupe d'onglets de leur colonne : sortis des onglets, au-dessus ou
+        au-dessous d'un autre (et ce repère), Dimensions au-dessus de Calques d'office (poste neuf)."""
+        st = self._st()
+        out = self.split_names()
+        for d in self.docks():
+            if str(st.value(f'{KEY}/seul/{d.objectName()}', '')).lower() in ('1', 'true'):
+                out.add(d.objectName())
+        if str(st.value(F2_KEY, '') or '') == 'dessus' and not st.value(f'{KEY}/onglet/dims', ''):
+            out.add('dims')
+        return out
+
+    def blocks(self, side: str) -> list:
+        """Les blocs montrés de la colonne `side`, de haut en bas : un panneau seul, ou un groupe d'onglets (celui de
+        devant d'abord)."""
+        col = [d for d in self.column(side) if not d.isHidden()]
+        try:
+            self.win.layout().activate()                 # les places d'après les derniers changements
+        except RuntimeError:
+            return []
+        seen, out = set(), []
+        for d in col:
+            if id(d) in seen:
+                continue
+            group = [d] + [m for m in self.win.tabifiedDockWidgets(d) if m in col and m is not d]
+            group.sort(key=lambda m: not self.in_front(m))
+            seen.update(id(m) for m in group)
+            out.append(group)
+        # un onglet de derrière est mis hors de la fenêtre par Qt : la place du bloc est celle du plus bas
+        out.sort(key=lambda b: max(m.mapTo(self.win, QPoint(0, 0)).y() for m in b))
+        return out
+
+    def main_group(self, side: str, without=None) -> list:
+        """Le groupe d'onglets de la colonne : le plus fourni des blocs montrés, sauf un panneau seul rangé à part
+        (le plus bas à égalité) ; [] : aucun. `without` : un panneau qui n'y compte pas."""
+        placed = self.placed()
+        best = []
+        for b in self.blocks(side):
+            b = [m for m in b if m is not without]
+            # des onglets (même avec un panneau rangé à part d'office, Dimensions avec la FAO), ou un panneau seul
+            # que l'utilisateur n'a pas rangé à part
+            if b and (len(b) > 1 or b[0].objectName() not in placed) and len(b) >= len(best):
+                best = b
+        return best
+
+    def settle(self, side: str) -> bool:
+        """Le groupe d'onglets de la colonne mis en bas, sous les panneaux rangés à part, s'il n'y est pas : la
+        colonne refaite dans cet ordre, les mêmes devant, les mêmes hauteurs. Rend vrai si elle a été refaite."""
+        if side not in AREAS or self._settling:
+            return False
+        if not self.win.isVisible() or self.win.isMinimized():
+            self._settle_due = True                      # les places ne se lisent pas : à la prochaine fois montrée
+            return False
+        blocks = self.blocks(side)
+        main = self.main_group(side)
+        if len(blocks) < 2 or not main or set(map(id, blocks[-1])) == set(map(id, main)):
+            return False
+        if self._side_by_side(blocks):                   # rangés côte à côte à la souris : laissés comme ils sont
+            return False
+        k = next(i for i, b in enumerate(blocks) if set(map(id, b)) == set(map(id, main)))
+        above, below = blocks[:k], blocks[k + 1:]
+        if above and len(above[-1]) == 1 and all(len(b) == 1 for b in below):
+            return self._lift(above[-1][0], [b[0] for b in below])
+        order = [b for b in blocks if set(map(id, b)) != set(map(id, main))] + [main]
+        heights = [max(1, b[0].height()) for b in order]   # celle de l'onglet de devant
+        front = [b[0] for b in order]
+        placed = self.placed()
+        # les panneaux cachés de la colonne (la FAO fermée…) : leur onglet dans le groupe, pour quand ils reviennent
+        asleep = [d for d in self.column(side) if d.isHidden() and d.objectName() not in placed]
+
+        def do():
+            for b in order:
+                for d in b:
+                    self.win.removeDockWidget(d)
+            for b in order:
+                self.win.addDockWidget(AREAS[side], b[0], Qt.Orientation.Vertical)
+                for d in b[1:]:
+                    self.win.tabifyDockWidget(b[0], d)
+                for d in b:
+                    d.setVisible(True)
+            for d in asleep:
+                self.win.tabifyDockWidget(main[0], d)
+                d.setVisible(False)
+            for d in front:
+                d.raise_()
+            self.win.resizeDocks(front, heights, Qt.Orientation.Vertical)
+        self._settling = True
+        try:
+            self._quiet(do)
+        finally:
+            self._settling = False
+        return True
+
+    def _lift(self, anchor, docks: list) -> bool:
+        """Les panneaux seuls `docks`, sous le groupe d'onglets, remis juste sous `anchor` (seul, au-dessus du groupe) :
+        le groupe n'est pas touché (ni caché, ni remontré), ses onglets restent comme ils sont."""
+        heights = [max(1, d.height()) for d in docks]
+
+        def do():
+            prev = anchor
+            for d in docks:
+                self.win.removeDockWidget(d)
+                self.win.splitDockWidget(prev, d, Qt.Orientation.Vertical)
+                d.setVisible(True)
+                prev = d
+            self.win.resizeDocks(docks, heights, Qt.Orientation.Vertical)
+        self._settling = True
+        try:
+            self._quiet(do)
+        finally:
+            self._settling = False
+        return True
+
+    def _side_by_side(self, blocks: list) -> bool:
+        """Deux blocs de la colonne l'un à côté de l'autre (glissés ainsi à la souris) ?"""
+        boxes = []
+        for b in blocks:
+            at = b[0].mapTo(self.win, QPoint(0, 0))
+            boxes.append((at.x(), at.y(), at.y() + b[0].height()))
+        for i, (xa, ya, za) in enumerate(boxes):
+            for xb, yb, zb in boxes[i + 1:]:
+                if abs(xa - xb) > 2 and min(za, zb) - max(ya, yb) > 4:
+                    return True
+        return False
 
     # --- en onglets dans une colonne (demande du 14/11, soir) ----------------------------------------------------
     def f2_mode(self) -> str:
@@ -433,6 +569,8 @@ class Columns(QObject):
             st.remove(f'{KEY}/seul/{dock.objectName()}')  # `other` sorti de son groupe le reste : au lancement,
                                                           # les « seuls » d'abord, puis ce couple
             st.setValue(f'{KEY}/place/{dock.objectName()}', side)
+        if show:
+            self.settle(side)
         self.sync()
         return other in self.win.tabifiedDockWidgets(dock)
 
@@ -463,6 +601,8 @@ class Columns(QObject):
                 if str(st.value(f'{KEY}/onglet/{d.objectName()}', '') or '') == dock.objectName():
                     st.remove(f'{KEY}/onglet/{d.objectName()}')
             st.setValue(f'{KEY}/seul/{dock.objectName()}', True)
+        if show:
+            self.settle(side)                            # au-dessus du groupe d'onglets, qui reste en bas
         self.sync()
         return not self.win.tabifiedDockWidgets(dock)
 
@@ -471,7 +611,8 @@ class Columns(QObject):
         hauteur, les deux montrés à la fois (demande du 15/11, 8 h 40). Sous un panneau en onglets (Calques avec la
         Bibliothèque…), `dock` va sous leur groupe ; au-dessus, `other` quitte ses onglets pour venir sous `dock`.
         Retenu (`remember`) pour les lancements suivants. Rend vrai s'ils sont dans la même colonne, hors des onglets
-        l'un de l'autre."""
+        l'un de l'autre. Depuis le 19/11, sous un panneau en onglets aussi, `other` quitte ses onglets : les deux
+        au-dessus du groupe d'onglets, qui reste en bas de la colonne."""
         side = self.side(other)
         if side is None or dock is other:
             return False
@@ -483,19 +624,15 @@ class Columns(QObject):
 
         def do():
             first, second = (other, dock) if below else (dock, other)
-            mates = [m for m in self.win.tabifiedDockWidgets(other) if m is not dock and not m.isHidden()]
             shown = not other.isHidden()
             self.win.removeDockWidget(dock)              # hors de ses onglets
             dock.setFloating(False)
-            if below and mates:                          # sous un groupe d'onglets montrés : en bas de la colonne
-                self.win.addDockWidget(AREAS[side], dock, Qt.Orientation.Vertical)
-            else:
-                # les deux remis à neuf : Qt garde sinon un groupe d'onglets d'un seul panneau, où le partage
-                # donnerait un onglet (une colonne qui n'a que ce groupe, par exemple)
-                self.win.removeDockWidget(other)
-                self.win.addDockWidget(AREAS[side], first, Qt.Orientation.Vertical)
-                self.win.splitDockWidget(first, second, Qt.Orientation.Vertical)
-                other.setVisible(shown)
+            # les deux remis à neuf : Qt garde sinon un groupe d'onglets d'un seul panneau, où le partage donnerait un
+            # onglet (une colonne qui n'a que ce groupe, par exemple)
+            self.win.removeDockWidget(other)
+            self.win.addDockWidget(AREAS[side], first, Qt.Orientation.Vertical)
+            self.win.splitDockWidget(first, second, Qt.Orientation.Vertical)
+            other.setVisible(shown)
             dock.setVisible(True if show else not hidden)
             if show:
                 dock.raise_()
@@ -513,6 +650,8 @@ class Columns(QObject):
             st.remove(f'{KEY}/partage/{other.objectName()}')   # l'autre n'est plus rangé par rapport à un troisième
             self._unsplit_from(name)                     # ni un troisième par rapport à lui
             st.setValue(f'{KEY}/place/{name}', side)
+        if show:
+            self.settle(side)                            # le groupe d'onglets sous eux
         self.sync()
         return self.side(dock) == side and other not in self.win.tabifiedDockWidgets(dock)
 
@@ -598,7 +737,13 @@ class Columns(QObject):
         if dock.isFloating() or self.side(dock) != side:
             self.move(dock, side)
         else:
+            was_hidden = dock.isHidden()
             self._quiet(lambda: (dock.setVisible(True), dock.raise_()))
+            if was_hidden and dock.objectName() not in self.placed() and not self.win.tabifiedDockWidgets(dock):
+                group = self.main_group(side, without=dock)   # revenu seul, hors des onglets : son onglet dans le groupe
+                if group:
+                    self._quiet(lambda: (self.win.tabifyDockWidget(group[0], dock), dock.raise_()))
+            self.settle(side)
 
     # --- montrer, cacher une colonne -----------------------------------------------------------------------------
     def shown(self, side: str) -> bool:
@@ -647,6 +792,7 @@ class Columns(QObject):
                         d.raise_()
             if back:
                 self._quiet(do)
+                self.settle(side)
             self._st().remove(key)                       # revenue : plus rien de retenu pour elle
         self.sync()
         return self.shown(side)
@@ -733,25 +879,27 @@ class Columns(QObject):
         if follow is not None:
             follow()
 
-    def menu(self, dock, parent=None) -> QMenu:
-        """Le menu du clic droit d'un panneau (sa barre de titre, son onglet)."""
+    def menu(self, dock, parent=None, table: bool = True) -> QMenu:
+        """Le menu du clic droit d'un panneau (sa barre de titre, son onglet ; sa ligne du tableau des panneaux, alors
+        sans le tableau en tête : `table` faux)."""
         m = QMenu(parent or self.win)
-        from PySide6.QtWidgets import QWidgetAction
-        table = QWidgetAction(m)                         # en tête : tous les panneaux, Gauche / Masqué / Droite
-        table.setObjectName('panneaux')
-        box = QWidget()
-        inner = QVBoxLayout(box)
-        inner.setContentsMargins(8, 4, 8, 4)
-        inner.addWidget(PanelRows(self, self.side(dock) or 'droite', done=m.close, parent=box))
-        table.setDefaultWidget(box)
-        m.addAction(table)
-        m.addSeparator()
+        if table:
+            from PySide6.QtWidgets import QWidgetAction
+            table = QWidgetAction(m)                     # en tête : tous les panneaux, Gauche / Masqué / Droite
+            table.setObjectName('panneaux')
+            box = QWidget()
+            inner = QVBoxLayout(box)
+            inner.setContentsMargins(8, 4, 8, 4)
+            inner.addWidget(PanelRows(self, self.side(dock) or 'droite', done=m.close, parent=box))
+            table.setDefaultWidget(box)
+            m.addAction(table)
+            m.addSeparator()
         ov = self.overlay(dock, create=False)
         a = m.addAction(tr('Plein écran translucide'))
         a.setCheckable(True)
         a.setChecked(bool(ov is not None and ov.active))
         a.triggered.connect(lambda _=False: self.toggle_overlay(dock))
-        a = m.addAction(tr('Ancrer') if dock.isFloating() else tr('Détacher'))
+        a = m.addAction(tr('Ancrer') if dock.isFloating() else tr('Détacher seul'))   # lui seul quitte la colonne
         a.triggered.connect(lambda _=False: self.toggle_floating(dock))
         m.addSeparator()
         here = self.side(dock)
@@ -794,11 +942,12 @@ class Columns(QObject):
         a.triggered.connect(lambda _=False: self.close(dock))
         return m
 
-    def show_menu(self, dock, at) -> None:
-        """Le menu du panneau ouvert au point `at` de l'écran."""
-        m = self.menu(dock)
-        m.exec(at)
+    def show_menu(self, dock, at, table: bool = True, parent=None):
+        """Le menu du panneau ouvert au point `at` de l'écran ; rend l'action choisie (None : aucune)."""
+        m = self.menu(dock, parent, table)
+        chosen = m.exec(at)
         m.deleteLater()
+        return chosen
 
     # --- les onglets des panneaux ----------------------------------------------------------------------------------
     def _watch_tabs(self) -> None:
@@ -837,6 +986,9 @@ class Columns(QObject):
             if t == QEvent.Type.ChildAdded and not self._scan_due:
                 self._scan_due = True
                 QTimer.singleShot(0, self._scan)
+            if t == QEvent.Type.Show and self._settle_due:
+                self._settle_due = False                 # la première fois montrée : les onglets en bas
+                QTimer.singleShot(0, self.settle_all)
             return False
         if isinstance(obj, QDockWidget):
             if t in (QEvent.Type.Resize, QEvent.Type.Show):
@@ -851,6 +1003,13 @@ class Columns(QObject):
                 self.show_menu(dock, ev.globalPos())
                 return True
         return False
+
+    def settle_all(self) -> None:
+        try:
+            for side in SIDES:
+                self.settle(side)
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            pass
 
     # --- l'onglet CAD range la FAO -----------------------------------------------------------------------------------
     def fao_docks(self) -> list:
@@ -941,7 +1100,13 @@ class PanelRows(QWidget):
             central = self._central(d)                   # le programme machine mis au centre : ni caché, ni en colonne
             state = 'centre' if central else 'masque' if hidden else (where or 'ailleurs')
             barred = hidden and d.objectName().startswith('plugin_') and allowed is not None and not allowed(d)
-            grid.addWidget(QLabel(full_title(d)), i, 0)
+            name = QLabel(full_title(d))
+            # clic droit sur la ligne : le menu du panneau (Au-dessus de, Au-dessous de, Détacher seul…)
+            name.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            name.customContextMenuRequested.connect(
+                lambda pos, dk=d, lab=name: self.row_menu(dk, lab.mapToGlobal(pos)))
+            name.setToolTip(tr('Clic droit : au-dessus, au-dessous d’un autre panneau, détacher seul…'))
+            grid.addWidget(name, i, 0)
             row = {}
             for col, (key, text, tip) in enumerate(PLACES, 1):
                 b = QToolButton()
@@ -963,6 +1128,12 @@ class PanelRows(QWidget):
                 grid.addWidget(note, i, len(PLACES) + 1)
             self.choices[d.objectName()] = row
             self.eyes[d.objectName()] = row[self.side]
+
+    def row_menu(self, dock, at) -> None:
+        """Le menu du panneau de la ligne, sans le tableau."""
+        chosen = self.columns.show_menu(dock, at, table=False, parent=self)
+        if chosen is not None and self.done is not None:   # Échap : rien de fait, le menu d'autour reste ouvert
+            self.done()
 
     def _central(self, dock) -> bool:
         w = self.columns.win
@@ -1094,7 +1265,8 @@ class ColumnPanel(QFrame):
                 at = ev.globalPosition().toPoint()
             except (AttributeError, RuntimeError):
                 return False
-            if not self.frameGeometry().contains(at):    # ailleurs : dans VectorDrive, hors de la fenêtre
+            if not self.frameGeometry().contains(at) and QApplication.activePopupWidget() is None:
+                # ailleurs : dans VectorDrive, hors de la fenêtre (pas dans le menu d'une de ses lignes)
                 import time
                 # un second clic droit sur son bouton la ferme sans la rouvrir (le menu vient au relâchement)
                 self.columns._panel_shut = (self.side, time.monotonic())

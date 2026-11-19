@@ -35,6 +35,20 @@ KEY_URL = 'assistant/adresse_mistral'
 
 #: les couleurs de la discussion (lisibles sur fond clair ou sombre) : vous, l'assistant, les valeurs de ses réponses
 C_USER, C_BOT, C_VALUE = '#1f6fd1', '#2e8b3e', '#c0661a'
+C_TOOL = '#808080'
+#: les couleurs des options (F10 › Assistant) : vide, celle d'office
+COLOR_KEYS = {'user': ('assistant/couleur_vous', C_USER), 'bot': ('assistant/couleur_assistant', C_BOT),
+              'value': ('assistant/couleur_valeurs', C_VALUE), 'tool': ('assistant/couleur_outils', C_TOOL)}
+
+
+def colors(settings) -> dict:
+    """Les couleurs de la discussion : celles des options, sinon celles d'office."""
+    from PySide6.QtGui import QColor
+    out = {}
+    for name, (key, default) in COLOR_KEYS.items():
+        v = str(settings.value(key, '') or '').strip() if settings is not None else ''
+        out[name] = QColor(v).name() if v and QColor(v).isValid() else default
+    return out
 #: les raccourcis d'édition laissés au texte (le dessin a les mêmes)
 EDIT_KEYS = (QKeySequence.StandardKey.Copy, QKeySequence.StandardKey.Paste, QKeySequence.StandardKey.Cut,
              QKeySequence.StandardKey.SelectAll, QKeySequence.StandardKey.Undo, QKeySequence.StandardKey.Redo)
@@ -45,12 +59,12 @@ VALUE = re.compile(r'«[^»\n]{1,200}»|“[^”\n]{1,200}”|"[^"\n]{1,200}"'
                    r'|(?<![\w.,])[-+−]?\d+(?:[.,]\d+)*(?:\s?(?:mm|cm|m|px|pt|min|s)\b|\s?[°%])?')
 
 
-def highlight(text: str) -> str:
-    """Le texte d'une réponse en HTML, ses valeurs en couleur."""
+def highlight(text: str, value_color: str = '') -> str:
+    """Le texte d'une réponse en HTML, ses valeurs en couleur (`value_color`, sinon celle d'office)."""
     out, at = [], 0
     for m in VALUE.finditer(text):
         out.append(html.escape(text[at:m.start()]))
-        out.append('<span style="color:{0}">{1}</span>'.format(C_VALUE, html.escape(m.group(0))))
+        out.append('<span style="color:{0}">{1}</span>'.format(value_color or C_VALUE, html.escape(m.group(0))))
         at = m.end()
     out.append(html.escape(text[at:]))
     return '<span style="white-space:pre-wrap">{0}</span>'.format(''.join(out).replace('\n', '<br>'))
@@ -61,6 +75,34 @@ class _Relay(QObject):
     text = Signal(str)
     tool = Signal(str)
     done = Signal(str)
+
+
+def plain_text(text: str) -> str:
+    """Le texte d'une sélection de Qt, tel qu'on le lit : fins de paragraphe et de ligne en retours à la ligne,
+    espaces insécables en espaces."""
+    return text.replace('\u2029', '\n').replace('\u2028', '\n').replace('\xa0', ' ')
+
+
+def _plain_mime(edit):
+    from PySide6.QtCore import QMimeData
+    md = QMimeData()
+    md.setText(plain_text(edit.textCursor().selection().toPlainText()))
+    return md
+
+
+class ChatView(QTextBrowser):
+    """La discussion : copiée (Ctrl+C, menu, glisser) en texte seul — Qt y joint sinon du HTML, du Markdown et de
+    l'OpenDocument, que bien des applications collent à la place du texte (demande du 19/11)."""
+
+    def createMimeDataFromSelection(self):
+        return _plain_mime(self)
+
+
+class PlainInput(QPlainTextEdit):
+    """La demande : copiée en texte seul, elle aussi."""
+
+    def createMimeDataFromSelection(self):
+        return _plain_mime(self)
 
 
 class AssistantPanel(QWidget):
@@ -148,7 +190,7 @@ class AssistantPanel(QWidget):
         self._reply_at = None
         self.view = self._new_view()
         lay.addWidget(self.stack, 1)
-        self.input = QPlainTextEdit()
+        self.input = PlainInput()
         self.input.setPlaceholderText(tr('Votre demande (Ctrl+Entrée : envoyer)'))
         self.input.setMaximumHeight(self.input.fontMetrics().lineSpacing() * 5 + 12)
         lay.addWidget(self.input)
@@ -180,8 +222,9 @@ class AssistantPanel(QWidget):
         self._tab = [weakref.ref(tab) if tab is not None else None]
 
     def _new_view(self) -> QTextBrowser:
-        v = QTextBrowser()
+        v = ChatView()
         v.setOpenExternalLinks(False)
+        self._style_view(v)
         v.setPlaceholderText(tr('Par exemple : « Dessine une plaque de 120 × 40 mm aux coins arrondis de 5 mm, '
                                 'avec le texte BUREAU centré, hauteur 15 mm »'))
         v.installEventFilter(self)                       # Ctrl+C, Ctrl+A : au texte
@@ -313,9 +356,38 @@ class AssistantPanel(QWidget):
 
     # --- la discussion ------------------------------------------------------------------------------------
     def _settings_key(self) -> tuple:
-        p = self.slug()
+        from . import assistant_options as AO
+        p, st = self.slug(), self.win.settings
         return (p, self.model.currentText().strip(), self.url.text().strip() if p == 'mistral' else '',
-                self.keys.load(p))
+                self.keys.load(p), AO.without(st), AO.instructions(st), self._option('assistant/tours_max'))
+
+    def _option(self, key: str):
+        from .options import value
+        return value(self.win.settings, key)
+
+    def _colors(self) -> dict:
+        return colors(self.win.settings)
+
+    def _style_view(self, v) -> None:
+        """La taille du texte de la discussion (options ; 0 : celle de l'interface)."""
+        f = self.font()
+        size = self._option('assistant/taille_texte')
+        if size > 0:
+            f.setPointSize(size)
+        v.setFont(f)
+
+    def apply_settings(self) -> None:
+        """Les options (F10 › Assistant) reprises : fournisseur, modèle, adresse, taille du texte ; la prochaine
+        demande prend les autres (outils, consignes, tours : une nouvelle discussion)."""
+        st = self.win.settings
+        k = self.provider.findData(str(st.value(KEY_PROVIDER, 'anthropic') or 'anthropic'))
+        if k >= 0 and k != self.provider.currentIndex():
+            self.provider.setCurrentIndex(k)             # → _provider_changed
+        else:
+            self._provider_changed()                     # le modèle des réglages
+        self.url.setText(str(st.value(KEY_URL, '') or ''))
+        for i in range(self.stack.count()):
+            self._style_view(self.stack.widget(i))
 
     def conversation(self):
         """La discussion en cours ; refaite (vide) si le fournisseur, le modèle, l'adresse ou la clé a changé."""
@@ -323,10 +395,12 @@ class AssistantPanel(QWidget):
         if self.conv is None or key != self._conv_key:
             from ..agent.chat import Conversation
             from ..agent.tools import ToolSet
-            p, model, url, api_key = key
-            from ..agent.tools import memory_prompt
-            self.conv = Conversation(p, model, api_key, ToolSet(self.win, self._runner(self._tab), extended=True),
-                                     url=url, client=self.client_for(p), system=memory_prompt(),
+            p, model, url, api_key = key[:4]
+            from . import assistant_options as AO
+            st = self.win.settings
+            tools = ToolSet(self.win, self._runner(self._tab), extended=True, without=AO.without(st))
+            self.conv = Conversation(p, model, api_key, tools, url=url, client=self.client_for(p),
+                                     system=AO.system_text(st), max_steps=self._option('assistant/tours_max'),
                                      on_text=self.relay.text.emit, on_tool=self._tool_seen)
             if self._conv_key is not None and self.view.toPlainText().strip():
                 self._line(tr('— Nouvelle discussion ({0}, {1}) —').format(self.providers[p][0], model or '…'))
@@ -359,7 +433,7 @@ class AssistantPanel(QWidget):
             return False
         self._out = self.view                            # la discussion de cet onglet, même s'il change
         self._line('<b style="color:{2}">{0}</b> <span style="color:{2}">{1}</span>'.format(
-            html.escape(tr('Vous :')), html.escape(text).replace('\n', '<br>'), C_USER), raw=True)
+            html.escape(tr('Vous :')), html.escape(text).replace('\n', '<br>'), self._colors()['user']), raw=True)
         self._replying = False
         self._running = conv                             # « Arrêter » la trouve même si la discussion est refaite
         self._busy(True)
@@ -512,7 +586,8 @@ class AssistantPanel(QWidget):
     def _on_text(self, chunk: str) -> None:
         v = self._target()
         if not self._replying:
-            self._line('<b style="color:{1}">{0}</b>'.format(html.escape(tr('Assistant :')), C_BOT), raw=True)
+            self._line('<b style="color:{1}">{0}</b>'.format(html.escape(tr('Assistant :')), self._colors()['bot']),
+                       raw=True)
             self._replying = True
             end = QTextCursor(v.document())
             end.movePosition(QTextCursor.MoveOperation.End)
@@ -534,10 +609,10 @@ class AssistantPanel(QWidget):
         c.setPosition(min(at, v.document().characterCount() - 1))
         c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
         text = c.selectedText().replace('\u2029', '\n')
-        if not text.strip():
+        if not text.strip() or not self._option('assistant/valeurs_couleur'):
             return
         c.removeSelectedText()
-        c.insertHtml(highlight(text))                    # les espaces gardés (pre-wrap)
+        c.insertHtml(highlight(text, self._colors()['value']))   # les espaces gardés (pre-wrap)
 
     def _tool_seen(self, name: str, _args, out: list, err: bool) -> None:
         """Dans le fil de travail : un outil appelé, dit dans le panneau."""
@@ -551,7 +626,9 @@ class AssistantPanel(QWidget):
             self.relay.tool.emit(f'⚙ {name}')
 
     def _on_tool(self, text: str) -> None:
-        self._line('<span style="color:gray">{0}</span>'.format(html.escape(text)), raw=True)
+        if not self._option('assistant/montrer_outils'):
+            return
+        self._line('<span style="color:{1}">{0}</span>'.format(html.escape(text), self._colors()['tool']), raw=True)
 
     def _on_done(self, message: str) -> None:
         self._thread = None                              # dit en dernier par le fil : la demande est finie

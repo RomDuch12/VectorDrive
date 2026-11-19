@@ -174,10 +174,16 @@ class FontRecognizeDialog(QDialog):
             self.preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             self.source.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             self.source.setMinimumContentsLength(16)
-            docked.visibilityChanged.connect(lambda on: None if on or not docked.isHidden() else self.stop())
+            docked.visibilityChanged.connect(lambda on: None if on or not docked.isHidden() or self._columns_busy()
+                                             else self.stop())
         self.renew(start)
         if docked is None:
             self.resize(560, 660)
+
+    def _columns_busy(self) -> bool:
+        """Les colonnes déplacent le panneau (caché puis remontré aussitôt) : pas fermé pour autant."""
+        cols = getattr(self.win, 'columns', None)
+        return bool(cols is not None and cols.busy())
 
     def renew(self, start: str | None = None) -> None:
         """La source d'emblée (`start`, sinon selon ce qui est là) et l'image sur la dernière capture : à l'ouverture,
