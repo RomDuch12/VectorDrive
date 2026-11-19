@@ -20,7 +20,7 @@ from . import geom
 from .geom import Contour, Path
 from .trim import nearest_param, piece, sub_segment
 
-KINDS = ('segment', 'rectangle', 'cercle')
+KINDS = ('segment', 'rectangle', 'cercle', 'forme')
 #: un reste plus court (mm) part avec le morceau retiré
 TINY = 1e-3
 
@@ -179,19 +179,65 @@ def region(kind: str, at, width: float, height: float = 0.0, angle: float = 0.0)
     return None
 
 
+def stamp_of(path: Path | None, closed_only: bool = True) -> Path | None:
+    """Une forme du dessin prise pour pointeur (demande du 18/11 soir : « on définit un contour qui devient pointeur
+    souris ») : ses contours — fermés seulement pour l'emporte-pièce —, centrés sur l'origine (le centre de leur boîte
+    vient sous la souris) ; None : rien d'utilisable."""
+    if path is None:
+        return None
+    cs = [c.close() if c.closed else c for c in path.contours if c.segments and (c.closed or not closed_only)]
+    if not cs:
+        return None
+    p = Path(cs)
+    b = p.bbox()
+    if not b or (b[2] - b[0] < 1e-9 and b[3] - b[1] < 1e-9):
+        return None
+    return p.transformed(geom.Affine.translation(-(b[0] + b[2]) / 2, -(b[1] + b[3]) / 2))
+
+
+def place(stamp: Path | None, at, angle: float = 0.0) -> Path | None:
+    """La forme pointeur posée : son centre sur `at`, tournée de `angle` degrés."""
+    if stamp is None:
+        return None
+    p = stamp
+    if abs(float(angle or 0.0)) > 1e-9:
+        p = p.transformed(geom.Affine.rotation(float(angle)))
+    return p.transformed(geom.Affine.translation(float(at[0]), float(at[1])))
+
+
 def _boxes_apart(a: Path, b: Path) -> bool:
     ab, bb = a.bbox(), b.bbox()
     return not ab or not bb or ab[2] < bb[0] or ab[0] > bb[2] or ab[3] < bb[1] or ab[1] > bb[3]
 
 
 def punch_region(path: Path, shape: Path, filled: bool) -> Path | None:
-    """Le tracé moins ce que couvre la forme ; None si rien ne change (le tracé n'est alors pas réécrit). Traits :
-    coupés au bord ; surfaces : évidées, seulement si la forme en couvre une partie."""
+    """Le tracé moins ce que couvre la forme ; None si rien ne change (le tracé n'est alors pas réécrit). Traits
+    ouverts : coupés au bord, ils restent ouverts ; contours fermés non remplis : la soustraction, ils restent fermés
+    (demande du 18/11 soir : « conserve respectivement des contours ouverts et fermés ») — seulement si la forme
+    touche leur tracé ; surfaces : évidées, seulement si la forme en couvre une partie."""
     from . import pathops, punch
     if _boxes_apart(path, shape):
         return None
     if not filled:
-        return punch.cut_strokes(path, shape, False)
+        out, changed = [], False
+        opened = [c for c in path.contours if not c.closed]
+        if opened:
+            r = punch.cut_strokes(Path(opened), shape, False)
+            if r is None:
+                out += opened
+            else:
+                out += list(r.contours)
+                changed = True
+        closed = Path([c for c in path.contours if c.closed])
+        # chaque contour fermé avec ses trous (pair-impair) : un anneau perd la bande que la forme couvre, sans que le
+        # bord de la forme soit tracé dans son trou
+        for one in (pathops.regions(closed) if closed.contours else []):
+            if _boxes_apart(one, shape) or punch.cut_strokes(one, shape, False) is None:
+                out += list(one.contours)                # son tracé n'est pas sous la forme : intact
+                continue
+            out += list(pathops.boolean(one, shape, 'difference').contours)
+            changed = True
+        return Path(out) if changed else None
     common = pathops.boolean(path, shape, 'intersect')   # rien de commun (dans un trou, à côté) : rien à faire
     if not common.contours or _area(common) < 1e-9:
         return None

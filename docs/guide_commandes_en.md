@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.940.0
+# Command guide — VectorDrive 0.946.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -324,7 +324,8 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Align H |  | Selected points at the same height |
 | Align V |  | Selected points at the same abscissa |
 | Average |  | Selected points gathered in one place: their average point (then Join to weld two open ends) |
-| Start point |  | Point mode: the selected point becomes the start of its closed contour, and machining will begin there |
+| Start point | O | The start of a contour, and of its machining (O, as in TypeEdit): in Point mode, the selected point (open contour: one of its ends); otherwise, a click near a contour |
+| Start point with the mouse |  | Start point with the mouse (O): a click near a contour — open: its nearest end becomes its start (the direction is reversed if needed); closed: its nearest point. Machining starts there; right click: quit |
 | Refine |  | A new point in the middle of each segment (path unchanged) |
 | Add a point |  | Point mode: click on the contour, a red point appears, then this button or the + key |
 | Simplify |  | Fewer points, at the chosen precision: set it with Ctrl or Shift |
@@ -536,8 +537,8 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Offset |  | Contour offset |
 | Clip |  | Cut what extends beyond the closed frame selected first, or otherwise beyond the plate; Ctrl: the crop type |
 | Fit into frame |  | Scale the selected objects, centred in the frame selected first |
-| Punch |  | The closed shape selected first cuts through the other objects (strokes cut at its edge, areas hollowed out); Ctrl: the punch type |
-| Knife |  | Cut the selected closed shapes along the last selected stroke (line, polyline, curve or edge of a shape) |
+| Punch |  | The first selected closed shape becomes the pointer: each click removes what it covers (from the other selected objects, otherwise from the whole drawing); right click: quit. Shift: punch the selected objects at once (Ctrl: the punching type) |
+| Knife |  | The first selected object (stroke or shape) becomes the pointer: each click cuts what it crosses along its outline; right click: quit. Shift: cut the selected shapes at once with the stroke selected last |
 | Shadow |  | Solid (extruded) or drop shadow of the selected closed contours, editable by double-click |
 | Envelope |  | Distort the selection (texts included) into an arc, arch, bulge, pinch, wave or trapezoid, editable by double-click |
 | Envelope from curves |  | Warp objects between four touching curves, or inside a closed contour. Select the objects, then the curves last; editable with a double-click |
@@ -573,6 +574,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Mirror about axis |  | Symmetry of the objects about the straight line, or the two markers, selected last; Ctrl or Shift: keep the originals |
 | Rotate −90° |  |  |
 | Rotation… | Shift+R | Rotate the selection by any angle |
+| Rotate with the mouse |  | Rotate the selection with the mouse: drag a corner, or the round button above its frame (Ctrl: 15° steps; Shift: keep the original); the rotation centre moves with the mouse |
 | Move… |  | Move the selection by a given distance, or place a copy |
 | Repeat transformation | Ctrl+Alt+T | Applies the last move, rotation or scaling to the selection again, whether done with the mouse or the keyboard |
 | Repeat and copy | Ctrl+Alt+Shift+T | Like Repeat transformation, on a copy: move an object, then repeat once for each copy wanted |

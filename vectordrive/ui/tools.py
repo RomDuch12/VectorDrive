@@ -4259,17 +4259,22 @@ class EraserTool(Tool):
 
 class PunchTool(Tool):
     """Emporte-pièce (demande du 18/11) : un clic retire d'un contour une longueur donnée (segment : centrée sur le
-    point cliqué, mesurée le long du contour), ou ce que couvre un rectangle ou un cercle posé sur le clic. Ce qui
-    partira est montré en rouge sous la souris. Tab : la forme suivante ; [ et ] : plus petit, plus grand. L'outil
-    reste actif ; chaque clic s'annule à part."""
+    point cliqué, mesurée le long du contour), ou ce que couvre un rectangle, un cercle ou une forme du dessin (la
+    première sélectionnée quand l'outil est pris, sinon la dernière retenue — demandes du 18/11 soir) posé sur le
+    clic. Ce qui partira est montré en rouge sous la souris. Tab : la forme suivante ; [ et ] : plus petit, plus grand.
+    L'outil reste actif jusqu'au clic droit ; chaque clic s'annule à part. `skip` : la forme prise pour pointeur
+    (épargnée) ; `among` : les objets à couper (None : la sélection, sinon tout le dessin)."""
     cursor = Qt.CursorShape.CrossCursor
-    SIZE = {'segment': 'length', 'rectangle': 'width', 'cercle': 'diameter'}
+    SIZE = {'segment': 'length', 'rectangle': 'width', 'cercle': 'diameter', 'forme': None}
 
-    def __init__(self, canvas, spec: dict | None = None, changed=None):
+    def __init__(self, canvas, spec: dict | None = None, changed=None, skip=(), among=None):
         super().__init__(canvas)
         self.spec = dict({'kind': 'segment', 'length': 5.0, 'width': 10.0, 'height': 5.0, 'diameter': 5.0,
                           'angle': 0.0}, **(spec or {}))
         self.changed = changed                           # fonction(réglages) : la fenêtre les retient
+        self.skip, self.among = tuple(skip or ()), among
+        if self.spec['kind'] == 'forme' and self.spec.get('stamp') is None:
+            self.spec['kind'] = 'cercle'                 # aucune forme retenue
         self.hover = None
         self.shown = (None, None)                        # (forme posée, morceau retiré) : calculé au mouvement
         self._say()
@@ -4281,11 +4286,17 @@ class PunchTool(Tool):
                 'rectangle': tr('Emporte-pièce : un clic retire ce que couvre le rectangle {0} × {1} mm').format(
                     f'{s["width"]:g}', f'{s["height"]:g}'),
                 'cercle': tr('Emporte-pièce : un clic retire ce que couvre le cercle Ø {0} mm').format(
-                    f'{s["diameter"]:g}')}[s['kind']]
-        self.c.measured.emit(text + tr(' — Tab : autre forme ; [ ] : taille'))
+                    f'{s["diameter"]:g}'),
+                'forme': ''}[s['kind']]
+        if s['kind'] == 'forme':
+            b = s['stamp'].bbox() if s.get('stamp') is not None else None
+            text = tr('Emporte-pièce : un clic retire ce que couvre la forme ({0} × {1} mm)').format(
+                f'{b[2] - b[0]:.3g}', f'{b[3] - b[1]:.3g}') if b else ''
+        self.c.measured.emit(text + tr(' — Tab : autre forme ; [ ] : taille ; clic droit : quitter'))
 
     def _look(self) -> None:
-        self.shown = self.c.punch_preview(self.hover, self.spec) if self.hover is not None else (None, None)
+        self.shown = self.c.punch_preview(self.hover, self.spec, self.among, self.skip) if self.hover is not None \
+            else (None, None)
         self.c.overlay_update()
 
     def set_spec(self, spec: dict) -> None:
@@ -4299,7 +4310,7 @@ class PunchTool(Tool):
 
     def press(self, sp, dp, ev):
         from ..i18n import tr
-        n = self.c.punch_at(dp, self.spec)
+        n = self.c.punch_at(dp, self.spec, among=self.among, skip=self.skip)
         self.c.measured.emit(tr('{0} objet(s) coupé(s)').format(n) if n else tr('Rien à retirer ici'))
         self.hover = dp
         self._look()
@@ -4312,11 +4323,18 @@ class PunchTool(Tool):
         k = ev.key()
         if k in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             step = -1 if k == Qt.Key.Key_Backtab else 1
-            self.spec['kind'] = KINDS[(KINDS.index(self.spec['kind']) + step) % len(KINDS)]
+            kinds = [x for x in KINDS if x != 'forme' or self.spec.get('stamp') is not None]
+            cur = self.spec['kind'] if self.spec['kind'] in kinds else kinds[0]
+            self.spec['kind'] = kinds[(kinds.index(cur) + step) % len(kinds)]
         elif k in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
             f = 1 / 1.25 if k == Qt.Key.Key_BracketLeft else 1.25
             name = self.SIZE[self.spec['kind']]
-            self.spec[name] = max(0.01, round(self.spec[name] * f, 3))
+            if name is None:                             # la forme : à l'échelle, autour de son centre
+                st = self.spec.get('stamp')
+                if st is not None:
+                    self.spec['stamp'] = st.transformed(geom.Affine.scaling(f))
+            else:
+                self.spec[name] = max(0.01, round(self.spec[name] * f, 3))
             if self.spec['kind'] == 'rectangle':
                 self.spec['height'] = max(0.01, round(self.spec['height'] * f, 3))
         else:
@@ -4347,6 +4365,102 @@ class PunchTool(Tool):
     def cancel(self):
         self.hover = None
         self.shown = (None, None)
+
+
+class KnifeStampTool(Tool):
+    """Couteau à la souris (demande du 18/11 soir : « la 1 ere forme sélectionnée devient le pointeur souri et le
+    reste tant que click gauche puis click droit retire l'outil ») : le tracé de la forme choisie suit la souris ;
+    chaque clic coupe là ce qu'il traverse (`fn(tracé posé)` : formes fermées en morceaux fermés, traits ouverts
+    coupés à chaque croisement). L'outil reste jusqu'au clic droit ; chaque clic s'annule à part."""
+    cursor = Qt.CursorShape.CrossCursor
+
+    def __init__(self, canvas, blade, fn):
+        super().__init__(canvas)
+        self.blade, self.fn = blade, fn
+        self.hover = None
+        from ..i18n import tr
+        self.c.measured.emit(tr('Couteau : un clic coupe le long de la forme sous la souris — clic droit : quitter'))
+
+    def placed(self, dp):
+        from ..core import punchtool as PT
+        return PT.place(self.blade, dp)
+
+    def move(self, sp, dp, ev):
+        self.hover = dp
+        self.c.overlay_update()
+
+    def press(self, sp, dp, ev):
+        from ..i18n import tr
+        n = self.fn(self.placed(dp)) if self.fn is not None else 0
+        self.c.measured.emit(tr('{0} morceau(x)').format(n) if n else tr('Le tracé ne coupe rien ici'))
+        self.hover = dp
+        self.c.overlay_update()
+
+    def paint(self, p):
+        if self.hover is not None and self.blade is not None:
+            self.preview(p, self.placed(self.hover), QColor(220, 60, 40))
+
+    def cancel(self):
+        self.hover = None
+
+
+class StartPointTool(Tool):
+    """Point de départ à la souris (touche O, comme TypeEdit ; demande du 18/11 soir : « raccourci O origine : pour
+    contour ouvert : définit point de départ usinage ») : un clic près d'un contour — ouvert : son bout le plus proche
+    devient son départ (le sens est retourné s'il le faut) ; fermé : son point le plus proche. L'usinage commence là.
+    Parmi la sélection s'il y en a une, sinon tout le dessin ; le départ proposé est montré sous la souris. L'outil reste
+    jusqu'au clic droit ; chaque clic s'annule à part. `fn(forme, rang du contour, rang du point)` pose le départ."""
+    cursor = Qt.CursorShape.CrossCursor
+    REACH_PX = 10.0
+
+    def __init__(self, canvas, fn):
+        super().__init__(canvas)
+        self.fn = fn
+        self.hover = None
+        from ..i18n import tr
+        self.c.measured.emit(tr('Point de départ : un clic près d\'un contour — ouvert : son bout le plus proche ; '
+                                'fermé : son point le plus proche — clic droit : quitter'))
+
+    def pick(self, dp):
+        """(forme, rang du contour, rang du point, (x, y)) du départ proposé près de `dp` ; None : aucun."""
+        hit = self.c._punch_nearest(dp, self.REACH_PX / max(self.c.scale, 1e-9))
+        if hit is None:
+            return None
+        s, ci = hit[0], hit[1]
+        c = s.path.contours[ci]
+        if not c.segments:
+            return None
+        n = nodes.node_count(c)
+        ks = range(n) if c.closed else (0, n - 1)
+        k = min(ks, key=lambda j: math.dist(nodes.node_point(c, j)[:2], dp[:2]))
+        q = nodes.node_point(c, k)
+        return s, ci, k, (q[0], q[1])
+
+    def move(self, sp, dp, ev):
+        self.hover = dp
+        self.c.overlay_update()
+
+    def press(self, sp, dp, ev):
+        from ..i18n import tr
+        got = self.pick(dp)
+        done = got is not None and self.fn is not None and self.fn(*got[:3])
+        self.c.measured.emit(tr('Départ posé : l\'usinage commencera là') if done else tr('Aucun contour ici'))
+        self.hover = dp
+        self.c.overlay_update()
+
+    def paint(self, p):
+        got = self.pick(self.hover) if self.hover is not None else None
+        if got is None:
+            return
+        q = self.c.to_screen(*got[3])
+        p.save()
+        p.setPen(_pen(QColor(220, 60, 40), 2))
+        p.setBrush(QColor(220, 60, 40))
+        p.drawRect(QRectF(q.x() - 4, q.y() - 4, 8, 8))
+        p.restore()
+
+    def cancel(self):
+        self.hover = None
 
 
 class BlobBrushTool(EraserTool):

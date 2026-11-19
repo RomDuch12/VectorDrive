@@ -169,6 +169,13 @@ class Item:
                 if c.extra is self.extra:
                     c.extra = dict(self.extra)
                 c.extra[key] = [list(m.apply((float(t[0]), float(t[1])))) + list(t[2:]) for t in tabs]
+        # départs choisis des traits ouverts (r1085) : leurs deux bouts suivent la forme
+        ends = self.extra.get('open_start') if isinstance(self.extra, dict) else None
+        if ends and not m.is_identity:
+            if c.extra is self.extra:
+                c.extra = dict(self.extra)
+            c.extra['open_start'] = [list(m.apply((float(t[0]), float(t[1])))) + list(m.apply((float(t[2]), float(t[3]))))
+                                     for t in ends if len(t) >= 4]
         # contours d'un seul point gardés pour la réécriture du VND : ils
         # suivent la transformation
         vx = self.extra.get('vnd') if isinstance(self.extra, dict) else None

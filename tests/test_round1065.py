@@ -29,7 +29,7 @@ class Guarded(unittest.TestCase):
         from vectordrive.ui.main_window import MainWindow
         self.w = MainWindow()
         self.addCleanup(self.clean)
-        self.w.settings.remove(KEY)
+        self.w.settings.setValue(KEY, 'clignoter')        # r1086 : « demander » d'office (sa fenêtre : test_round1086)
         self.p = self.w.cam_panel
 
     def clean(self):
@@ -197,8 +197,8 @@ class Block(Guarded):
     def test_the_option_is_in_f10(self):
         from vectordrive.ui import options
         o = options.BY_KEY[KEY]
-        self.assertEqual(o.default, 'clignoter')
-        self.assertEqual([k for k, _t in o.choices], ['clignoter', 'bloquer', 'rien'])
+        self.assertEqual(o.default, 'demander')                            # r1086
+        self.assertEqual([k for k, _t in o.choices], ['demander', 'clignoter', 'bloquer', 'rien'])
 
 
 if __name__ == '__main__':

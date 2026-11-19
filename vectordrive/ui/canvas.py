@@ -352,6 +352,7 @@ class Canvas(QWidget):
         self._refine.timeout.connect(self._refine_now)
         self._prune = False
         self.rot_mode = False             # second clic sur la sélection : poignées de rotation
+        self.rot_knob = True              # le bouton de rotation au-dessus du cadre de la sélection (r1087)
         self.pivot = None                 # centre de rotation déplacé (document) ; None : le milieu de la sélection
         self.frozen_picked = []           # objets gelés désignés au clic : à part de la sélection, rien ne les modifie
         self.guide_preview = None         # guide en cours de création depuis une règle
@@ -1448,6 +1449,47 @@ class Canvas(QWidget):
                 p.drawRect(QRectF(h.x() - self.handle_px / 2, h.y() - self.handle_px / 2, self.handle_px, self.handle_px))
         p.drawLine(c - QPointF(5, 0), c + QPointF(5, 0))
         p.drawLine(c - QPointF(0, 5), c + QPointF(0, 5))
+        k = self._knob(r)
+        if k is not None:                                # le bouton de rotation, relié au milieu du haut du cadre
+            p.setPen(QPen(QColor(cc['frame']), 1))
+            p.drawLine(QPointF(r.center().x(), r.top()), k + QPointF(0, self.KNOB_R))
+            p.setBrush(QColor(cc['handle']))
+            p.drawEllipse(k, self.KNOB_R, self.KNOB_R)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawArc(QRectF(k.x() - 3, k.y() - 3, 6, 6), 60 * 16, 270 * 16)      # la flèche qui tourne
+            p.drawLine(k + QPointF(1.5, -2.6), k + QPointF(3.5, -3.2))
+
+    KNOB_PX = 26.0                                       # le bouton de rotation : au-dessus du cadre, à l'écran
+    KNOB_R = 6.0
+
+    def _knob(self, r: QRectF):
+        """Où est le bouton de rotation pour le cadre `r` de la sélection (à l'écran) ; None : pas de bouton (autre outil,
+        réglage)."""
+        if not self.rot_knob or self.tool != 'select' or self.tool_obj is not None:
+            return None
+        return QPointF(r.center().x(), r.top() - self.KNOB_PX)
+
+    def knob_at(self, pos: QPointF) -> bool:
+        """Le bouton de rotation de la sélection sous `pos`."""
+        bb = self.selection_bbox() if self.selection else None
+        if not bb:
+            return False
+        k = self._knob(QRectF(self.to_screen(bb[0], bb[1]), self.to_screen(bb[2], bb[3])).normalized())
+        return k is not None and abs(k.x() - pos.x()) <= self.KNOB_R + 3 and abs(k.y() - pos.y()) <= self.KNOB_R + 3
+
+    def toggle_rot_mode(self, on=None) -> None:
+        """Poignées de rotation ou d'échelle de la sélection (second clic sur elle, le bouton de rotation, Rotation à la
+        souris) ; `on` : imposé."""
+        from ..i18n import tr
+        self.rot_mode = (not self.rot_mode) if on is None else bool(on)
+        if self.rot_mode:
+            self.measured.emit(tr('Rotation : tirer un coin. Le centre se déplace à la souris, Maj+clic le remet au '
+                                  'milieu ; Maj : garder l\'original ; Ctrl : par pas de 15° ; F2 : en chiffres'))
+        else:
+            self.measured.emit(tr('Échelle : tirer un coin ou un côté. Maj : garder l\'original ; Tab : depuis le '
+                                  'centre ; Ctrl : par pas de 100 % ; Ctrl+Alt : un coin sans proportions ; F2 : en '
+                                  'chiffres'))
+        self.update()
 
     @staticmethod
     def doc_handles(bb) -> list[tuple[float, float]]:
@@ -1967,15 +2009,20 @@ class Canvas(QWidget):
         return len(changes)
 
     # --- emporte-pièce à la souris (demande du 18/11) -----------------------------------------
-    def _punch_targets(self, among=None) -> list:
+    def _punch_targets(self, among=None, skip=()) -> list:
         """Les formes que l'emporte-pièce peut couper : les formes visibles et libres des calques montrés et non
         verrouillés — celles de la sélection seulement, s'il y en a une. `among` : des objets (groupes compris) à la
-        place de la sélection ; une liste vide : tout le dessin."""
+        place de la sélection ; une liste vide : tout le dessin. `skip` : des objets épargnés (la forme prise pour
+        pointeur). Reconnus par leur identifiant, que Ctrl+Z garde (il remet des copies des objets)."""
+        def key(s):
+            return getattr(s, 'id', None) or id(s)
         pool = self.selection if among is None else among
-        chosen = {id(s) for s in _leaves(pool)} if pool else None
+        chosen = {key(s) for s in _leaves(pool)} if pool else None
+        spared = {key(s) for s in _leaves(list(skip))} if skip else set()
         return [s for L in self.doc.layers if self.layer_shown(L) and not getattr(L, 'locked', False)
                 for s in _leaves(L.items, True)
-                if isinstance(s, Shape) and s.visible and not s.locked and (chosen is None or id(s) in chosen)]
+                if isinstance(s, Shape) and s.visible and not s.locked and (chosen is None or key(s) in chosen)
+                and key(s) not in spared]
 
     def _drop_leaves(self, gone: set) -> None:
         """Les objets d'identité dans `gone` retirés du dessin, où qu'ils soient (dans un groupe aussi : un groupe
@@ -1995,11 +2042,11 @@ class Canvas(QWidget):
             L.items = keep(L.items)
         self.selection = keep(list(self.selection))
 
-    def _punch_nearest(self, dp, reach: float, among=None):
+    def _punch_nearest(self, dp, reach: float, among=None, skip=()):
         """(forme, rang du contour) du contour le plus proche de `dp` à moins de `reach` mm ; None : aucun."""
         from ..core import punchtool as PT
         best = None
-        for s in self._punch_targets(among):
+        for s in self._punch_targets(among, skip):
             b = s.bbox()
             if not b or dp[0] < b[0] - reach or dp[0] > b[2] + reach or dp[1] < b[1] - reach or dp[1] > b[3] + reach:
                 continue
@@ -2008,30 +2055,33 @@ class Canvas(QWidget):
                 best = (s, i, d)
         return best
 
-    def punch_preview(self, dp, spec: dict):
-        """Ce que l'emporte-pièce montre sous la souris : (forme posée ou None, morceau retiré ou None)."""
+    def punch_preview(self, dp, spec: dict, among=None, skip=()):
+        """Ce que l'emporte-pièce montre sous la souris : (forme posée ou None, morceau retiré ou None) ; `among`,
+        `skip` : voir `_punch_targets`."""
         from ..core import punchtool as PT
         kind = spec.get('kind', 'segment')
         if kind == 'segment':
-            hit = self._punch_nearest(dp, max(12.0 / max(self.scale, 1e-9), 1e-6))
+            hit = self._punch_nearest(dp, max(12.0 / max(self.scale, 1e-9), 1e-6), among, skip)
             if hit is None:
                 return None, None
             pc = PT.removed_piece(hit[0].path.contours[hit[1]], dp, float(spec.get('length', 0.0)))
             return None, (Path([pc]) if pc is not None and pc.segments else None)
+        if kind == 'forme':                              # la forme prise pour pointeur, telle quelle, sous la souris
+            return PT.place(spec.get('stamp'), dp), None
         size = float(spec.get('diameter', 0.0)) if kind == 'cercle' else float(spec.get('width', 0.0))
         return PT.region(kind, dp, size, float(spec.get('height', 0.0)), float(spec.get('angle', 0.0))), None
 
-    def punch_at(self, dp, spec: dict, among=None, reach: float | None = None, before=None) -> int:
+    def punch_at(self, dp, spec: dict, among=None, reach: float | None = None, before=None, skip=()) -> int:
         """L'emporte-pièce appliqué au point `dp` : segment — le contour le plus proche (à 12 px, ou à `reach` mm)
-        perd la longueur réglée ; rectangle, cercle — tout ce que la forme couvre est retiré. `among` : voir
-        `_punch_targets` ; `before()` : appelé à la place du pas d'annulation, juste avant de changer le dessin
+        perd la longueur réglée ; rectangle, cercle, forme — tout ce que la forme couvre est retiré. `among`, `skip` :
+        voir `_punch_targets` ; `before()` : appelé à la place du pas d'annulation, juste avant de changer le dessin
         (l'assistant). Annulable ; rend le nombre de formes changées."""
         from ..core import punchtool as PT
         kind = spec.get('kind', 'segment')
         changes = []
         if kind == 'segment':
             near = max(12.0 / max(self.scale, 1e-9), 1e-6) if reach is None else max(float(reach), 1e-6)
-            hit = self._punch_nearest(dp, near, among)
+            hit = self._punch_nearest(dp, near, among, skip)
             if hit is not None:
                 s, i, _d = hit
                 rest = PT.remove_length(s.path.contours[i], dp, float(spec.get('length', 0.0)))
@@ -2040,7 +2090,7 @@ class Canvas(QWidget):
         else:
             shape, _pc = self.punch_preview(dp, spec)
             if shape is not None:
-                for s in self._punch_targets(among):
+                for s in self._punch_targets(among, skip):
                     new = PT.punch_region(s.path, shape, bool(getattr(s, 'filled', False)))
                     if new is not None:
                         changes.append((s, new))
@@ -2459,7 +2509,8 @@ class Canvas(QWidget):
 
     #: pointeurs montrés au survol d'une poignée de la sélection (ou de son centre de rotation)
     HANDLE_CURSORS = (Qt.CursorShape.SizeFDiagCursor, Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeBDiagCursor,
-                      Qt.CursorShape.SizeHorCursor, Qt.CursorShape.CrossCursor, Qt.CursorShape.SizeAllCursor)
+                      Qt.CursorShape.SizeHorCursor, Qt.CursorShape.CrossCursor, Qt.CursorShape.SizeAllCursor,
+                      Qt.CursorShape.PointingHandCursor)     # le bouton de rotation
 
     def _hover_cursor_after_change(self) -> None:
         """La sélection a changé (Suppr, Échap, Ctrl+A, défaire…) : le pointeur qui montrait une poignée redevient
@@ -2482,6 +2533,8 @@ class Canvas(QWidget):
         """Le pointeur d'une poignée de la sélection sous `pos` (ou de son centre de rotation), sinon None."""
         if not self.selection:
             return None
+        if self.knob_at(pos):
+            return Qt.CursorShape.PointingHandCursor
         h = self.handle_at(pos)
         if self.pivot_at(pos) and (h is None or self.pivot is not None):
             return Qt.CursorShape.SizeAllCursor
@@ -2553,11 +2606,16 @@ class Canvas(QWidget):
             self._drag = {'kind': 'note', 'index': ni, 'start': pos, 'xy': (float(n['x']), float(n['y']))}
             return
         ctrl = bool(ev.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        if ev.modifiers() & Qt.KeyboardModifier.AltModifier and not ctrl and self.handle_at(pos) is None:
+        if ev.modifiers() & Qt.KeyboardModifier.AltModifier and not ctrl and self.handle_at(pos) is None \
+                and not self.knob_at(pos):               # Alt sur le bouton de rotation : une copie tournée
             it, k, n = self.cycle_pick(pos)              # Alt+clic : objets superposés tour à tour
             if it is not None:
                 self._say_cycled(k, n)
                 return
+        if self.knob_at(pos) and not (self.pivot is not None and self.pivot_at(pos)):   # un centre posé là : lui
+            self._drag = {'kind': 'rotate', 'start': pos, 'now': pos, 'bb': self.selection_bbox(), 'handle': None,
+                          'p0': self.to_doc(pos), 'm': None, 'knob': True}
+            return
         h = self.handle_at(pos)
         if self.pivot_at(pos) and (h is None or self.pivot is not None):
             if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -2700,6 +2758,9 @@ class Canvas(QWidget):
             d['m'] = self.scale_matrix(d['bb'], d['handle'], pt, free=ctrl and alt, whole=ctrl and not alt,
                                        centered=self._tab_held or (ctrl and not alt), anchor=self.pivot)
             d['now'] = pos
+        elif d['kind'] == 'rotate' and d.get('knob') and d.get('m') is None and \
+                (pos - d['start']).manhattanLength() <= 3:
+            d['now'] = pos                               # le bouton : un clic qui tremble ne tourne rien
         elif d['kind'] == 'rotate':
             step = 15.0 if ev.modifiers() & Qt.KeyboardModifier.ControlModifier else 0.0
             d['m'], d['angle'] = self.rotation_matrix(d['bb'], d['p0'], self.to_doc(pos), step=step, center=self.pivot)
@@ -2763,18 +2824,7 @@ class Canvas(QWidget):
                 else:
                     self.transform_selection(Affine.translation(dx, dy))
             elif d.get('was_selected'):
-                # second clic sur la sélection : bascule redimensionner / tourner
-                self.rot_mode = not self.rot_mode
-                if self.rot_mode:
-                    from ..i18n import tr
-                    self.measured.emit(tr('Rotation : tirer un coin. Le centre se déplace à la souris, Maj+clic le remet au '
-                                          'milieu ; Maj : garder l\'original ; Ctrl : par pas de 15° ; F2 : en chiffres'))
-                else:
-                    from ..i18n import tr
-                    self.measured.emit(tr('Échelle : tirer un coin ou un côté. Maj : garder l\'original ; Tab : depuis le '
-                                          'centre ; Ctrl : par pas de 100 % ; Ctrl+Alt : un coin sans proportions ; F2 : en '
-                                          'chiffres'))
-                self.update()
+                self.toggle_rot_mode()                   # second clic sur la sélection : redimensionner / tourner
         elif d['kind'] in ('scale', 'rotate'):
             if d.get('m') is not None and not d['m'].is_identity:
                 keep, pivot = self.rot_mode, self.pivot
@@ -2790,6 +2840,8 @@ class Canvas(QWidget):
                 it, k, n = self.cycle_pick(d['start'])
                 if it is not None:
                     self._say_cycled(k, n)
+            elif d.get('knob') and (ev.position() - d['start']).manhattanLength() <= 3:
+                self.toggle_rot_mode()                   # un clic sur le bouton de rotation : les poignées basculent
         elif d['kind'] == 'draw':
             spec = self._draft_spec(d)
             path = self._draft_path(d) if spec is None else spec.build()

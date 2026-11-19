@@ -799,6 +799,39 @@ def start_marks(doc, op, tol: float) -> list:
     return marks
 
 
+def open_marks(doc, op) -> list:
+    """Les traits ouverts dont le départ a été choisi (Point de départ, touche O ; demande du 18/11 soir) : [(bout, bout)].
+    Le sens est celui du dessin (le choix l'a retourné s'il le fallait) : Inverser le sens en change encore."""
+    return [((float(p[0]), float(p[1])), (float(p[2]), float(p[3]))) for it in source_items(doc, op)
+            for p in (getattr(it, 'extra', {}) or {}).get('open_start', []) if len(p) >= 4]
+
+
+def keep_drawn_direction(chains: list, drawn: list, chosen=None, near: float = 0.0) -> list:
+    """Les contours ouverts remis dans le sens du dessin (« Point de départ du dessin » ; demande du 18/11 soir : une
+    spirale usinée depuis le bout où elle est dessinée) : l'ordre de passage reste celui du plus proche voisin.
+    `chosen` : seulement les traits dont les deux bouts sont ceux d'une de ces paires, à `near` près."""
+    def same(a, b):
+        return math.dist(a[:2], b[:2]) <= near
+
+    ends = {(tuple(p[0][:2]), tuple(p[-1][:2])) for p, closed in drawn if not closed and len(p) >= 2}
+    out = []
+    for pts, closed in chains:
+        if not closed and len(pts) >= 2:
+            a, b = tuple(pts[0][:2]), tuple(pts[-1][:2])
+            if chosen is None or any(same(a, x) and same(b, y) or same(a, y) and same(b, x) for x, y in chosen):
+                if (a, b) not in ends and (b, a) in ends:
+                    pts = pts[::-1]
+        out.append((pts, closed))
+    return out
+
+
+def _drawn_open(doc, op, chains: list, raw: list, near: float) -> list:
+    if getattr(op, 'start_policy', 'proche') == 'dessin':
+        return keep_drawn_direction(chains, raw)
+    marks = open_marks(doc, op)
+    return keep_drawn_direction(chains, raw, marks, near) if marks else chains
+
+
 def _start_after_corner(ring: list, m, offset: float):
     """Où commence un contour décalé de `offset`, pour un sommet du dessin (x, y, voisin, voisin) : relevé dans TE13, au début du
     côté par lequel l'outil quitte le sommet, donc après l'arrondi de l'angle, et l'entrée y est tangente. Là où le décalage n'a
@@ -1325,7 +1358,8 @@ def _feeds(op: Operation, tool: CamTool):
 
 def _gravure(doc, setup, op, tool, tp: Toolpath, em: Emitter, here) -> None:
     geoms = [g for it in source_items(doc, op) if (g := item_geometry(it))]
-    chains = order_chains(polylines(geoms, setup.tolerance), here)
+    raw = polylines(geoms, setup.tolerance)
+    chains = _drawn_open(doc, op, order_chains(raw, here), raw, max(10 * setup.tolerance, 0.01))
     chains = apply_starts(chains, start_marks(doc, op, setup.tolerance), max(10 * setup.tolerance, 0.01))[0]
     zs = op_levels(op, tool)
     tabbed = has_tabs(op)
@@ -1506,7 +1540,9 @@ def _vinyl(doc, setup, op, tool, tp, em, here) -> None:
     contour), asservi (il remonte et se réoriente aux angles vifs), flottant
     (l'axe compense le déport de la lame et pivote aux angles)."""
     geoms = [g for it in source_items(doc, op) if (g := item_geometry(it))]
-    chains = order_chains(polylines(geoms, setup.tolerance), here)
+    raw = polylines(geoms, setup.tolerance)
+    chains = _drawn_open(doc, op, order_chains(raw, here), raw, max(10 * setup.tolerance, 0.01))
+    chains = apply_starts(chains, start_marks(doc, op, setup.tolerance), max(10 * setup.tolerance, 0.01))[0]
     if not chains:
         tp.warnings.append('couteau : aucun trait à découper')
         return
@@ -1611,7 +1647,7 @@ def _laser(doc, setup, op, tool, tp, em, here) -> None:
     if width > 0:
         step = getattr(op, 'line_step', 0.0) or 0.8 * (tool.diameter or 0.05)
         raw = thicken(raw, width, step)
-    chains = order_chains(raw, here)
+    chains = _drawn_open(doc, op, order_chains(raw, here), raw, max(10 * setup.tolerance, 0.01))
     chains = apply_starts(chains, start_marks(doc, op, setup.tolerance), max(10 * setup.tolerance, 0.01))[0]
     for _k in range(_passes(op)):                        # chaque passage repart du début du trait
         for pts, closed in chains:

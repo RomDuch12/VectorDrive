@@ -10,22 +10,50 @@ et modifient le dessin ouvert avec les outils de l'assistant (`agent.tools`, les
 - La demande tourne dans un fil de travail ; chaque outil s'exécute dans le fil de l'interface, un pas d'annulation
   chacun (Ctrl+Z) ; une fenêtre modale ou une commande en cours le fait refuser. « Arrêter » coupe au prochain pas.
 - Ctrl+Entrée envoie ; « Nouvelle discussion » repart de zéro.
+- (demande du 18/11 soir) Copier-coller : les raccourcis d'édition vont au texte de la discussion et de la demande ; le
+  menu de la discussion copie toute la discussion. Couleurs : vos demandes, les réponses, les outils, les messages ;
+  dans les réponses, les valeurs (nombres, unités, textes entre guillemets). Un assistant par onglet de dessin : chaque
+  onglet garde sa discussion ; les outils d'une demande n'agissent que sur l'onglet où elle a été faite.
 """
 from __future__ import annotations
 
 import html
+import re
 import threading
+import weakref
 
 from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QDesktopServices, QKeySequence, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QPushButton, QTextBrowser, QVBoxLayout, QWidget)
+                               QPushButton, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget)
 
 from ..i18n import tr
 
 KEY_PROVIDER = 'assistant/fournisseur'
 KEY_MODEL = 'assistant/modele_{0}'
 KEY_URL = 'assistant/adresse_mistral'
+
+#: les couleurs de la discussion (lisibles sur fond clair ou sombre) : vous, l'assistant, les valeurs de ses réponses
+C_USER, C_BOT, C_VALUE = '#1f6fd1', '#2e8b3e', '#c0661a'
+#: les raccourcis d'édition laissés au texte (le dessin a les mêmes)
+EDIT_KEYS = (QKeySequence.StandardKey.Copy, QKeySequence.StandardKey.Paste, QKeySequence.StandardKey.Cut,
+             QKeySequence.StandardKey.SelectAll, QKeySequence.StandardKey.Undo, QKeySequence.StandardKey.Redo)
+#: la discussion (lecture seule) : copier, tout sélectionner ; Ctrl+Z et les autres restent au dessin
+VIEW_KEYS = (QKeySequence.StandardKey.Copy, QKeySequence.StandardKey.SelectAll)
+#: les valeurs d'une réponse : un texte entre guillemets, un nombre et son unité
+VALUE = re.compile(r'«[^»\n]{1,200}»|“[^”\n]{1,200}”|"[^"\n]{1,200}"'
+                   r'|(?<![\w.,])[-+−]?\d+(?:[.,]\d+)*(?:\s?(?:mm|cm|m|px|pt|min|s)\b|\s?[°%])?')
+
+
+def highlight(text: str) -> str:
+    """Le texte d'une réponse en HTML, ses valeurs en couleur."""
+    out, at = [], 0
+    for m in VALUE.finditer(text):
+        out.append(html.escape(text[at:m.start()]))
+        out.append('<span style="color:{0}">{1}</span>'.format(C_VALUE, html.escape(m.group(0))))
+        at = m.end()
+    out.append(html.escape(text[at:]))
+    return '<span style="white-space:pre-wrap">{0}</span>'.format(''.join(out).replace('\n', '<br>'))
 
 
 class _Relay(QObject):
@@ -113,11 +141,13 @@ class AssistantPanel(QWidget):
         note.setFont(f)
         lay.addWidget(note)
 
-        self.view = QTextBrowser()
-        self.view.setOpenExternalLinks(False)
-        self.view.setPlaceholderText(tr('Par exemple : « Dessine une plaque de 120 × 40 mm aux coins arrondis de 5 mm, '
-                                        'avec le texte BUREAU centré, hauteur 15 mm »'))
-        lay.addWidget(self.view, 1)
+        self.stack = QStackedWidget()                    # une discussion par onglet de dessin
+        self._tabs: dict = {}                            # id(onglet) : [son porteur, vue, discussion, clé]
+        self._tab = [None]                               # le porteur de l'onglet de la discussion affichée : [weakref]
+        self._out = None                                 # la vue où écrit la demande en cours
+        self._reply_at = None
+        self.view = self._new_view()
+        lay.addWidget(self.stack, 1)
         self.input = QPlainTextEdit()
         self.input.setPlaceholderText(tr('Votre demande (Ctrl+Entrée : envoyer)'))
         self.input.setMaximumHeight(self.input.fontMetrics().lineSpacing() * 5 + 12)
@@ -131,7 +161,10 @@ class AssistantPanel(QWidget):
         self.btn_stop.clicked.connect(self.stop)
         self.btn_new = QPushButton(tr('Nouvelle discussion'))
         self.btn_new.clicked.connect(self.new_chat)
-        for b in (self.btn_send, self.btn_stop, self.btn_new):
+        self.btn_memory = QPushButton(tr('Mémoire…'))
+        self.btn_memory.setToolTip(tr('Ce que l’assistant retient d’une discussion à l’autre : le voir, le corriger'))
+        self.btn_memory.clicked.connect(lambda _=False: self.edit_memory())
+        for b in (self.btn_send, self.btn_stop, self.btn_new, self.btn_memory):
             row.addWidget(b)
         lay.addLayout(row)
         self.status = QLabel('')
@@ -143,8 +176,86 @@ class AssistantPanel(QWidget):
         self.url.editingFinished.connect(lambda: st.setValue(KEY_URL, self.url.text().strip()))
         self._provider_changed()
         self._busy(False)
+        tab = self._current_tab()
+        self._tab = [weakref.ref(tab) if tab is not None else None]
+
+    def _new_view(self) -> QTextBrowser:
+        v = QTextBrowser()
+        v.setOpenExternalLinks(False)
+        v.setPlaceholderText(tr('Par exemple : « Dessine une plaque de 120 × 40 mm aux coins arrondis de 5 mm, '
+                                'avec le texte BUREAU centré, hauteur 15 mm »'))
+        v.installEventFilter(self)                       # Ctrl+C, Ctrl+A : au texte
+        v.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        v.customContextMenuRequested.connect(lambda pos, v=v: self._view_menu(v, pos))
+        self.stack.addWidget(v)
+        self.stack.setCurrentWidget(v)
+        return v
+
+    def _view_menu(self, v, pos) -> None:
+        m = v.createStandardContextMenu(pos)
+        m.addSeparator()
+        m.addAction(tr('Copier toute la discussion'), lambda: QApplication.clipboard().setText(v.toPlainText()))
+        m.exec(v.viewport().mapToGlobal(pos))
+        m.deleteLater()
+
+    # --- un assistant par onglet ----------------------------------------------------------------------------
+    def _current_tab(self):
+        docs, i = getattr(self.win, 'docs', None), getattr(self.win, 'doc_index', -1)
+        return docs[i] if isinstance(docs, list) and 0 <= i < len(docs) else None
+
+    def tab_changed(self, tab) -> None:
+        """Un autre onglet de dessin affiché : sa discussion (vide la première fois) ; la demande en cours continue
+        dans la sienne. L'onglet vierge remplacé sur place (un fichier ouvert, un nouveau dessin) garde la sienne."""
+        ref = self._tab[0]
+        cur = ref() if ref is not None else None
+        if tab is None or cur is tab:
+            return
+        e = self._tabs.pop(id(tab), None)
+        if e is not None and (e[0][0] is None or e[0][0]() is not tab):     # un identifiant repris : une autre
+            if e[1] is not self._out:
+                self.stack.removeWidget(e[1])
+                e[1].deleteLater()
+            e = None
+        if cur is None and ref is not None and e is None:
+            self._tab[0] = weakref.ref(tab)              # l'onglet remplacé sur place : la discussion continue
+            return
+        if cur is not None:
+            self._tabs[id(cur)] = [self._tab, self.view, self.conv, self._conv_key]
+        elif self.view is not self._out:                 # l'onglet affiché est fermé : sa discussion s'en va
+            self.stack.removeWidget(self.view)
+            self.view.deleteLater()
+        for k in [k for k, x in self._tabs.items() if x[0][0]() is None and x[1] is not self._out]:
+            x = self._tabs.pop(k)                        # onglets fermés : leur discussion s'en va
+            self.stack.removeWidget(x[1])
+            x[1].deleteLater()
+        if e is not None:
+            self._tab, self.view, self.conv, self._conv_key = e
+        else:
+            self._tab = [weakref.ref(tab)]
+            self.view, self.conv, self._conv_key = self._new_view(), None, None
+        self.stack.setCurrentWidget(self.view)
+
+    def _runner(self, holder):
+        """L'exécution des outils d'une discussion : dans le fil de l'interface, sur l'onglet de la discussion
+        seulement (`holder` : [weakref de l'onglet], suivi si l'onglet est remplacé sur place)."""
+        def run(fn):
+            def guarded():
+                ref = holder[0]
+                if ref is not None and ref() is not self._current_tab():
+                    from ..agent.protocol import ToolError
+                    raise ToolError('the user is now looking at another drawing tab: this conversation belongs to '
+                                    'its own tab; ask the user to come back to it, then try again')
+                return fn()
+            return self.bridge.run(guarded)
+        return run
 
     def eventFilter(self, obj, ev):                      # noqa: N802 — nom imposé par Qt
+        if ev.type() == QEvent.Type.ShortcutOverride and isinstance(obj, (QTextBrowser, QPlainTextEdit)) \
+                and any(ev.matches(k) for k in (VIEW_KEYS if isinstance(obj, QTextBrowser) else EDIT_KEYS)):
+            ev.accept()                                  # au texte, pas aux raccourcis du dessin
+            return True
+        if getattr(self, 'input', None) is None:         # en construction : la demande pas encore faite
+            return super().eventFilter(obj, ev)
         if obj is self.input and ev.type() == QEvent.Type.KeyPress \
                 and ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) \
                 and ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -213,8 +324,9 @@ class AssistantPanel(QWidget):
             from ..agent.chat import Conversation
             from ..agent.tools import ToolSet
             p, model, url, api_key = key
-            self.conv = Conversation(p, model, api_key, ToolSet(self.win, self.bridge.run), url=url,
-                                     client=self.client_for(p),
+            from ..agent.tools import memory_prompt
+            self.conv = Conversation(p, model, api_key, ToolSet(self.win, self._runner(self._tab), extended=True),
+                                     url=url, client=self.client_for(p), system=memory_prompt(),
                                      on_text=self.relay.text.emit, on_tool=self._tool_seen)
             if self._conv_key is not None and self.view.toPlainText().strip():
                 self._line(tr('— Nouvelle discussion ({0}, {1}) —').format(self.providers[p][0], model or '…'))
@@ -245,8 +357,9 @@ class AssistantPanel(QWidget):
             self.status.setText(tr('Adresse refusée : https://, ou http:// vers cette machine seulement')
                                 if isinstance(ex, BadAddress) else str(ex))
             return False
-        self._line('<b>{0}</b> {1}'.format(html.escape(tr('Vous :')), html.escape(text).replace('\n', '<br>')),
-                   raw=True)
+        self._out = self.view                            # la discussion de cet onglet, même s'il change
+        self._line('<b style="color:{2}">{0}</b> <span style="color:{2}">{1}</span>'.format(
+            html.escape(tr('Vous :')), html.escape(text).replace('\n', '<br>'), C_USER), raw=True)
         self._replying = False
         self._running = conv                             # « Arrêter » la trouve même si la discussion est refaite
         self._busy(True)
@@ -299,6 +412,43 @@ class AssistantPanel(QWidget):
             conv.stop()
             self.status.setText(tr('Arrêt au prochain pas…'))
 
+    def edit_memory(self, exec_dialog: bool = True):
+        """La mémoire de l'assistant, à voir et corriger (elle vaut pour les discussions suivantes). Rend la
+        fenêtre."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+        from ..agent import tools as AT
+        d = QDialog(self)
+        d.setWindowTitle(tr('Mémoire de l’assistant'))
+        lay = QVBoxLayout(d)
+        lbl = QLabel(tr('Ce que l’assistant retient d’une discussion à l’autre (il l’écrit quand vous le lui '
+                        'demandez) ; donnée au début de chaque nouvelle discussion.'))
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+        d.edit = QPlainTextEdit(AT.memory_text())
+        lay.addWidget(d.edit, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(d.accept)
+        bb.rejected.connect(d.reject)
+        lay.addWidget(bb)
+        d.resize(560, 420)
+
+        def keep():
+            full = d.edit.toPlainText()
+            text = full[:AT.MAX_MEMORY]
+            try:
+                AT.write_memory(text)
+                if len(full) > AT.MAX_MEMORY:
+                    self.status.setText(tr('Mémoire gardée, coupée à {0} caractères : elle vaut pour les discussions '
+                                           'suivantes').format(AT.MAX_MEMORY))
+                else:
+                    self.status.setText(tr('Mémoire gardée : elle vaut pour les discussions suivantes'))
+            except OSError as ex:
+                self.status.setText(str(ex))
+        d.accepted.connect(keep)
+        if exec_dialog:
+            d.exec()
+        return d
+
     def new_chat(self) -> None:
         if self.running:
             return
@@ -337,32 +487,66 @@ class AssistantPanel(QWidget):
             w.setEnabled(not on)
         self.btn_forget.setEnabled(not on and self.keys.stored(self.slug()))
 
+    def _target(self) -> QTextBrowser:
+        out = self._out
+        try:
+            if out is not None:
+                out.document()
+                return out
+        except RuntimeError:                             # sa vue est partie
+            self._out = None
+        return self.view
+
     def _line(self, text: str, raw: bool = False) -> None:
-        c = self.view.textCursor()
+        self._finish_reply()
+        v = self._target()
+        c = v.textCursor()
         c.movePosition(QTextCursor.MoveOperation.End)
-        if not self.view.document().isEmpty():
+        if not v.document().isEmpty():
             c.insertBlock()
         c.insertHtml(text if raw else html.escape(text))
-        self.view.setTextCursor(c)
-        self.view.ensureCursorVisible()
+        v.setTextCursor(c)
+        v.ensureCursorVisible()
         self._replying = False
 
     def _on_text(self, chunk: str) -> None:
+        v = self._target()
         if not self._replying:
-            self._line('<b>{0}</b>'.format(html.escape(tr('Assistant :'))), raw=True)
+            self._line('<b style="color:{1}">{0}</b>'.format(html.escape(tr('Assistant :')), C_BOT), raw=True)
             self._replying = True
+            end = QTextCursor(v.document())
+            end.movePosition(QTextCursor.MoveOperation.End)
+            self._reply_at = end.position()
             chunk = ' ' + chunk
-        c = self.view.textCursor()
+        c = v.textCursor()
         c.movePosition(QTextCursor.MoveOperation.End)
         c.insertText(chunk, QTextCharFormat())           # pas le gras du libellé
-        self.view.setTextCursor(c)
-        self.view.ensureCursorVisible()
+        v.setTextCursor(c)
+        v.ensureCursorVisible()
+
+    def _finish_reply(self) -> None:
+        """La réponse finie : ses valeurs mises en couleur."""
+        at, self._reply_at = self._reply_at, None
+        if not self._replying or at is None:
+            return
+        v = self._target()
+        c = QTextCursor(v.document())
+        c.setPosition(min(at, v.document().characterCount() - 1))
+        c.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        text = c.selectedText().replace('\u2029', '\n')
+        if not text.strip():
+            return
+        c.removeSelectedText()
+        c.insertHtml(highlight(text))                    # les espaces gardés (pre-wrap)
 
     def _tool_seen(self, name: str, _args, out: list, err: bool) -> None:
         """Dans le fil de travail : un outil appelé, dit dans le panneau."""
         if err:
             why = ' '.join(c.get('text', '') for c in out if c.get('type') == 'text')[:160]
             self.relay.tool.emit(f'⚙ {name} — {why}')
+        elif name == 'memory_write' and isinstance(_args, dict):    # ce qu'il retient : dit, pour le voir
+            what = str(_args.get('text', ''))[:300]
+            self.relay.tool.emit(f'⚙ {name} — {what}' if what else f'⚙ {name}')
         else:
             self.relay.tool.emit(f'⚙ {name}')
 
@@ -373,5 +557,8 @@ class AssistantPanel(QWidget):
         self._thread = None                              # dit en dernier par le fil : la demande est finie
         self._busy(False)
         self.status.setText(message)
+        self._finish_reply()
+        self._replying = False
         if message:
-            self._line('<i>{0}</i>'.format(html.escape(message)), raw=True)
+            self._line('<i style="color:#a05a00">{0}</i>'.format(html.escape(message)), raw=True)
+        self._out = None

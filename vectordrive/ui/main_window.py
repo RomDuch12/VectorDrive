@@ -1100,9 +1100,10 @@ class MainWindow(QMainWindow):
         a('quit', tr('Quitter'), self.close, None, 'quit', tip=tr('Fermer VectorDrive'))
         a('batch', tr('Traitement par lots…'), lambda: self.batch_dialog(), None, 'export',
           tip=tr('Convertir d\'un coup des dessins ou des dossiers entiers (VND en DXF, PDF, SVG…), BAT au choix'))
-        a('knife', tr('Couteau'), self.knife, None, 'clip',
-          tip=tr('Couper les formes fermées sélectionnées le long du trait sélectionné en dernier (droite, '
-                 'polyligne, courbe ou bord d\'une forme)'))
+        a('knife', tr('Couteau'), lambda _=False: self.knife_command(), None, 'clip',
+          tip=tr('La forme sélectionnée en premier (trait ou forme) devient le pointeur : chaque clic coupe le long '
+                 'de son tracé ce qu\'il traverse ; clic droit : quitter. Maj : couper d\'un coup les formes '
+                 'sélectionnées par le trait sélectionné en dernier'))
         a('point_xy', tr('Point par coordonnées…'), lambda: self.point_by_coordinates(), None, 'marker',
           tip=tr('Donner le point suivant de l\'outil de dessin par ses coordonnées (absolues ou relatives)'))
         a('move_by', tr('Déplacer…'), self.move_by_dialog, None, 'select',
@@ -1388,7 +1389,8 @@ class MainWindow(QMainWindow):
                               ('leads', tr('Entrée et sortie d\'un contour'), 'bend_path'),
                               ('knife_line', tr('Couper un contour'), 'clip'),
                               ('extend_arc', tr('Étendre en arc'), 'arc'),
-                              ('dup_free', tr('Duplication libre'), 'duplicate')):
+                              ('dup_free', tr('Duplication libre'), 'duplicate'),
+                              ('start_point', tr('Point de départ à la souris'), 'direction')):
             act = a(f'tool_{key}', text, lambda checked, k=key: checked and self.set_tool(k),
                     {'measure_rect': 'Shift+D'}.get(key), ic, checkable=True)
             self.tool_group.addAction(act)
@@ -1497,6 +1499,11 @@ class MainWindow(QMainWindow):
                  'texte est à convertir en courbes d\'abord)')
         self.A['tool_punchout'].setToolTip(tip)
         self.A['tool_punchout'].setStatusTip(tip)
+        tip = tr('Point de départ à la souris (O) : un clic près d\'un contour — ouvert : son bout le plus proche '
+                 'devient son départ (le sens est retourné s\'il le faut) ; fermé : son point le plus proche. '
+                 'L\'usinage commence là ; clic droit : quitter')
+        self.A['tool_start_point'].setToolTip(tip)
+        self.A['tool_start_point'].setStatusTip(tip)
         tip = tr('Pinceau à aplat : glisser peint une surface pleine qui se fond avec les formes fermées de '
                  'l\'outil courant qu\'elle touche ; [ et ] : taille')
         self.A['tool_blob'].setToolTip(tip)
@@ -1633,6 +1640,9 @@ class MainWindow(QMainWindow):
         a('rot_free', tr('Rotation…'), self.rotate_dialog, 'Shift+R', 'rotate',
           tip=tr('Tourner la sélection d\'un angle quelconque'))
         a('rot-90', tr('Rotation −90°'), lambda: self.rotate(-90), None, 'rotate')
+        a('rotate_mouse', tr('Rotation à la souris'), lambda _=False: self.rotate_mouse(), None, 'rotate',
+          tip=tr('Tourner la sélection à la souris : tirer un coin, ou le bouton rond au-dessus de son cadre (Ctrl : par pas '
+                 'de 15° ; Maj : garder l\'original) ; le centre de rotation se déplace à la souris'))
         a('transform_again', tr('Répéter la transformation'), lambda _=False: self.transform_again(), 'Ctrl+Alt+T',
           'transform_again', tip=tr('Refait sur la sélection le dernier déplacement, la dernière rotation ou mise à '
                                     'l\'échelle, à la souris ou au clavier'))
@@ -1720,9 +1730,10 @@ class MainWindow(QMainWindow):
                  'n\'être gravés qu\'une fois, par outil'))
         a('remove_loops', tr('Gomme à boucles'), lambda _=False: self.remove_loops_dialog(), None, 'remove_loops',
           tip=tr('Supprimer les petites boucles où un contour se recoupe lui-même'))
-        a('punch', tr('Poinçonner'), self.punch_items, None, 'punch',
-          tip=tr('La forme fermée sélectionnée en premier troue les autres objets (traits coupés à son bord, '
-                 'surfaces évidées) ; Ctrl : le type de perforage'))
+        a('punch', tr('Poinçonner'), lambda _=False: self.punch_command(), None, 'punch',
+          tip=tr('La forme fermée sélectionnée en premier devient le pointeur : chaque clic retire ce qu\'elle '
+                 'couvre (des autres objets sélectionnés, sinon de tout le dessin) ; clic droit : quitter. Maj : '
+                 'trouer d\'un coup les objets sélectionnés (Ctrl : le type de perforage)'))
         for k, (title, _keys) in self.PALETTES.items():
             a(k, tr(title), lambda _=False, kk=k: self.show_palette(kk), None, 'command_search',
               tip=tr('Palette « {0} » de TypeEdit : ses commandes dans VectorDrive').format(tr(title)))
@@ -2383,8 +2394,9 @@ class MainWindow(QMainWindow):
           tip=tr('Rechercher une nouvelle version'))
         a('shortcuts', tr('Raccourcis clavier'), self.shortcuts_dialog, None, 'options',
           tip=tr('Jeu de raccourcis (TypeEdit ou VectorDrive), import d\'un TeTurboKey.ini, réglage par commande'))
-        a('node_start', tr('Point de départ'), self.node_start, None, 'node',
-          tip=tr('Mode Point : le point sélectionné devient le départ de son contour fermé, et l\'usinage commencera là'))
+        a('node_start', tr('Point de départ'), lambda _=False: self.node_start(), 'O', 'node',
+          tip=tr('Le départ d\'un contour, et celui de son usinage (O, comme TypeEdit) : en Mode Point, le point '
+                 'sélectionné (contour ouvert : une de ses extrémités) ; sinon, un clic près d\'un contour'))
         a('center_plate_h', tr('Centrer plaque H'), lambda: self.center_on_plate('h'), None, 'center_plate',
           tip=tr('Centrer horizontalement la sélection sur la plaque'))
         a('center_plate_v', tr('Centrer plaque V'), lambda: self.center_on_plate('v'), None, 'center_plate',
@@ -2822,7 +2834,8 @@ class MainWindow(QMainWindow):
         g.add(A['tool_node'])
         for k in ('node_delete', 'node_break', 'join', 'node_line', 'node_curve', 'node_on_curve',
                   'node_off_curve', 'node_smooth',
-                  'node_symmetric', 'node_align_h', 'node_align_v', 'node_average', 'node_start', 'node_refine',
+                  'node_symmetric', 'node_align_h', 'node_align_v', 'node_average', 'node_start',
+                  'tool_start_point', 'node_refine',
                   'node_add', 'node_simplify', 'node_segment', 'node_arc', 'node_angle', 'tool_contour_move', 'node_project_v', 'node_project_h',
                   'node_project_perp'):
             g.add(A[k], big=False)
@@ -2880,7 +2893,7 @@ class MainWindow(QMainWindow):
         g = t.group(tr('Transformation'))
         for k in ('mirror_h', 'mirror_v', 'rot90'):
             g.add(A[k])
-        for k in ('mirror_axis', 'rot-90', 'rot_free', 'move_by', 'transform_again', 'transform_again_copy',
+        for k in ('mirror_axis', 'rot-90', 'rot_free', 'rotate_mouse', 'move_by', 'transform_again', 'transform_again_copy',
                   'transform_each', 'tool_axis_v', 'tool_axis_h', 'tool_align_points',
                   'tool_stretch', 'tool_scale_ref', 'tool_rotate_ref'):
             g.add(A[k], big=False)
@@ -7677,6 +7690,17 @@ class MainWindow(QMainWindow):
             self.set_tool('select')
 
     def set_tool(self, key: str) -> None:
+        # cocher le bouton de l'outil rappelle set_tool : une seule création de l'outil (l'emporte-pièce et le couteau
+        # prennent la sélection en la vidant)
+        if getattr(self, '_setting_tool', None) == key:
+            return
+        before, self._setting_tool = getattr(self, '_setting_tool', None), key
+        try:
+            self._set_tool(key)
+        finally:
+            self._setting_tool = before
+
+    def _set_tool(self, key: str) -> None:
         from . import tools as T
         if self.canvas.tool_obj is not None:
             self.canvas.tool_obj.cancel()
@@ -7736,7 +7760,7 @@ class MainWindow(QMainWindow):
                   'relief_probe': lambda: T.ReliefProbeTool(self.canvas),
                   'shaper': lambda: T.ShaperTool(self.canvas),
                   'eraser': lambda: T.EraserTool(self.canvas),
-                  'punchout': lambda: T.PunchTool(self.canvas, self.punchout_spec(), self._punchout_keep),
+                  'punchout': self._punchout_tool,
                   'blob': lambda: T.BlobBrushTool(self.canvas),
                   'spline': lambda: T.SplineTool(self.canvas),
                   'sym_ox': lambda: T.SymCurveTool(self.canvas, 'ox'),
@@ -7748,7 +7772,8 @@ class MainWindow(QMainWindow):
                   'breakline': lambda: T.BreakLineTool(self.canvas),
                   'tabs': lambda: T.TabTool(self.canvas),
                   'leads': lambda: T.LeadTool(self.canvas, self.contour_lead),
-                  'knife_line': lambda: T.KnifeLineTool(self.canvas),
+                  'knife_line': self._knife_tool,
+                  'start_point': lambda: T.StartPointTool(self.canvas, self.set_contour_start),
                   'extend_arc': lambda: T.ExtendArcTool(self.canvas),
                   'dup_free': lambda: T.FreeDuplicateTool(self.canvas, self._ctrl_held())}
         self.canvas.tool_obj = makers[key]() if key in makers else None
@@ -8461,6 +8486,10 @@ class MainWindow(QMainWindow):
         if guard is not None:                            # un autre dessin : rien à comparer, plus rien ne clignote
             guard.forget()
             self.canvas.flash([])
+        dock = getattr(self, 'dock_assistant', None)
+        ai = dock.widget() if dock is not None else None
+        if hasattr(ai, 'tab_changed'):                   # un assistant par onglet (demande du 18/11 soir)
+            ai.tab_changed(t)
         if keep_view and t.view is not None:
             self.canvas.scale, self.canvas.ox, self.canvas.oy = t.view
             self.canvas.viewChanged.emit()
@@ -11087,7 +11116,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr('{0} morceau(x)').format(n), 5000)
         return n
 
-    def _knife_cut(self, targets: list, bpath) -> int:
+    def _knife_parts(self, targets: list, bpath) -> tuple:
+        """({id(forme) : morceaux}, nombre de morceaux) des formes que le trait coupe en plusieurs morceaux."""
         from ..core import knife as KN
         new, n = {}, 0
         for s in targets:
@@ -11101,11 +11131,22 @@ class MainWindow(QMainWindow):
                     pieces.append(c)
                 new[id(s)] = pieces
                 n += len(pieces)
+        return new, n
+
+    def _knife_cut(self, targets: list, bpath) -> int:
+        new, n = self._knife_parts(targets, bpath)
         if not new:
             self.statusBar().showMessage(tr('Le trait ne traverse aucune forme de part en part'), 5000)
             return 0
         self.push_undo()
+        self._knife_apply(new)
+        self.canvas.invalidate()
+        self._on_doc_changed()
+        self.statusBar().showMessage(tr('{0} morceau(x)').format(n), 5000)
+        return n
 
+    def _knife_apply(self, new: dict, select: bool = True) -> None:
+        """Les formes coupées remplacées par leurs morceaux, à leur place (dans leur groupe aussi)."""
         def swap(items: list) -> tuple:                 # aussi dans les groupes : un morceau y reste
             kept, touched = [], False
             for it in items:
@@ -11124,11 +11165,8 @@ class MainWindow(QMainWindow):
             L.items = swap(L.items)[0]
             shown += [it for it in L.items
                       if id(it) in made or (isinstance(it, Group) and any(id(x) in made for x in _leaves([it])))]
-        self.canvas.invalidate()
-        self.canvas.select(shown)
-        self._on_doc_changed()
-        self.statusBar().showMessage(tr('{0} morceau(x)').format(n), 5000)
-        return n
+        if select:
+            self.canvas.select(shown)
 
     def remove_aligned_points(self) -> None:
         from ..core.shapes import merge_collinear
@@ -12707,7 +12745,7 @@ class MainWindow(QMainWindow):
             'align_left', 'align_hcenter', 'align_right', 'align_top', 'align_vcenter', 'align_bottom', 'align_center',
             'distribute_h', 'distribute_v', 'space_h', 'space_v', 'same_w', 'same_h', 'same_both', 'center_plate')),
         'palette_transform': ('Transformation', (
-            'mirror_h', 'mirror_v', 'mirror_axis', 'rot90', 'rot-90', 'rot_free', 'move_by', 'duplicate',
+            'mirror_h', 'mirror_v', 'mirror_axis', 'rot90', 'rot-90', 'rot_free', 'rotate_mouse', 'move_by', 'duplicate',
             'duplicate_scaled', 'sym_point')),
         'palette_typeart': ('3D', ('galbe', 'typeart_sweep', 'typeart_dome', 'typeart_extrude', 'typeart_revolution',
                                         'typeart_plane', 'galbe_smooth', 'cam_new_relief', 'cam_new_finition')),
@@ -12869,6 +12907,20 @@ class MainWindow(QMainWindow):
         bb = self.canvas.selection_bbox()
         if bb:
             self.canvas.transform_selection(Affine.rotation(deg, ((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)))
+
+    def rotate_mouse(self) -> None:
+        """Rotation à la souris (demande du 18/11 soir : « Selection ensemble contours : bouton de rotation à la
+        souris ») : l'outil Sélection, la sélection en mode rotation — ses coins et le bouton rond au-dessus de son cadre
+        la tournent."""
+        if not self.canvas.selection:
+            self.statusBar().showMessage(tr('Sélectionnez d\'abord ce qu\'il faut tourner'), 4000)
+            return
+        if self.canvas.tool != 'select' or self.canvas.tool_obj is not None:
+            sel = list(self.canvas.selection)
+            self.set_tool('select')
+            if not self.canvas.selection:
+                self.canvas.select(sel)
+        self.canvas.toggle_rot_mode(True)
 
     def _reference_box(self):
         """Référence d'alignement : le premier objet sélectionné quand il y en
@@ -13751,33 +13803,61 @@ class MainWindow(QMainWindow):
         self._on_doc_changed()
 
     def node_start(self) -> None:
-        """Mode Point : le point sélectionné devient le départ de son
-        contour (fermé), et celui de l'usinage (TE, page 693)."""
-        import math
+        """Point de départ (touche O, TypeEdit) : en Mode Point, le point sélectionné devient le départ de son
+        contour, et celui de l'usinage (TE, page 693) — contour ouvert : une de ses extrémités (demande du 18/11 soir) ;
+        hors du Mode Point, l'outil Point de départ à la souris."""
         from ..core import nodes as N
-        from ..core.geom import Path as P
         tool = self.canvas.tool_obj
-        if type(tool).__name__ != 'NodeTool' or tool.shape() is None or len(tool.sel) != 1:
+        if type(tool).__name__ != 'NodeTool':
+            self.set_tool('start_point')
+            return
+        if tool.shape() is None or len(tool.sel) != 1:
             QMessageBox.information(self, tr('Point de départ'), tr('En Mode Point, sélectionnez un seul point.'))
             return
         sh = tool.shape()
         (ci, k), = tool.sel
-        if not sh.path.contours[ci].closed:
+        if not self.set_contour_start(sh, ci, k):
             QMessageBox.information(self, tr('Point de départ'),
-                                    tr('Le contour est ouvert : son départ est à l\'une de ses extrémités '
-                                       '(Inverser le sens pour en changer).'))
+                                    tr('Le contour est ouvert : son départ est l\'une de ses extrémités — '
+                                       'sélectionnez-en une.'))
             return
-        self.push_undo()
-        cs = list(sh.path.contours)
-        cs[ci] = N.set_start(cs[ci], k)
-        sh.path = P(cs)
-        nodes = [s.start for s in cs[ci].segments]       # un seul point choisi par contour : le dernier
-        kept = [p for p in (sh.extra or {}).get('start_xy', []) if not any(math.dist(p[:2], q[:2]) < 1e-6 for q in nodes)]
-        sh.extra = dict(sh.extra or {}, start_xy=kept + [list(nodes[0][:2])])
+        c = sh.path.contours[ci]
         tool.sel.clear()
-        tool.sel.add((ci, N.node_count(cs[ci]) - 1))
+        tool.sel.add((ci, N.node_count(c) - 1 if c.closed else 0))
+
+    def set_contour_start(self, sh, ci: int, k: int) -> bool:
+        """Le nœud `k` du contour `ci` de la forme devient son départ, et celui de l'usinage : contour fermé — même
+        forme, même sens ; ouvert — `k` doit être une extrémité, le sens est retourné s'il le faut. Le point est retenu
+        sur la forme (un seul par contour). Un pas d'annulation ; False : `k` n'est pas un départ possible."""
+        import math
+        from ..core import nodes as N
+        cs = list(sh.path.contours)
+        c = cs[ci]
+        if not c.segments:
+            return False
+        if c.closed:
+            new = N.set_start(c, k)
+        else:
+            n = N.node_count(c)
+            if k not in (0, n - 1):
+                return False
+            new = c.reversed() if k == n - 1 else c
+        self.push_undo()
+        cs[ci] = new
+        sh.path = geom.Path(cs)
+        if new.closed:
+            pts = [s.start for s in new.segments]
+            kept = [p for p in (sh.extra or {}).get('start_xy', []) if not any(math.dist(p[:2], q[:2]) < 1e-6 for q in pts)]
+            sh.extra = dict(sh.extra or {}, start_xy=kept + [list(new.segments[0].start[:2])])
+        else:                                            # un trait : ses deux bouts (le sens est celui du dessin)
+            a, b = new.segments[0].start[:2], new.segments[-1].end[:2]
+            kept = [p for p in (sh.extra or {}).get('open_start', [])
+                    if not {(round(p[0], 6), round(p[1], 6)), (round(p[2], 6), round(p[3], 6))}
+                    == {(round(a[0], 6), round(a[1], 6)), (round(b[0], 6), round(b[1], 6))}]
+            sh.extra = dict(sh.extra or {}, open_start=kept + [[a[0], a[1], b[0], b[1]]])
         self.canvas.invalidate([sh])
         self._on_doc_changed()
+        return True
 
     def node_edit(self, kind: str) -> None:
         """Mode Point : droite / courbe, lisse / symétrique, alignements, sur
@@ -16570,14 +16650,143 @@ class MainWindow(QMainWindow):
         return out
 
     def _punchout_keep(self, spec: dict) -> None:
-        """Les réglages changés au clavier dans l'outil (Tab, [ et ]) : retenus."""
-        self.settings.setValue('cad/emporte_piece', dict(self.punchout_spec(), **spec))
+        """Les réglages changés au clavier dans l'outil (Tab, [ et ]) : retenus (la forme pointeur à part)."""
+        plain = {k: v for k, v in spec.items() if k in self.PUNCHOUT_DEFAULT}
+        self.settings.setValue('cad/emporte_piece', dict(self.punchout_spec(), **plain))
+        if spec.get('stamp') is not None:
+            self._remember_stamp(spec['stamp'])
+
+    #: la dernière forme prise pour emporte-pièce (réglage : son tracé en JSON)
+    STAMP_KEY = 'cad/emporte_piece_forme'
+
+    def _remember_stamp(self, stamp) -> None:
+        import json
+        from ..io import native
+        self.settings.setValue(self.STAMP_KEY, json.dumps(native._path_out(stamp)))
+
+    def last_stamp(self):
+        """La dernière forme prise pour emporte-pièce (« mémoire du dernier »), None : aucune."""
+        import json
+        from ..io import native
+        raw = self.settings.value(self.STAMP_KEY, '')
+        try:
+            return native._path_in(json.loads(raw)) if raw else None
+        except (TypeError, ValueError, KeyError, IndexError):
+            return None
+
+    def _stamp_pick(self, closed_only: bool):
+        """(forme pointeur, objet source, autres objets sélectionnés) d'après la sélection : la première forme
+        sélectionnée ; None si elle n'en donne pas."""
+        from ..core import punchtool as PT
+        sel = list(self.canvas.selection)
+        if not sel:
+            return None
+        first = sel[0]
+        path = self._closed_path(first) if closed_only else \
+            geom.Path([c for s in _leaves([first]) if isinstance(s, Shape) for c in s.path.contours])
+        stamp = PT.stamp_of(path, closed_only)
+        return (stamp, first, sel[1:]) if stamp is not None else None
+
+    def _punchout_tool(self):
+        """L'emporte-pièce : pris avec une sélection dont la première forme est fermée, elle devient le pointeur
+        (retenue pour la prochaine fois) et coupe les autres objets sélectionnés, sinon tout le dessin ; sans, les
+        réglages retenus (la dernière forme si c'est la forme qui était choisie)."""
+        from . import tools as T
+        spec = self.punchout_spec()
+        skip, among = (), None
+        got = None if getattr(self, '_punchout_plain', False) else self._stamp_pick(True)
+        if got is not None:
+            stamp, first, others = got
+            spec.update(kind='forme', stamp=stamp)
+            skip, among = (first,), list(others)     # [] : tout le dessin
+            self._remember_stamp(stamp)
+            self.settings.setValue('cad/emporte_piece', dict(self.punchout_spec(), kind='forme'))
+            self.canvas.select([])
+        elif spec['kind'] == 'forme':
+            spec['stamp'] = self.last_stamp()
+        return T.PunchTool(self.canvas, spec, self._punchout_keep, skip=skip, among=among)
+
+    def punch_command(self) -> None:
+        """Poinçonner (demande du 18/11 soir) : la forme fermée sélectionnée en premier devient le pointeur de
+        l'emporte-pièce — chaque clic retire ce qu'elle couvre ; clic droit : quitter. Maj : l'ancien Poinçonner, d'un
+        coup sur la sélection."""
+        if self._shift_held():
+            self.punch_items()
+            return
+        if self._stamp_pick(True) is None:
+            QMessageBox.information(self, tr('Poinçonner'),
+                                    tr('Sélectionnez d\'abord la forme fermée qui troue : elle devient le pointeur '
+                                       '(puis, au besoin, les objets à trouer).'))
+            return
+        self.set_tool('punchout')
+
+    def _knife_tool(self):
+        from . import tools as T
+        got, self._knife_blade = getattr(self, '_knife_blade', None), None
+        if got is None:
+            return T.KnifeLineTool(self.canvas)
+        stamp, first, others = got
+        return T.KnifeStampTool(self.canvas, stamp,
+                                lambda blade, f=first, o=list(others): self.knife_stamp_at(blade, (f,), o))
+
+    def knife_command(self) -> None:
+        """Couteau (demande du 18/11 soir) : la forme sélectionnée en premier (trait ou forme) devient le pointeur ;
+        chaque clic coupe le long de son tracé ce qu'il traverse ; clic droit : quitter. Maj : l'ancien Couteau, d'un
+        coup (le dernier objet sélectionné coupe les autres)."""
+        if self._shift_held():
+            self.knife()
+            return
+        got = self._stamp_pick(False)
+        if got is None:
+            QMessageBox.information(self, tr('Couteau'),
+                                    tr('Sélectionnez d\'abord le trait ou la forme qui coupe : il devient le pointeur '
+                                       '(puis, au besoin, les formes à couper).'))
+            return
+        self._knife_blade = got
+        self.canvas.select([])
+        self.set_tool('knife_line')
+
+    def knife_stamp_at(self, blade, skip=(), among=None) -> int:
+        """Le couteau posé (`blade`, déjà en place) : les formes fermées qu'il traverse de part en part en morceaux
+        fermés, les traits ouverts coupés à chaque croisement ; parmi `among` (vide ou None : tout le dessin visible et
+        libre), sauf `skip`. Un pas d'annulation ; rend le nombre de morceaux. Une liste `among` suit les coupes (les
+        morceaux y remplacent la forme coupée : le clic suivant les trouve)."""
+        from ..core import knife as KN
+        if blade is None or not blade.contours:
+            return 0
+        bb = blade.bbox()
+        pool = [s for s in self.canvas._punch_targets(list(among or []), skip)
+                if (b := s.bbox()) and not (b[2] < bb[0] or b[0] > bb[2] or b[1] > bb[3] or b[3] < bb[1])]
+        closed = [s for s in pool if any(c.closed for c in s.path.contours)]
+        shut = {id(s) for s in closed}
+        opened = [(s, *KN.open_along(s.path, blade)) for s in pool if id(s) not in shut]
+        opened = [x for x in opened if x[1] is not None]
+        new, n = self._knife_parts(closed, blade)
+        if not new and not opened:
+            return 0
+        self.push_undo()
+        for s, path, k in opened:
+            s.path = path
+            n += k
+        if new:
+            if isinstance(among, list) and among:
+                cut = {s.id for s in closed if id(s) in new}
+                among[:] = [x for x in among if getattr(x, 'id', None) not in cut] + \
+                    [p for pieces in new.values() for p in pieces]
+            self._knife_apply(new, select=False)
+        self.canvas.invalidate()
+        self._on_doc_changed()
+        return n
 
     def punchout_options(self, params: dict | None = None):
         """Les réglages de l'emporte-pièce ; ils valent aussi pour l'outil en cours, et le prennent en main."""
         cur = self.punchout_spec()
         kinds = [('segment', tr('Segment : une longueur du contour')), ('rectangle', tr('Rectangle')),
                  ('cercle', tr('Cercle'))]
+        if self.last_stamp() is not None:
+            kinds.append(('forme', tr('Forme : la dernière prise pour pointeur')))
+        elif cur['kind'] == 'forme':
+            cur['kind'] = 'cercle'
         spec = [('kind', str, cur['kind'], tr('Forme de l’emporte-pièce')),
                 ('length', float, cur['length'], tr('Segment : longueur retirée (mm)')),
                 ('width', float, cur['width'], tr('Rectangle : largeur (mm)')),
@@ -16590,10 +16799,16 @@ class MainWindow(QMainWindow):
             return None
         self.settings.setValue('cad/emporte_piece', p)
         got = self.punchout_spec()
+        if got['kind'] == 'forme':
+            got['stamp'] = self.last_stamp()
         if self.canvas.tool == 'punchout':
             self.canvas.tool_obj.set_spec(got)
         else:
-            self.set_tool('punchout')
+            self._punchout_plain = True                  # la forme choisie ici, pas la sélection
+            try:
+                self.set_tool('punchout')
+            finally:
+                self._punchout_plain = False
         return got
 
     def segment_dialog(self) -> None:

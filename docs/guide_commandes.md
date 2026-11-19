@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.940.0
+# Guide des commandes — VectorDrive 0.946.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -324,7 +324,8 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Aligner H |  | Points sélectionnés à la même hauteur |
 | Aligner V |  | Points sélectionnés à la même abscisse |
 | Moyenne |  | Points sélectionnés réunis en un seul endroit : leur point moyen (puis Joindre pour souder deux bouts ouverts) |
-| Point de départ |  | Mode Point : le point sélectionné devient le départ de son contour fermé, et l'usinage commencera là |
+| Point de départ | O | Le départ d'un contour, et celui de son usinage (O, comme TypeEdit) : en Mode Point, le point sélectionné (contour ouvert : une de ses extrémités) ; sinon, un clic près d'un contour |
+| Point de départ à la souris |  | Point de départ à la souris (O) : un clic près d'un contour — ouvert : son bout le plus proche devient son départ (le sens est retourné s'il le faut) ; fermé : son point le plus proche. L'usinage commence là ; clic droit : quitter |
 | Affiner |  | Un nouveau point au milieu de chaque segment (tracé inchangé) |
 | Ajouter un point |  | Mode Point : cliquez sur le contour, un point rouge apparaît, puis ce bouton ou la touche + |
 | Simplifier |  | Moins de points, à la précision choisie : celle-ci se règle avec Ctrl ou Maj |
@@ -536,8 +537,8 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Décaler |  | Décalage des contours |
 | Rogner |  | Couper ce qui dépasse du cadre fermé sélectionné en premier, ou sinon de la plaque ; Ctrl : le type de rognage |
 | Ajuster dans le cadre |  | Mettre les objets sélectionnés à l'échelle, centrés dans le cadre sélectionné en premier |
-| Poinçonner |  | La forme fermée sélectionnée en premier troue les autres objets (traits coupés à son bord, surfaces évidées) ; Ctrl : le type de perforage |
-| Couteau |  | Couper les formes fermées sélectionnées le long du trait sélectionné en dernier (droite, polyligne, courbe ou bord d'une forme) |
+| Poinçonner |  | La forme fermée sélectionnée en premier devient le pointeur : chaque clic retire ce qu'elle couvre (des autres objets sélectionnés, sinon de tout le dessin) ; clic droit : quitter. Maj : trouer d'un coup les objets sélectionnés (Ctrl : le type de perforage) |
+| Couteau |  | La forme sélectionnée en premier (trait ou forme) devient le pointeur : chaque clic coupe le long de son tracé ce qu'il traverse ; clic droit : quitter. Maj : couper d'un coup les formes sélectionnées par le trait sélectionné en dernier |
 | Ombrage |  | Ombre pleine (extrusion) ou portée des contours fermés sélectionnés, re-modifiable au double-clic |
 | Enveloppe |  | Déformer la sélection (textes compris) en arc, arche, bombé, pincé, vague ou trapèze, re-modifiable au double-clic |
 | Enveloppe par courbes |  | Déformer les objets entre quatre courbes qui se touchent, ou dans un contour fermé. Sélectionnez les objets, puis les courbes en dernier ; re-modifiable au double-clic |
@@ -573,6 +574,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Miroir sur axe |  | Symétrie des objets par rapport au trait droit, ou aux deux marqueurs, sélectionnés en dernier ; Ctrl ou Maj : garder les originaux |
 | Rotation −90° |  |  |
 | Rotation… | Shift+R | Tourner la sélection d'un angle quelconque |
+| Rotation à la souris |  | Tourner la sélection à la souris : tirer un coin, ou le bouton rond au-dessus de son cadre (Ctrl : par pas de 15° ; Maj : garder l'original) ; le centre de rotation se déplace à la souris |
 | Déplacer… |  | Déplacer la sélection d'une distance donnée, ou en poser une copie |
 | Répéter la transformation | Ctrl+Alt+T | Refait sur la sélection le dernier déplacement, la dernière rotation ou mise à l'échelle, à la souris ou au clavier |
 | Répéter et copier | Ctrl+Alt+Shift+T | Comme Répéter la transformation, sur une copie : déplacer un objet, puis répéter autant de fois que de copies voulues |
