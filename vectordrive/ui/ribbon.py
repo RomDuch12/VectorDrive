@@ -4,63 +4,73 @@ Apparence) : taille des icônes, libellés, légendes des groupes ; réduit
 aux onglets par son petit bouton ˄ / ˅ au bout de la rangée des onglets (ou
 Ctrl+F1), et par lui seul.
 
-Jamais de défilement horizontal : quand la fenêtre est trop étroite pour un
-onglet, ses petits boutons perdent d'abord leur libellé (icône seule, le nom
-en infobulle), du groupe le plus large au plus étroit ; puis les groupes se
-replient en **familles**, de la droite vers la gauche, comme le ruban de
-TypeEdit 13 — un bouton par famille, et un clic dessus déroule la barre de
-la famille. Option (F10 > Apparence) : familles toujours repliées. Les
-libellés des grands boutons passent sur deux lignes (comme TypeEdit) : un
-onglet tient en Full HD, et s'étale tout entier sur un écran plus large."""
+Quand la fenêtre est trop étroite pour un onglet, ses petits boutons
+perdent d'abord leur libellé (icône seule, le nom en infobulle), du groupe le
+plus large au plus étroit, puis les longs groupes passent sur trois rangées ;
+s'il ne tient toujours pas, l'onglet défile de côté (la molette sur la page, la
+petite barre sous elle). Jamais de groupe replié en un bouton qui déroule une
+barre flottante (round 1094 : au clic gauche, elle passait pour un menu du clic
+droit). Les libellés des grands boutons passent sur deux lignes (comme
+TypeEdit) : un onglet tient en Full HD, et s'étale tout entier sur un écran
+plus large."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QFontMetrics, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
-SCROLL_H = 0            # plus de barre de défilement horizontale (familles repliées)
 SMALL_ROWS = 3          # petits boutons empilés par colonnes de trois, comme dans TypeEdit
 #: taille des icônes (grands et petits boutons) ; voir Ribbon.configure
 BIG_ICON = 28
 SMALL_ICON = 16
 #: tailles proposées dans les options
 ICON_SIZES = {'petites': (22, 16), 'normales': (28, 16), 'grandes': (36, 20)}
-#: repli des groupes en familles : selon la place, ou toujours
-FAMILIES = ('place', 'toujours')
 
 
-class FamilyPopup(QFrame):
-    """Barre déroulée d'une famille repliée : le contenu du groupe, sous son
-    bouton ; se referme après une commande ou un clic à côté."""
+class RibbonScroll(QScrollArea):
+    """La zone d'une page du ruban : quand l'onglet ne tient pas en largeur, la molette (n'importe où sur la page)
+    le fait défiler de côté."""
 
-    def __init__(self, group: 'RibbonGroup'):
-        super().__init__(group, Qt.WindowType.Popup)
-        self.setObjectName('ribbonFamilyPopup')
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setAutoFillBackground(True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 3, 4, 3)
-        lay.setSpacing(0)
-        self.title = QLabel(group.title.text())
-        self.title.setObjectName('ribbonGroupTitle')
-        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(self.title)
-        self.lay = lay
+    def wheelEvent(self, ev) -> None:                    # noqa: N802 (API Qt)
+        bar = self.horizontalScrollBar()
+        d = ev.angleDelta()
+        step = d.x() if abs(d.x()) > abs(d.y()) else d.y()
+        if bar.maximum() > 0 and step:
+            bar.setValue(bar.value() - step)
+            ev.accept()
+            return
+        ev.ignore()
 
-    def hold(self, body: QWidget) -> None:
-        self.lay.insertWidget(0, body, 1)
 
-    def show_under(self, button: QWidget) -> None:
-        self.adjustSize()
-        pos = button.mapToGlobal(QPoint(0, button.height()))
-        scr = button.screen().availableGeometry() if button.screen() is not None else None
-        if scr is not None:
-            pos.setX(max(scr.left(), min(pos.x(), scr.right() - self.width())))
-            if pos.y() + self.height() > scr.bottom():
-                pos.setY(button.mapToGlobal(QPoint(0, 0)).y() - self.height())
-        self.move(pos)
-        self.show()
+class _WheelGuard(QObject):
+    """Un champ du ruban (nombre, liste) sans le focus laisse la molette à l'onglet, qui défile : passer dessus en
+    faisant défiler ne change pas sa valeur ; cliqué (le focus), il la prend comme avant."""
+
+    def eventFilter(self, obj, ev):                      # noqa: N802 (API Qt)
+        if ev.type() == QEvent.Type.Wheel and isinstance(obj, QWidget) and not obj.hasFocus():
+            p = obj.parentWidget()
+            while p is not None and not isinstance(p, RibbonScroll):
+                p = p.parentWidget()
+            if p is not None:
+                p.wheelEvent(ev)
+                return True
+        return False
+
+
+_GUARD: list = []
+
+
+def _guard_wheel(root: QWidget) -> None:
+    """Les champs (nombres, listes) sous `root` : la molette sans le focus fait défiler l'onglet."""
+    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox
+    if not _GUARD:
+        _GUARD.append(_WheelGuard())
+    for w in root.findChildren(QAbstractSpinBox) + root.findChildren(QComboBox):
+        if not w.property('ribbon_wheel'):
+            w.setProperty('ribbon_wheel', True)
+            w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # la molette seule ne lui donne plus le focus
+            w.installEventFilter(_GUARD[0])
 
 
 class ViewSwitch(QToolButton):
@@ -129,22 +139,12 @@ class RibbonGroup(QFrame):
         lay.setContentsMargins(4, 2, 4, 0)
         lay.setSpacing(0)
         self._lay = lay
-        #: contenu du groupe (ses boutons) ; replié, il passe dans la barre déroulée
+        #: contenu du groupe (ses boutons)
         self.body = QWidget(self)
         self._row = QHBoxLayout(self.body)
         self._row.setContentsMargins(0, 0, 0, 0)
         self._row.setSpacing(1)
         lay.addWidget(self.body, 1)
-        #: bouton de la famille (groupe replié)
-        self.family = QToolButton(self)
-        self.family.setObjectName('ribbonFamily')
-        self.family.setAutoRaise(True)
-        self.family.setProperty('ribbon_family', True)
-        self.family.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        self.family.setText(f'{title} ▾')
-        self.family.clicked.connect(self.unroll)
-        self.family.hide()
-        lay.addWidget(self.family, 1)
         lab = QLabel(title)
         lab.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lab.setObjectName('ribbonGroupTitle')
@@ -154,9 +154,7 @@ class RibbonGroup(QFrame):
         self._col: QVBoxLayout | None = None
         #: petits éléments par colonne (le formulaire de Mise en forme : deux rangées, comme le Rapido de TypeEdit)
         self.rows = SMALL_ROWS
-        self.collapsed = False
         self.captions = True
-        self.popup: FamilyPopup | None = None
         #: (élément, grand ?) dans l'ordre d'ajout — None : petit contrôle
         self._entries: list = []
         #: compact : grands boutons rendus petits, sur trois rangées (un long
@@ -177,7 +175,7 @@ class RibbonGroup(QFrame):
         #: petits boutons montrés en grands par le mode simple (groupe qui n'en a qu'un ou deux)
         self._promoted: set = set()
 
-    # --- famille repliée ----------------------------------------------------------------
+    # --- boutons ----------------------------------------------------------------------------
     def buttons(self) -> list:
         """Boutons de commande du groupe, dans l'ordre (celui de la disposition expert, même rangé à nouveau)."""
         out = []
@@ -292,60 +290,10 @@ class RibbonGroup(QFrame):
         except RuntimeError:                              # bouton détruit
             pass
 
-    def _family_look(self) -> None:
-        """Icône de la famille : celle du premier grand bouton ; infobulle :
-        les commandes qu'elle regroupe."""
-        acts = [b.defaultAction() for b in self.buttons()]
-        big = [b.defaultAction() for b in self.buttons() if b.property('ribbon_big')]
-        icon = next((a.icon() for a in big + acts if not a.icon().isNull()), None)
-        if icon is not None:
-            self.family.setIcon(icon)
-        self.family.setIconSize(QSize(BIG_ICON, BIG_ICON))
-        names = [a.text().replace('&', '') for a in acts]
-        self.family.setToolTip(self.title.text() + ('\n' + '\n'.join('• ' + n for n in names[:14]) if names else '')
-                               + ('\n…' if len(names) > 14 else ''))
-
-    def set_collapsed(self, on: bool) -> None:
-        """Replie le groupe en famille (un bouton) ou le déplie."""
-        on = bool(on)
-        if on == self.collapsed:
-            return
-        self.collapsed = on
-        if on:
-            self.set_iconic(False)                       # barre déroulée : la place des libellés
-            if self.popup is None:
-                self.popup = FamilyPopup(self)
-            self.popup.title.setVisible(self.captions)
-            self._family_look()
-            self.popup.hold(self.body)
-            self.body.show()
-            self.family.show()
-            self.title.hide()
-        else:
-            if self.popup is not None:
-                self.popup.hide()
-            self._lay.insertWidget(0, self.body, 1)
-            self.body.show()
-            self.family.hide()
-            self.title.setVisible(self.captions)
-
-    def unroll(self) -> None:
-        """Déroule la barre de la famille sous son bouton."""
-        if self.collapsed and self.popup is not None:
-            self.popup.show_under(self.family)
-
-    def _command_clicked(self) -> None:
-        if self.popup is not None and self.popup.isVisible():
-            self.popup.hide()
-
     def expanded_width(self) -> int:
         m = self._lay.contentsMargins()
         return max(self.body.sizeHint().width(), self.title.sizeHint().width() if self.captions else 0) \
             + m.left() + m.right()
-
-    def collapsed_width(self) -> int:
-        m = self._lay.contentsMargins()
-        return self.family.sizeHint().width() + m.left() + m.right()
 
     def _stack(self, w: QWidget) -> None:
         """Petit élément : dans la colonne en cours (trois au plus)."""
@@ -430,7 +378,6 @@ class RibbonGroup(QFrame):
         # Qt remet le texte de l'action à chaque changement : libellé recoupé après lui
         action.changed.connect(lambda b=b: _rewrap(b))
         action.changed.connect(lambda b=b: self._follow(b))        # commande cachée ou montrée : son bouton aussi
-        b.triggered.connect(lambda _a: self._command_clicked())   # famille déroulée : refermée après la commande
         return b
 
     def add_widget(self, w: QWidget) -> None:
@@ -514,8 +461,8 @@ class Ribbon(QTabWidget):
         self._page_h = 0
         self.labels = True
         self.captions = True
-        #: repli des groupes en familles : 'place' (quand la place manque) ou 'toujours'
-        self.families = 'place'
+        #: place réservée sous les pages à la barre de défilement (sa hauteur quand l'onglet affiché déborde, sinon 0)
+        self._bar = 0
         #: mode simple : fonction(commande) → son bouton est-il montré ? None (mode expert) : tous
         self.mode_filter = None
         self._refreshing = False
@@ -568,8 +515,8 @@ class Ribbon(QTabWidget):
 
     def add_tab(self, title: str) -> 'RibbonPage':
         """Page de ruban, à la fin des onglets de gauche (avant le dernier,
-        FAO, s'il est fixé) ; ses groupes se replient en familles si la
-        fenêtre est trop étroite (jamais de défilement horizontal)."""
+        FAO, s'il est fixé) ; trop étroite pour la fenêtre, elle défile de
+        côté."""
         i = self.indexOf(self.last_left) if self.last_left is not None else -1
         return self.insert_tab(i if i >= 0 else self.count(), title)
 
@@ -678,7 +625,7 @@ class Ribbon(QTabWidget):
         self.setCurrentIndex(i)
         self._sync_right()
 
-    # --- familles -------------------------------------------------------------------------
+    # --- pages ------------------------------------------------------------------------------
     def page(self, i: int) -> 'RibbonPage | None':
         sc = self.widget(i)
         p = sc.widget() if isinstance(sc, QScrollArea) else None
@@ -793,15 +740,31 @@ class Ribbon(QTabWidget):
         widget.show()
 
     def fit_current(self) -> None:
-        """Groupes de l'onglet affiché repliés en familles ce qu'il faut pour
-        tenir dans la largeur (tous, avec l'option « toujours »)."""
+        """L'onglet affiché ajusté à la largeur (libellés, rangées) ; s'il ne tient toujours pas, il défile de côté
+        et la petite barre a sa place sous lui. Jamais de groupe replié en un bouton à barre déroulée (round 1094)."""
         i = self.currentIndex()
         p = self.page(i) if i >= 0 else None
         if p is None:
             return
         sc = self.widget(i)
-        avail = sc.viewport().width() if sc.viewport().width() > 40 else self.width() - 4
-        p.fit(avail, always=self.families == 'toujours')
+        avail = sc.width() if sc.width() > 40 else self.width() - 4
+        p.fit(avail)
+        p.layout().activate()
+        self._set_bar(sc.horizontalScrollBar().sizeHint().height() if p.sizeHint().width() > avail else 0)
+
+    def _set_bar(self, bar: int) -> None:
+        """La barre de défilement sous les pages : montrée, et sa place prise (les légendes des groupes restent
+        visibles), seulement quand l'onglet affiché déborde."""
+        pol = Qt.ScrollBarPolicy.ScrollBarAsNeeded if bar else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        for k in range(self.count()):
+            sc = self.widget(k)
+            if isinstance(sc, QScrollArea):
+                sc.setHorizontalScrollBarPolicy(pol)
+                if self._page_h:
+                    sc.setFixedHeight(self._page_h + bar + 3)
+        if bar != self._bar:
+            self._bar = bar
+            self._apply_height()
 
     def resizeEvent(self, ev) -> None:
         super().resizeEvent(ev)
@@ -814,26 +777,25 @@ class Ribbon(QTabWidget):
     def insert_tab(self, index: int, title: str) -> 'RibbonPage':
         page = RibbonPage()
         page.ribbon = self
-        scroll = QScrollArea()
+        scroll = RibbonScroll()
         scroll.setWidget(page)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.horizontalScrollBar().setFixedHeight(6)              # seulement si tout replie ne tient pas
+        # la barre : seulement quand l'onglet affiché déborde (`_set_bar`) ; la molette le fait défiler aussi
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded if self._bar
+                                            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.insertTab(index, scroll, title)
         return page
 
     def finalize(self) -> None:
         """À appeler une fois les pages remplies : hauteur commune calée sur
-        la page la plus haute (groupes dépliés), puis groupes repliés en
-        familles selon la largeur."""
+        la page la plus haute, puis l'onglet affiché ajusté à la largeur."""
         pages = [self.widget(i) for i in range(self.count())]
         for g in self.findChildren(RibbonGroup):
             g.captions = self.captions
             g.labels = self.labels
-            g.set_collapsed(False)                           # hauteur mesurée groupes dépliés
-            g.set_compact(False)
+            g.set_compact(False)                             # hauteur mesurée grands boutons
             g.title.setVisible(self.captions)
         for sc in pages:
             lay = sc.widget().layout()
@@ -847,32 +809,28 @@ class Ribbon(QTabWidget):
             # la page garde sa hauteur : étirée à celle de la zone, son bas (les
             # légendes des groupes) passerait sous la barre de défilement
             sc.widget().setFixedHeight(h)
-            sc.setFixedHeight(h + SCROLL_H + 3)
+            sc.setFixedHeight(h + self._bar + 3)
         self._page_h = h
         self.setMaximumHeight(16777215)
         for b in self.findChildren(QToolButton):
             if b.property('ribbon_big') is not None and not b.property('ribbon_hooked'):
                 b.setProperty('ribbon_hooked', True)
                 b.clicked.connect(self._command_done)
+        for sc in pages:                                 # la molette sur un champ sans le focus : l'onglet défile
+            _guard_wheel(sc.widget())
         self._apply_height()
         self.refresh_visibility()                        # ruban refait : boutons, groupes et onglets selon le mode
 
-    def configure(self, *, big: int = 28, small: int = 16, labels: bool = True, captions: bool = True,
-                  families: str | None = None) -> None:
-        """Taille des icônes, libellés sous les boutons, légendes des groupes,
-        repli en familles ('place' ou 'toujours')."""
+    def configure(self, *, big: int = 28, small: int = 16, labels: bool = True, captions: bool = True) -> None:
+        """Taille des icônes, libellés sous les boutons, légendes des groupes."""
         global BIG_ICON, SMALL_ICON
         BIG_ICON, SMALL_ICON = int(big), int(small)
         self.labels = labels
         self.captions = bool(captions)
-        if families in FAMILIES:
-            self.families = families
         for b in self.findChildren(QToolButton):
             kind = b.property('ribbon_big')
             if kind is not None:
                 style_button(b, bool(kind), labels)
-            elif b.property('ribbon_family'):
-                b.setIconSize(QSize(BIG_ICON, BIG_ICON))
         if self.count():
             self.finalize()
 
@@ -910,7 +868,7 @@ class Ribbon(QTabWidget):
             # des onglets (thème, densité) change la hauteur de la barre
             self.setMinimumHeight(0)
             self.setMaximumHeight(16777215)
-            self.setFixedHeight(max(self.sizeHint().height(), tb + self._page_h + SCROLL_H + 5))
+            self.setFixedHeight(max(self.sizeHint().height(), tb + self._page_h + self._bar + 5))
 
 
 class RibbonPage(QWidget):
@@ -982,20 +940,19 @@ class RibbonPage(QWidget):
                 sep.setVisible(on)
         return some or not groups
 
-    def fit(self, avail: int, *, always: bool = False) -> list[RibbonGroup]:
-        """Replie en familles, de la droite vers la gauche, les groupes qu'il
-        faut pour que la page tienne dans `avail` pixels (tous avec
-        `always`) ; rend les groupes repliés."""
+    def fit(self, avail: int) -> bool:
+        """La page ajustée à `avail` pixels : petits boutons en icônes seules, du groupe le plus large au plus étroit,
+        puis les longs groupes sur trois rangées ; la place restée rend les libellés. Aucun groupe replié (round
+        1094) : rend vrai si la page tient, sinon elle défile de côté."""
         gs = [g for g in self.groups() if not g.vacant]  # un groupe sans rien à montrer est caché : il ne compte pas
         if not gs:
-            return []
-        if always:
-            want = [len(g.buttons()) > 0 for g in gs]
-        else:
-            m = self._lay.contentsMargins()
-            fixed = m.left() + m.right() + sum(
-                w.sizeHint().width() for w in (self._lay.itemAt(i).widget() for i in range(self._lay.count()))
-                if w is not None and not isinstance(w, RibbonGroup) and not w.isHidden())
+            return True
+        m = self._lay.contentsMargins()
+        fixed = m.left() + m.right() + sum(
+            w.sizeHint().width() for w in (self._lay.itemAt(i).widget() for i in range(self._lay.count()))
+            if w is not None and not isinstance(w, RibbonGroup) and not w.isHidden())
+        self.setUpdatesEnabled(False)
+        try:
             for g in gs:                                 # largeur pleine d'abord
                 g.set_compact(False)
                 g.set_iconic(False)
@@ -1010,8 +967,7 @@ class RibbonPage(QWidget):
                     w = gs[i].expanded_width()
                     total -= exp[i] - w
                     exp[i] = w
-            # un long groupe (beaucoup de grands boutons) trop large : petits
-            # boutons sur trois rangées, avant tout repli en famille
+            # un long groupe (beaucoup de grands boutons) trop large : petits boutons sur trois rangées
             for i in sorted(range(len(gs)), key=lambda k: -exp[k]):
                 if total <= avail - 2:
                     break
@@ -1023,20 +979,8 @@ class RibbonPage(QWidget):
                         exp[i] = w
                     else:
                         gs[i].set_compact(False)
-            col = [g.collapsed_width() for g in gs]
-            want = [False] * len(gs)
-            for i in range(len(gs) - 1, -1, -1):
-                if total <= avail - 2:
-                    break
-                if col[i] < exp[i] and gs[i].buttons():
-                    want[i] = True
-                    total -= exp[i] - col[i]
-            for i in range(len(gs)):                     # place rendue par un grand groupe replié
-                if want[i] and total + exp[i] - col[i] <= avail - 2:
-                    want[i] = False
-                    total += exp[i] - col[i]
             for i in range(len(gs)):                     # place restée : libellés rendus, de gauche à droite
-                if want[i] or not gs[i].iconic:
+                if not gs[i].iconic:
                     continue
                 gs[i].set_iconic(False)
                 w = gs[i].expanded_width()
@@ -1045,11 +989,7 @@ class RibbonPage(QWidget):
                     exp[i] = w
                 else:
                     gs[i].set_iconic(True)
-        self.setUpdatesEnabled(False)
-        try:
-            for g, w in zip(gs, want):
-                g.set_collapsed(w)
         finally:
             self.setUpdatesEnabled(True)
         self._lay.invalidate()
-        return [g for g, w in zip(gs, want) if w]
+        return total <= avail - 2

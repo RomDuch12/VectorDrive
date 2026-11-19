@@ -1,6 +1,6 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 950, 0, 0), prodvers=(0, 950, 0, 0),
+    filevers=(0, 952, 0, 0), prodvers=(0, 952, 0, 0),
     mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0,
     date=(0, 0)),
   kids=[
@@ -8,11 +8,11 @@ VSVersionInfo(
       StringTable('040C04B0', [
         StringStruct('CompanyName', 'BFM'),
         StringStruct('FileDescription', 'VectorDrive — dessin pour la gravure'),
-        StringStruct('FileVersion', '0.950.0'),
+        StringStruct('FileVersion', '0.952.0'),
         StringStruct('InternalName', 'VectorDrive'),
         StringStruct('OriginalFilename', 'VectorDrive.exe'),
         StringStruct('ProductName', 'VectorDrive'),
-        StringStruct('ProductVersion', '0.950.0')])
+        StringStruct('ProductVersion', '0.952.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [1036, 1200])])
   ]

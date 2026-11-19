@@ -132,7 +132,7 @@ class TestWindow(_Case):
         self.assertEqual(acts, [self.w.A[k] for k in ('cam3d_pick_faces', 'step_similar', 'step_parallel',
                                                      'step_coaxial', 'step_tangent', 'step_body_faces', 'step_invert',
                                                      'step_measure', 'cam3d_clear')])
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
 
     def test_similar_and_measure(self):
         w = self.w

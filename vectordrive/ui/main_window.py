@@ -4117,8 +4117,7 @@ class MainWindow(QMainWindow):
         st = self.settings
         big, small = ICON_SIZES.get(value(st, 'vue/ruban_icones'), ICON_SIZES['normales'])
         self.ribbon.configure(big=big, small=small, labels=value(st, 'vue/ruban_libelles'),
-                              captions=value(st, 'vue/legendes') != 'aucune',
-                              families=value(st, 'vue/ruban_familles'))
+                              captions=value(st, 'vue/legendes') != 'aucune')
         self.ribbon.set_collapsed(value(st, 'vue/ruban_reduit'))
         act = self.A['ribbon_collapse']
         act.blockSignals(True)
@@ -5331,6 +5330,16 @@ class MainWindow(QMainWindow):
                         a = A.get(TE_ACTIONS.get(c, ''))
                         if a is A['view_3d'] or a is A['view_2d'] or a is A['view_toggle']:
                             a = None                         # 2D / 3D : le va-et-vient de la rangée des onglets
+                        pal = self.PALETTES.get(TE_ACTIONS.get(c, ''))
+                        if a is not None and pal is not None:
+                            # une palette de TypeEdit (Manipulation, Alignement…) : ses commandes dans le groupe
+                            # même, jamais un bouton qui ouvre un menu à la souris (round 1094)
+                            for k in pal[1]:
+                                b = A.get(k)
+                                if b is not None and id(b) not in seen:
+                                    seen.add(id(b))
+                                    items.append((b, False))
+                            continue
                     if a is not None and id(a) not in seen:
                         seen.add(id(a))
                         items.append((a, big))
@@ -8164,7 +8173,7 @@ class MainWindow(QMainWindow):
         doc.plate = _copy.deepcopy(src.plate)
         doc.extra = _copy.deepcopy(src.extra) if isinstance(src.extra, dict) else src.extra
         if isinstance(doc.extra, dict):
-            for k in ('vnd_source', 'vnd_signature'):        # la copie n'est plus le VND lu
+            for k in ('vnd_source', 'vnd_signature', 'ia_credits'):   # plus le VND lu ; ses dépenses d'IA restent
                 doc.extra.pop(k, None)
             from ..io import model3d
             src3d = model3d.source_of(src)
@@ -9369,6 +9378,7 @@ class MainWindow(QMainWindow):
             registry.save_document(doc, path)
             return companion.sync(doc, path, mode=mode) if not path.lower().endswith('.vdz') else (None, [])
         from .progress import Cancelled, run
+        self._writing_doc = True                         # l'assistant attend pour noter une dépense (doc.extra)
         try:
             comp, why = run(self, tr('Enregistrement de {0}').format(pathlib.Path(path).name), write)
         except Cancelled:                                # l'écriture se termine quand même, en arrière-plan
@@ -9378,6 +9388,8 @@ class MainWindow(QMainWindow):
         except Exception as ex:
             QMessageBox.critical(self, tr('Enregistrement impossible'), str(ex))
             return False
+        finally:
+            self._writing_doc = False
         self.modified = False
         self._title()
         msg = tr('Enregistré : {0}').format(path)
@@ -12758,24 +12770,50 @@ class MainWindow(QMainWindow):
     }
 
     def show_palette(self, key: str):
-        """Palette de TypeEdit : menu des commandes équivalentes, sous la
-        souris (sans bloquer) ; rend le menu."""
+        """Palette de TypeEdit appelée hors du ruban (son raccourci, Chercher une commande) : une petite fenêtre
+        flottante de ses commandes, près de la souris, ouverte jusqu'à sa croix comme les palettes de TypeEdit — plus
+        un menu à la souris, qu'on prenait pour celui du clic droit (round 1094 ; dans le ruban, ses commandes sont
+        dans le groupe même) ; rend la fenêtre."""
+        from PySide6.QtCore import QPoint
         from PySide6.QtGui import QCursor
-        from PySide6.QtWidgets import QMenu
+        from PySide6.QtWidgets import QGridLayout, QSizePolicy, QToolButton, QWidget
         title, keys = self.PALETTES[key]
         old = getattr(self, '_last_palette', None)
-        if old is not None:                               # la palette d'avant : libérée (une seule gardée)
+        if old is not None:                               # la palette d'avant : fermée (une seule ouverte)
             try:
+                old.close()
                 old.deleteLater()
             except RuntimeError:
                 pass
-        m = QMenu(tr(title), self)
-        for k in keys:
-            if k in self.A:
-                m.addAction(self.A[k])
-        self._last_palette = m
-        m.popup(QCursor.pos())
-        return m
+        pal = QWidget(self, Qt.WindowType.Tool)
+        pal.setObjectName('tePalette')
+        pal.setWindowTitle(tr(title))
+        pal.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        grid = QGridLayout(pal)
+        grid.setContentsMargins(4, 4, 4, 4)
+        grid.setSpacing(1)
+        acts = [self.A[k] for k in keys if k in self.A]
+        cols = 3 if len(acts) > 12 else 2
+        for i, a in enumerate(acts):
+            b = QToolButton(pal)
+            b.setDefaultAction(a)
+            b.setAutoRaise(True)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            grid.addWidget(b, i // cols, i % cols)
+            pal.addAction(a)
+        pal.adjustSize()
+        pos = QCursor.pos() + QPoint(12, 12)
+        from PySide6.QtGui import QGuiApplication
+        where = QGuiApplication.screenAt(QCursor.pos()) or self.screen()   # l'écran de la souris
+        scr = where.availableGeometry() if where is not None else None
+        if scr is not None:
+            pos.setX(max(scr.left(), min(pos.x(), scr.right() - pal.width())))
+            pos.setY(max(scr.top(), min(pos.y(), scr.bottom() - pal.height() - 30)))
+        pal.move(pos)
+        pal.show()
+        self._last_palette = pal
+        return pal
 
     def wrap_drawing(self, kind: str = 'cylindre', spec=None) -> list:
         """Enrouler le dessin (TypeEdit, onglet CAO) : copies des objets

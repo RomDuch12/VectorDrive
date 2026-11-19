@@ -256,7 +256,7 @@ class ExportDialog(QDialog):
 
 
 #: données du dessin qui ne suivent pas un export de la sélection (FAO des autres objets, lecture du VND)
-_NOT_EXPORTED = ('fao', 'fao_journal', 'work_time', 'compagnon', 'vnd_signature', 'vnd_partial')
+_NOT_EXPORTED = ('fao', 'fao_journal', 'work_time', 'compagnon', 'vnd_signature', 'vnd_partial', 'ia_credits')
 
 
 def selection_document(src, items: list):

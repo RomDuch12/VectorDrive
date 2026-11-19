@@ -50,7 +50,7 @@ class TestEdit(unittest.TestCase):
         page = w.ribbon.page(tab_index(w.ribbon, 'Design STEP'))
         gen = next(g for g in page.groups() if g.title.text() == 'Générateurs')
         self.assertIn(w.A['stepgen_edit'], [b.defaultAction() for b in gen.buttons()])
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
 
     def test_replace_in_place(self):
         w = self.w

@@ -20,7 +20,8 @@ from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-#: groupes de l'onglet Mise en forme repliés, la fenêtre à la largeur donnée (processus à part, vraies polices)
+#: l'onglet Mise en forme déborde-t-il, la fenêtre à la largeur donnée (processus à part, vraies polices) ;
+#: depuis le round 1094, plus de groupe replié : il défilerait
 MEASURE = r'''
 import json, sys
 sys.path.insert(0, sys.argv[1])
@@ -40,7 +41,7 @@ for _ in range(5):
     app.processEvents()
 r.fit_current()
 app.processEvents()
-folded = [g.title.text() for g in r.page(i).groups() if g.collapsed]
+folded = [] if r.page(i).sizeHint().width() <= r.widget(i).width() else ['déborde']
 w.typing_tool().finish()
 w.modified = False
 w.close()

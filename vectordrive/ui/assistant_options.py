@@ -9,7 +9,8 @@ import pathlib
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import (QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from ..i18n import tr
 
@@ -104,6 +105,30 @@ class KeyEdit(QLineEdit):
         super().keyPressEvent(ev)
 
 
+def _price_text(v: float) -> str:
+    return f'{v:.12g}'
+
+
+def same_prices(a: dict, b: dict) -> bool:
+    return set(a) == set(b) and all(abs(x - y) < 1e-12 for k in a for x, y in zip(a[k], b[k]))
+
+
+def read_prices(table: QTableWidget) -> dict:
+    """Les prix du tableau des options : {"fournisseur:modèle": (entrée, sortie, cache)} ; les lignes sans nom (avec
+    « : ») ou aux nombres illisibles sont laissées."""
+    out = {}
+    for r in range(table.rowCount()):
+        cells = [table.item(r, c).text().strip() if table.item(r, c) is not None else '' for c in range(4)]
+        if ':' not in cells[0] or not cells[0].split(':', 1)[1].strip():
+            continue
+        try:
+            p = tuple(max(0.0, float((t or '0').replace(',', '.').replace(' ', ''))) for t in cells[1:])
+        except ValueError:
+            continue
+        out[cells[0]] = p
+    return out
+
+
 def _panel(parent):
     """Le panneau de l'assistant de la fenêtre `parent`, s'il est fait."""
     dock = getattr(parent, 'dock_assistant', None)
@@ -192,6 +217,61 @@ def build(dlg, form, parent=None) -> None:
     form.addRow(box)
     _searchable(dlg, form, box, 'Clés d’API', tr('Clés d’API'), 'clé cle api key', *PROVIDERS)
 
+    # --- les crédits : le prix des modèles ------------------------------------------------------------------
+    from ..agent import credits as CR
+    box = QGroupBox(tr('Crédits : prix des modèles'))
+    lay = QVBoxLayout(box)
+    note = QLabel(tr('Par million de jetons, dans la devise réglée plus haut. D’office, les prix publics relevés le '
+                     '19/11/2026 (Mistral : le plus haut des prix trouvés) : à vérifier sur la page du fournisseur. '
+                     'Un modèle sans prix compte ses jetons seulement. Les dépenses de la session et du dessin '
+                     'affiché sont sous la discussion ; celles d’un dessin sont gardées dans son .vdz.'))
+    note.setWordWrap(True)
+    lay.addWidget(note)
+    table = QTableWidget(0, 4)
+    table.setHorizontalHeaderLabels([tr('Fournisseur:modèle'), tr('Prix en entrée'), tr('Prix en sortie'),
+                                     tr('Prix en entrée lue en cache')])
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    table.verticalHeader().hide()
+    table.setMinimumHeight(160)
+
+    def add_row(key: str = '', p=(0.0, 0.0, 0.0)) -> int:
+        r = table.rowCount()
+        table.insertRow(r)
+        table.setItem(r, 0, QTableWidgetItem(key))
+        for c, v in enumerate(p, 1):
+            table.setItem(r, c, QTableWidgetItem(_price_text(v)))
+        return r
+
+    def fill(prices: dict) -> None:
+        table.setRowCount(0)
+        for k, p in prices.items():
+            add_row(k, p)
+
+    def new_row(_=False) -> None:
+        r = add_row(PROVIDERS and 'mistral:', (0.0, 0.0, 0.0))
+        table.setCurrentCell(r, 0)
+        table.editItem(table.item(r, 0))
+
+    def drop_row(_=False) -> None:
+        if table.currentRow() >= 0:
+            table.removeRow(table.currentRow())
+    fill(CR.prices(st))
+    lay.addWidget(table)
+    row = QHBoxLayout()
+    for text, fn in ((tr('Ajouter un modèle'), new_row), (tr('Retirer la ligne'), drop_row),
+                     (tr('Prix d’office'), lambda _=False: fill(dict(CR.PRICES)))):
+        b = QPushButton(text)
+        b.setAutoDefault(False)
+        b.clicked.connect(fn)
+        row.addWidget(b)
+    row.addStretch(1)
+    lay.addLayout(row)
+    dlg.assistant_prices = table
+    prices_before = CR.prices(st)
+    form.addRow(box)
+    _searchable(dlg, form, box, 'Crédits : prix des modèles', tr('Crédits : prix des modèles'),
+                'credits crédits prix jetons tokens cout coût mistral')
+
     # --- les consignes personnelles -------------------------------------------------------------------------
     box = QGroupBox(tr('Consignes personnelles'))
     lay = QVBoxLayout(box)
@@ -259,6 +339,9 @@ def build(dlg, form, parent=None) -> None:
 
     def keep():
         st.setValue(KEY_INSTRUCTIONS, dlg.assistant_instructions.toPlainText().strip()[:MAX_INSTRUCTIONS])
+        now_prices = read_prices(dlg.assistant_prices)
+        if not same_prices(now_prices, prices_before):   # inchangés : les réglages n'en gardent pas (prix d'office)
+            CR.save_prices(st, now_prices)
         text = dlg.assistant_memory.toPlainText()
         if text == before:
             return

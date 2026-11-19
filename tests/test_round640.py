@@ -53,16 +53,15 @@ class TestIconic(unittest.TestCase):
         full = sum(g.expanded_width() for g in gs)
         b = gs[0].buttons()[3]
         self.assertEqual(b.toolButtonStyle(), Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.assertEqual(page.fit(full - 20), [])                                 # rien replié…
+        self.assertTrue(page.fit(full - 20))                                      # tient…
         self.assertTrue(gs[0].iconic or gs[1].iconic)                             # … les plus larges en icônes
         iconic = [g for g in gs if g.iconic][0]
         self.assertEqual(iconic.buttons()[3].toolButtonStyle(), Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.assertTrue(iconic.buttons()[0].toolButtonStyle(), Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        folded = page.fit(10)
-        self.assertEqual(len(folded), 3)
-        self.assertFalse(any(g.iconic for g in gs))                               # barre déroulée : avec libellés
+        self.assertFalse(page.fit(10))                                            # trop étroit : la page défile
+        self.assertTrue(all(g.iconic for g in gs if g.small_count()))             # en icônes seules, rien replié
         page.fit(100000)
-        self.assertFalse(any(g.iconic or g.collapsed for g in gs))                # place revenue : tout rendu
+        self.assertFalse(any(g.iconic for g in gs))                               # place revenue : tout rendu
         r.deleteLater()
 
 

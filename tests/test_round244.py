@@ -83,7 +83,6 @@ class TestCompactGroup(unittest.TestCase):
         for a in acts:
             g.add(a, big=True)
         r.configure(labels=False)                                # icônes seules (essai sans polices)
-        g.set_collapsed(False)
         g.set_compact(False)
         full = g.expanded_width()
         g.set_compact(True)
@@ -92,13 +91,14 @@ class TestCompactGroup(unittest.TestCase):
         self.assertLess(small, full / 2)
         page.fit((full + small) // 2)
         self.assertTrue(g.compact)
-        self.assertFalse(g.collapsed)                             # pas replié en un seul bouton
+        self.assertIs(g.body.parent(), g)                         # pas replié en un seul bouton
         self.assertLess(g.expanded_width(), full)
         self.assertEqual(len(g.buttons()), 30)
         page.fit(full + 100)
         self.assertFalse(g.compact)                               # la place revenue : grands boutons
-        page.fit(60)
-        self.assertTrue(g.collapsed)                              # vraiment trop étroit : famille
+        self.assertFalse(page.fit(60))                            # vraiment trop étroit : la page défile (1094)
+        self.assertTrue(g.compact)
+        self.assertIs(g.body.parent(), g)                         # jamais replié en famille
         r.deleteLater()
 
 

@@ -126,7 +126,7 @@ class TestRibbonAndDrawing(unittest.TestCase):
         for k in ('stepgen', 'stepgen_visserie', 'stepgen_transmission', 'stepgen_brut', 'stepgen_moule',
                   'step_depot', 'step_depot_folder'):
             self.assertIn(A[k], acts, k)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
 
     def test_dialog_from_window(self):
         w = self.w

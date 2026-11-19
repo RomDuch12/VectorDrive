@@ -110,7 +110,7 @@ class TestWindow(_Case):
         from tests.test_round672 import full_hd, tab_index
         w = self.w
         page = w.ribbon.page(tab_index(w.ribbon, 'Design STEP'))
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         self.assertEqual(w.step_tangent(), [])                            # pas de vue 3D : dit
         self.assertIn('vue 3D', w.statusBar().currentMessage())
         self.assertTrue(w.open_path(self.parts()))

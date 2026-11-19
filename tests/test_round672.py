@@ -84,7 +84,7 @@ class TestRibbons(unittest.TestCase):
         r = self.w.ribbon
         for title in ('FAO 2D', 'FAO 3D'):
             page = r.page(tab_index(r, title))
-            self.assertEqual(page.fit(full_hd()), [], title)            # tient en 1920 sans replier de groupe
+            self.assertTrue(page.fit(full_hd()), title)                 # tient en 1920 (sans défiler, 1094)
 
     def test_ribbon_follows_view(self):
         w, r = self.w, self.w.ribbon

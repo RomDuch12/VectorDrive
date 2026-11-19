@@ -71,7 +71,8 @@ def save(doc, name: str) -> pathlib.Path:
     keep, extra, marks = doc.source_path, doc.extra, [(L, L.extra) for L in doc.layers]
     try:
         doc.source_path = ''
-        doc.extra = {k: v for k, v in extra.items() if k not in (model3d.SOURCE_KEY, 'vnd_source', 'vnd_signature')}
+        doc.extra = {k: v for k, v in extra.items()             # (pas les dépenses de l'assistant du dessin)
+                     if k not in (model3d.SOURCE_KEY, 'vnd_source', 'vnd_signature', 'ia_credits')}
         for L, e in marks:
             L.extra = {k: v for k, v in e.items() if k != surface2d.KEY}
         native.write(doc, f)

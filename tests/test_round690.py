@@ -118,7 +118,7 @@ class TestWindow(unittest.TestCase):
         page = w.ribbon.page(tab_index(w.ribbon, 'Design STEP'))
         acts = [b.defaultAction() for g in page.groups() if g.title.text() == 'Modifier un STEP' for b in g.buttons()]
         self.assertIn(w.A['step_pattern'], acts)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         d = w.step_pattern(self.src, exec_dialog=False, picks=[0])
         self.assertTrue(d.dx.isEnabled() and not d.angle.isEnabled())
         d.mode.setCurrentIndex(1)

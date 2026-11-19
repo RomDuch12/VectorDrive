@@ -204,7 +204,7 @@ class TestWindow(_Case):
         page = r.page(tab_index(r, 'Design STEP'))
         acts = [b.defaultAction() for g in page.groups() if g.title.text() == 'Générateurs' for b in g.buttons()]
         self.assertIn(self.w.A['stepgen_drawing'], acts)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
 
     def test_from_selection(self):
         from vectordrive.core.document import Shape

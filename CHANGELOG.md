@@ -7160,3 +7160,21 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - « Au-dessous de » un panneau en onglets : les deux quittent les onglets et se rangent au-dessus d’eux.
 - **Clic droit sur une ligne du tableau des panneaux** (fenêtre d’une colonne, ou en tête du menu d’un panneau) : le menu de ce panneau — Au-dessus de, Au-dessous de, Sortir des onglets, Détacher seul…
 - « Détacher » devient **« Détacher seul »** : lui seul quitte la colonne, les autres onglets restent.
+### v0.951.0 — Ruban : plus de menu au clic gauche (groupes repliés, palettes TypeEdit)
+
+- **Plus aucun groupe du ruban ne se replie en un bouton** (« Transformation ▾ », « Alignement ▾ »…) dont le clic gauche ouvrait une barre flottante, qu’on prenait pour un menu du clic droit : sur aucun onglet, à aucune largeur de fenêtre.
+- Fenêtre trop étroite : les petits boutons perdent d’abord leur libellé (le nom en infobulle), les longs groupes passent sur trois rangées, comme avant ; s’il ne tient toujours pas, **l’onglet défile de côté** — la molette n’importe où sur le ruban, ou la petite barre sous lui, montrée seulement quand l’onglet déborde (sa place est prise alors : les légendes des groupes restent visibles).
+- **Disposition TypeEdit 13** : les boutons de palette (Manipulation / Transformation, Alignement, Formes géométriques, Effets spéciaux, 3D, Métiers) ouvraient au clic gauche un menu à la souris : **leurs commandes sont maintenant directement dans le groupe du ruban**. Appelée par son raccourci ou par « Chercher une commande », une palette s’ouvre en petite fenêtre flottante, qui reste ouverte jusqu’à sa croix (comme dans TypeEdit), plus en menu.
+- La molette au-dessus d’un champ du ruban (nombre, liste) qui n’a pas le focus fait défiler l’onglet sans changer sa valeur ; cliqué, le champ la prend comme avant.
+- L’option « Groupes du ruban » (repliés en familles quand la place manque, ou toujours) est retirée.
+- Les vrais menus restent des menus, avec leur flèche (Thèmes, Récents, la liste des calques, les zones de la vue 3D, le groupe « Onglets de VectorDrive » de la disposition TypeEdit 13).
+### v0.952.0 — Assistant IA : les crédits, par session et par dessin ; Mistral d’abord
+
+- **Ce que coûtent les demandes à l’assistant**, sous la discussion : les dépenses de **cette session** (depuis le lancement de VectorDrive, tous les dessins) et de **ce dessin** (l’onglet affiché), en argent et en jetons ; en infobulle, le détail par modèle (tours, jetons en entrée, en sortie, en cache).
+- **Les dépenses d’un dessin sont gardées dans son .vdz**, dès la première : elles s’ajoutent d’une séance à l’autre. Un dessin sans dépense n’en garde rien. Une demande compte pour le dessin de sa discussion, même si un autre onglet est affiché entre-temps. Un dessin vide jamais enregistré n’est pas marqué modifié pour autant. Les dépenses ne passent pas aux copies (modèle de dessin, onglet dupliqué, export de la sélection), et Annuler ne les retire pas.
+- **Options › Assistant** :
+  - **Mistral** est le fournisseur d’office (et le premier de la liste) ;
+  - **prix des modèles**, par million de jetons (entrée, sortie, entrée lue en cache) : d’office les prix publics relevés le 19/11/2026, à vérifier sur la page du fournisseur (pour Mistral, les sources diffèrent : le plus haut est pris) ; un modèle se modifie, s’ajoute, se retire ; « Prix d’office » les remet. Un modèle sans prix compte ses jetons seulement ;
+  - la **devise** des prix (d’office $) ;
+  - un **plafond des dépenses par session** : atteint, plus de demande avant le prochain lancement (0 : sans plafond).
+- Les jetons viennent du fournisseur à chaque tour (Claude : aussi le cache lu et écrit ; ChatGPT et Mistral : le cache lu) ; un tour de Claude arrêté ou en panne compte ce qu’il a déjà coûté.

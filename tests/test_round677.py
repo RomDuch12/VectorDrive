@@ -166,7 +166,7 @@ class TestWindow(_Case):
         page = r.page(tab_index(r, 'Design STEP'))
         gen = next(g for g in page.groups() if g.title.text() == 'Générateurs')
         self.assertIn(w.A['stepgen_bridage'], [b.defaultAction() for b in gen.buttons()])
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         d = w.stepgen_dialog('Bridage', exec_dialog=False)
         self.assertEqual(G.FAMILIES[d.key].category, 'Bridage')
         for k in KEYS:

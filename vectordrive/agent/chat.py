@@ -11,6 +11,7 @@ Trois fournisseurs, chacun avec la clé d'API de l'utilisateur (`agent.keys`) :
   même format (un modèle local, par exemple).
 
 Ce que le modèle lit du dessin (objets, cotes, captures) part chez le fournisseur choisi : le panneau le dit.
+Chaque tour rend les jetons qu'il a coûtés (`on_usage`) : le panneau en tient les comptes (`agent.credits`).
 
     conv = Conversation('anthropic', 'claude-opus-5-5', cle, ToolSet(fenetre, pont.run),
                         on_text=print, on_tool=print)
@@ -26,12 +27,13 @@ import urllib.request
 from .protocol import ToolError
 
 #: fournisseur → (libellé, modèle d'office, modèles proposés, variable d'environnement de la clé)
+#: (Mistral d'abord : celui de l'atelier, demande du 19/11 midi)
 PROVIDERS = {
+    'mistral': ('Mistral', 'mistral-large-latest',
+                ('mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest'), 'MISTRAL_API_KEY'),
     'anthropic': ('Claude (Anthropic)', 'claude-opus-5-5',
                   ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'), 'ANTHROPIC_API_KEY'),
     'openai': ('ChatGPT (OpenAI)', 'gpt-6-astra', ('gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna'), 'OPENAI_API_KEY'),
-    'mistral': ('Mistral', 'mistral-large-latest',
-                ('mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest'), 'MISTRAL_API_KEY'),
 }
 #: où prendre une clé d'API (un abonnement Claude.ai, ChatGPT ou Le Chat n'en donne pas)
 KEY_PAGES = {'anthropic': 'https://console.anthropic.com/settings/keys',
@@ -100,6 +102,45 @@ def _mistyped(schema, args: dict) -> str:
     return ''
 
 
+def _n(x) -> int:
+    try:
+        return max(0, int(x or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _usage_anthropic(msg) -> dict:
+    """Les jetons d'un tour de Claude : entrée hors cache, sortie, lue en cache, écrite en cache."""
+    u = getattr(msg, 'usage', None)
+    if u is None:
+        return {}
+    return {'in': _n(getattr(u, 'input_tokens', 0)), 'out': _n(getattr(u, 'output_tokens', 0)),
+            'cache': _n(getattr(u, 'cache_read_input_tokens', 0)),
+            'write': _n(getattr(u, 'cache_creation_input_tokens', 0))}
+
+
+def _usage_openai(resp) -> dict:
+    """Les jetons d'un tour de ChatGPT : l'entrée compte celle lue en cache, retirée ici."""
+    u = getattr(resp, 'usage', None)
+    if u is None:
+        return {}
+    det = getattr(u, 'input_tokens_details', None)
+    cached = _n(getattr(det, 'cached_tokens', 0)) if det is not None else 0
+    return {'in': max(0, _n(getattr(u, 'input_tokens', 0)) - cached), 'out': _n(getattr(u, 'output_tokens', 0)),
+            'cache': cached}
+
+
+def _usage_chat(data) -> dict:
+    """Les jetons d'une réponse « chat completions » (Mistral) : `usage` de la réponse."""
+    u = data.get('usage') if isinstance(data, dict) else None
+    if not isinstance(u, dict):
+        return {}
+    det = u.get('prompt_tokens_details')
+    cached = _n(det.get('cached_tokens')) if isinstance(det, dict) else 0
+    return {'in': max(0, _n(u.get('prompt_tokens')) - cached), 'out': _n(u.get('completion_tokens')),
+            'cache': cached}
+
+
 def _text_of(contents: list) -> str:
     """Les contenus texte d'un résultat d'outil, mis bout à bout (les images à part)."""
     return '\n'.join(c.get('text', '') for c in contents if c.get('type') == 'text')
@@ -114,10 +155,11 @@ class Conversation:
     comme `agent.tools.ToolSet`). `send` est bloquant : l'appeler dans un fil de travail.
 
     `on_text(texte)` : du texte du modèle, au fil de l'eau ; `on_tool(nom, args, resultat, erreur)` : un outil
-    appelé. `client` : un client déjà fait (essais) — sinon celui du SDK du fournisseur, avec la clé."""
+    appelé ; `on_usage({'in', 'out', 'cache', 'write'})` : les jetons d'un tour (dans le fil de travail).
+    `client` : un client déjà fait (essais) — sinon celui du SDK du fournisseur, avec la clé."""
 
     def __init__(self, provider: str, model: str, key: str, tools, *, url: str = '', client=None,
-                 on_text=None, on_tool=None, max_steps: int = MAX_STEPS, system: str = ''):
+                 on_text=None, on_tool=None, max_steps: int = MAX_STEPS, system: str = '', on_usage=None):
         if provider not in PROVIDERS:
             raise ValueError(f'unknown provider: {provider}')
         self.provider = provider
@@ -127,6 +169,7 @@ class Conversation:
         self.tools = tools
         self.on_text = on_text or (lambda _t: None)
         self.on_tool = on_tool or (lambda *_a: None)
+        self.on_usage = on_usage or (lambda _u: None)
         self.max_steps = max_steps
         self.notes: list = []
         self._stop = threading.Event()
@@ -147,6 +190,15 @@ class Conversation:
         """Une fin de demande à dire (`NOTES`) : retenue dans `notes` (le panneau la traduit) ; rend son texte."""
         self.notes.append(key)
         return f'({NOTES[key]})'
+
+    def usage(self, used: dict) -> None:
+        """Les jetons d'un tour, dits à `on_usage` (une panne de l'affichage n'arrête pas la discussion)."""
+        if not any(used.values()):
+            return
+        try:
+            self.on_usage(dict(used))
+        except Exception:                                # noqa: BLE001 — la fenêtre fermée entre-temps…
+            pass
 
     def stop(self) -> None:
         """Arrête la demande en cours au prochain pas (le tour déjà parti chez le fournisseur se termine)."""
@@ -203,23 +255,35 @@ class _Anthropic:
         while True:
             self.conv.check()
             shown = False
+            seen: dict = {}                              # les jetons vus en flux : comptés si le tour n'aboutit pas
+            done = False
             try:
                 with self.client.messages.stream(
                         model=self.conv.model, max_tokens=MAX_TOKENS_STREAM, system=self.conv.system, tools=self.tools,
                         messages=self.messages, cache_control={'type': 'ephemeral'}) as stream:
                     for event in stream:
+                        if event.type == 'message_start':
+                            seen = _usage_anthropic(getattr(event, 'message', None))
+                        elif event.type == 'message_delta' and seen and getattr(event, 'usage', None) is not None:
+                            seen['out'] = _n(getattr(event.usage, 'output_tokens', 0))
                         if event.type == 'text':
                             shown = True
                             self.conv.on_text(event.text)
                         if self.conv.stopping:
                             raise Stopped()
-                    return stream.get_final_message()
+                    msg = stream.get_final_message()
+                    done = True
+                    self.conv.usage(_usage_anthropic(msg) or seen)
+                    return msg
             except UnicodeError:                         # une clé collée avec un caractère hors ASCII, par exemple
                 raise
             except ValueError:                           # JSON d'une entrée d'outil illisible (pas une erreur d'API)
                 tries += 1
                 if tries > 2 or shown:
                     raise
+            finally:
+                if not done and seen:                    # arrêté, en panne, refait : ce que le tour a coûté
+                    self.conv.usage(seen)
 
     def send(self, text: str) -> str:
         last = self.messages[-1] if self.messages else None
@@ -314,6 +378,7 @@ class _OpenAI:
                 self._pending = due
                 raise
             self.last_id = resp.id
+            self.conv.usage(_usage_openai(resp))
             chunk = resp.output_text
             if chunk:
                 said.append(chunk)
@@ -422,6 +487,7 @@ class _Chat:
             self.conv.check()
             data = self.post({'model': self.conv.model, 'messages': self.messages, 'tools': self.tools,
                               'tool_choice': 'auto', 'max_tokens': MAX_TOKENS})
+            self.conv.usage(_usage_chat(data))
             choice = (data.get('choices') or [{}])[0]
             msg = choice.get('message') or {}
             content = msg.get('content') or ''

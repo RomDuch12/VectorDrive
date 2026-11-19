@@ -326,7 +326,7 @@ class TestWindow(_Case):
                 for b in g.buttons()]
         self.assertIn(self.w.A['step_screw'], acts)
         self.assertIn(self.w.A['step_part_hole'], acts)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
 
     def test_faces_of_drawing(self):
         w = self.w

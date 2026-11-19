@@ -51,7 +51,7 @@ class TestRibbon(unittest.TestCase):
         self.assertIn(w.A['cam3d_colors'], [b.defaultAction() for b in colors.buttons()])
         self.assertEqual(w.A['cam3d_colors'].menu().actions(),
                          [w.A[k] for k in ('cam3d_part_color', 'cam3d_edge_color', 'cam3d_reset_colors')])
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         self.assertFalse(any(g.iconic for g in page.groups()))          # libellés gardés en Full HD
         self.assertTrue(w.A['cam3d_ops_list'].isCheckable() and w.A['cam3d_ops_list'].isChecked())
 

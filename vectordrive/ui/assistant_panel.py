@@ -75,6 +75,7 @@ class _Relay(QObject):
     text = Signal(str)
     tool = Signal(str)
     done = Signal(str)
+    usage = Signal(object)                               # (porteur de l'onglet, fournisseur, modèle, jetons)
 
 
 def plain_text(text: str) -> str:
@@ -135,7 +136,7 @@ class AssistantPanel(QWidget):
         self.provider = QComboBox()
         for slug, (label, *_r) in PROVIDERS.items():
             self.provider.addItem(label, slug)
-        k = self.provider.findData(str(st.value(KEY_PROVIDER, 'anthropic') or 'anthropic'))
+        k = self.provider.findData(str(st.value(KEY_PROVIDER, 'mistral') or 'mistral'))
         self.provider.setCurrentIndex(max(0, k))
         self.model = QComboBox()
         self.model.setEditable(True)
@@ -212,6 +213,15 @@ class AssistantPanel(QWidget):
         self.status = QLabel('')
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
+        # les crédits : ce qu'ont coûté les demandes de la session et celles du dessin affiché (agent.credits)
+        self.credits = QLabel('')
+        self.credits.setObjectName('assistantCredits')
+        self.credits.setWordWrap(True)
+        self.credits.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self.credits)
+        #: les dépenses de la session (ce lancement, tous les dessins) ; celles d'un dessin : doc.extra['ia_credits']
+        self.session_credits = None
+        self.relay.usage.connect(self._on_usage)
 
         self.provider.currentIndexChanged.connect(lambda _i: self._provider_changed())
         self.model.currentTextChanged.connect(lambda t: st.setValue(KEY_MODEL.format(self.slug()), t.strip()))
@@ -220,6 +230,7 @@ class AssistantPanel(QWidget):
         self._busy(False)
         tab = self._current_tab()
         self._tab = [weakref.ref(tab) if tab is not None else None]
+        self._show_credits()
 
     def _new_view(self) -> QTextBrowser:
         v = ChatView()
@@ -261,6 +272,7 @@ class AssistantPanel(QWidget):
             e = None
         if cur is None and ref is not None and e is None:
             self._tab[0] = weakref.ref(tab)              # l'onglet remplacé sur place : la discussion continue
+            self._show_credits()
             return
         if cur is not None:
             self._tabs[id(cur)] = [self._tab, self.view, self.conv, self._conv_key]
@@ -277,6 +289,7 @@ class AssistantPanel(QWidget):
             self._tab = [weakref.ref(tab)]
             self.view, self.conv, self._conv_key = self._new_view(), None, None
         self.stack.setCurrentWidget(self.view)
+        self._show_credits()
 
     def _runner(self, holder):
         """L'exécution des outils d'une discussion : dans le fil de l'interface, sur l'onglet de la discussion
@@ -308,7 +321,7 @@ class AssistantPanel(QWidget):
 
     # --- le fournisseur, le modèle, la clé ------------------------------------------------------------
     def slug(self) -> str:
-        return str(self.provider.currentData() or 'anthropic')
+        return str(self.provider.currentData() or 'mistral')
 
     def _provider_changed(self) -> None:
         p = self.slug()
@@ -380,7 +393,7 @@ class AssistantPanel(QWidget):
         """Les options (F10 › Assistant) reprises : fournisseur, modèle, adresse, taille du texte ; la prochaine
         demande prend les autres (outils, consignes, tours : une nouvelle discussion)."""
         st = self.win.settings
-        k = self.provider.findData(str(st.value(KEY_PROVIDER, 'anthropic') or 'anthropic'))
+        k = self.provider.findData(str(st.value(KEY_PROVIDER, 'mistral') or 'mistral'))
         if k >= 0 and k != self.provider.currentIndex():
             self.provider.setCurrentIndex(k)             # → _provider_changed
         else:
@@ -388,6 +401,7 @@ class AssistantPanel(QWidget):
         self.url.setText(str(st.value(KEY_URL, '') or ''))
         for i in range(self.stack.count()):
             self._style_view(self.stack.widget(i))
+        self._show_credits()                             # la devise, le plafond
 
     def conversation(self):
         """La discussion en cours ; refaite (vide) si le fournisseur, le modèle, l'adresse ou la clé a changé."""
@@ -402,6 +416,10 @@ class AssistantPanel(QWidget):
             self.conv = Conversation(p, model, api_key, tools, url=url, client=self.client_for(p),
                                      system=AO.system_text(st), max_steps=self._option('assistant/tours_max'),
                                      on_text=self.relay.text.emit, on_tool=self._tool_seen)
+            # les jetons de chaque tour : comptés pour la session et pour le dessin de cette discussion (son onglet,
+            # suivi s'il est remplacé sur place), même si un autre onglet est affiché entre-temps
+            self.conv.on_usage = (lambda used, holder=self._tab, c=self.conv:
+                                  self.relay.usage.emit((holder, c.provider, c.model, used)))
             if self._conv_key is not None and self.view.toPlainText().strip():
                 self._line(tr('— Nouvelle discussion ({0}, {1}) —').format(self.providers[p][0], model or '…'))
             self._conv_key = key
@@ -420,6 +438,14 @@ class AssistantPanel(QWidget):
         if not self.keys.load(p) and self.client_for(p) is None:
             self.status.setText(tr('Il faut une clé d’API du fournisseur (lien ci-dessus)'))
             self.key.setFocus()
+            return False
+        from ..agent import credits as CR
+        from ..i18n import decimal_sep
+        limit = CR.cap(self.win.settings)
+        if limit > 0 and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
+            self.status.setText(tr('Plafond des dépenses de la session atteint ({0}) : plus de demande avant le '
+                                   'prochain lancement (Options › Assistant)')
+                                .format(CR.money_text(limit, CR.currency(self.win.settings), decimal_sep())))
             return False
         try:
             conv = self.conversation()
@@ -629,6 +655,83 @@ class AssistantPanel(QWidget):
         if not self._option('assistant/montrer_outils'):
             return
         self._line('<span style="color:{1}">{0}</span>'.format(html.escape(text), self._colors()['tool']), raw=True)
+
+    def _on_usage(self, payload) -> None:
+        """Dans le fil de l'interface : les jetons d'un tour, comptés pour la session et pour le dessin de la
+        discussion — dans `doc.extra['ia_credits']`, donc dans son .vdz ; le dessin est marqué modifié, pour qu'ils
+        ne se perdent pas à la fermeture."""
+        from ..agent import credits as CR
+        holder, provider, model, used = payload
+        if not any(CR.normal(used).values()):
+            return
+        if getattr(self.win, '_writing_doc', False):     # un enregistrement lit doc.extra dans son fil : après lui
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(200, lambda p=payload: self._on_usage(p))
+            return
+        st = self.win.settings
+        table, money = CR.prices(st), CR.currency(st)
+        self.session_credits = CR.add(self.session_credits, provider, model, used, table, money)
+        ref = holder[0] if holder else None
+        tab = ref() if ref is not None else None
+        if tab is not None:
+            current = tab is self._current_tab()
+            canvas = getattr(self.win, 'canvas', None)
+            doc = getattr(canvas, 'doc', None) if current else getattr(tab, 'doc', None)
+            if isinstance(getattr(doc, 'extra', None), dict):
+                doc.extra[CR.KEY] = CR.add(doc.extra.get(CR.KEY), provider, model, used, table, money)
+                path = getattr(self.win, 'path', None) if current else getattr(tab, 'path', None)
+                # marqué modifié pour que la dépense aille dans son .vdz — pas un dessin vide jamais enregistré
+                # (l'onglet vierge resterait sinon à enregistrer, et ne serait plus repris par Ouvrir / Nouveau)
+                if path or getattr(doc, 'source_path', None) or any(L.items for L in getattr(doc, 'layers', [])):
+                    if current:
+                        self.win.modified = True
+                        title = getattr(self.win, '_title', None)
+                        if callable(title):
+                            title()
+                    else:
+                        tab.modified = True
+                    sync = getattr(self.win, '_sync_tabs', None)
+                    if callable(sync):
+                        sync()
+        self._show_credits()
+
+    def _show_credits(self) -> None:
+        """Sous la discussion : les dépenses de la session et du dessin affiché ; le détail par modèle en infobulle."""
+        from ..agent import credits as CR
+        from ..i18n import decimal_sep
+        lab = getattr(self, 'credits', None)
+        if lab is None:
+            return
+        st = self.win.settings
+        sep = decimal_sep()
+        doc = getattr(getattr(self.win, 'canvas', None), 'doc', None)
+        mine = doc.extra.get(CR.KEY) if isinstance(getattr(doc, 'extra', None), dict) else None
+
+        def part(t) -> str:
+            if not CR.spent(t):
+                return tr('rien')
+            return tr('{0} ({1} jetons)').format(
+                CR.money_text(float(t.get('cout') or 0.0), str(t.get('devise') or CR.currency(st)), sep),
+                CR.tokens_text(CR.tokens(t)))
+        lab.setText(tr('Crédits — cette session : {0} · ce dessin : {1}').format(part(self.session_credits),
+                                                                               part(mine)))
+        tip = []
+        for title, t in ((tr('Cette session'), self.session_credits), (tr('Ce dessin (gardé dans son .vdz)'), mine)):
+            if not CR.spent(t):
+                continue
+            tip.append(title + ' :')
+            for key, one in sorted((t.get('par_modele') or {}).items()):
+                tip.append('  ' + tr('{0} — {1} ; {2} tours ; {3} en entrée, {4} en sortie, {5} en cache').format(
+                    key, CR.money_text(float(one.get('cout') or 0.0), str(t.get('devise') or CR.currency(st)), sep),
+                    one.get('tours', 0), CR.tokens_text(one.get('entree', 0)), CR.tokens_text(one.get('sortie', 0)),
+                    CR.tokens_text(one.get('cache', 0) + one.get('ecrit', 0))))
+            if t.get('sans_prix'):
+                tip.append('  ' + tr('Sans prix (jetons comptés seulement) : {0}').format(', '.join(t['sans_prix'])))
+        limit = CR.cap(st)
+        if limit > 0:
+            tip.append(tr('Plafond par session : {0}').format(CR.money_text(limit, CR.currency(st), sep)))
+        tip.append(tr('Prix et plafond : Options › Assistant'))
+        lab.setToolTip('\n'.join(tip))
 
     def _on_done(self, message: str) -> None:
         self._thread = None                              # dit en dernier par le fil : la demande est finie

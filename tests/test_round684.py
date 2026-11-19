@@ -219,7 +219,7 @@ class TestWindow(_Case):
         page = w.ribbon.page(tab_index(w.ribbon, 'Design STEP'))
         acts = [b.defaultAction() for g in page.groups() if g.title.text() == 'Générateurs' for b in g.buttons()]
         self.assertIn(w.A['stepgen_turned'], acts)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         prof = Shape(path=Path([poly([(8, 0), (15, 0), (15, 12), (8, 12)])]))
         axis = Shape(path=Path([AXIS]))
         w._add_items([prof, axis])

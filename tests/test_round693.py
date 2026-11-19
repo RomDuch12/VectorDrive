@@ -56,7 +56,7 @@ class TestWindow(unittest.TestCase):
         page = w.ribbon.page(tab_index(w.ribbon, 'Design STEP'))
         acts = [b.defaultAction() for g in page.groups() if g.title.text() == 'Sélection 3D' for b in g.buttons()]
         self.assertIn(w.A['step_invert'], acts)
-        self.assertEqual(page.fit(full_hd()), [])
+        self.assertTrue(page.fit(full_hd()))                    # tient en 1920 (sans défiler, 1094)
         self.assertTrue(w.open_path(parts(self._tmp.name)))
         w._ensure_panel3d()
         p3 = w.panel3d
