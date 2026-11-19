@@ -315,6 +315,9 @@ def export_items(win, items: list, path: str, options: dict | None = None, selec
         doc.plate = None
     if isinstance(doc.extra, dict):
         doc.extra['vnd_textes_vivants'] = bool(options.get('vnd_textes_vivants', True))
+        from .options import value
+        st = getattr(win, 'settings', None)
+        doc.extra['vnd_premier_plan'] = bool(value(st, 'vnd/premier_plan_montre')) if st is not None else False
         doc.extra['dxf_calques_outils'] = bool(options.get('dxf_calques_outils', False))
     suffix = pathlib.Path(path).suffix.lower()
     if suffix in RASTER_EXT:

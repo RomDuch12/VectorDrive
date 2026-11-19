@@ -1255,9 +1255,33 @@ def _calque(layer: Layer, tool: int, current: bool, template: MfcObject | None) 
     return cq
 
 
+def write_order(layers: list, writes=None, first_shown: bool = False) -> list:
+    """L'ordre d'écriture des calques d'un VND (rangs dans `layers`) : celui du dessin (demande du 19/11 :
+    « Respecter l'ordre des calques TE-VD »). `first_shown` (réglage « Enregistrement en VND : le premier calque qui a
+    quelque chose à montrer écrit en tête », décoché d'office) : TypeEdit 13 n'affiche à l'ouverture que son premier
+    plan — le premier calque qui a quelque chose à montrer passe en tête, les autres gardent leur ordre (round 751).
+    `writes(calque)` : écrit-il quelque chose (d'office : il a des objets)."""
+    writes = writes or (lambda L: bool(L.items))
+    order = list(range(len(layers)))
+    if not first_shown:
+        return order
+    shown = ([k for k in order if writes(layers[k]) and layers[k].visible]
+             or [k for k in order if writes(layers[k])])
+    if shown and shown[0] != order[0]:
+        order.remove(shown[0])
+        order.insert(0, shown[0])
+    return order
+
+
+def first_shown_of(doc) -> bool:
+    """Le réglage « premier calque montré en tête », porté par le document (`ui.main_window._vnd_options`)."""
+    return bool(doc.extra.get('vnd_premier_plan')) if isinstance(getattr(doc, 'extra', None), dict) else False
+
+
 def layer_order(layers: list, writes=None) -> tuple:
-    """L'ordre d'écriture des calques d'un VND : (rangs dans `layers`, {id d'une copie VD Géo écrite cachée : id de
-    son calque d'origine, écrit visible}). `writes(calque)` : écrit-il quelque chose (d'office : il a des objets).
+    """L'ordre d'écriture des calques d'un VND jusqu'à 0.955.0, que relisent les compagnons d'alors (`io.companion`) :
+    (rangs dans `layers`, {id d'une copie VD Géo écrite cachée : id de son calque d'origine, écrit visible}).
+    `writes(calque)` : écrit-il quelque chose (d'office : il a des objets).
 
     TypeEdit 13 ouvre toujours sur son premier plan, seul, quel que soit le plan marqué courant. 1) La copie en VD Géo
     d'un calque dont la police manque (`core.missing_fonts`), quand c'est elle que le dessin montre et que son
@@ -1291,37 +1315,23 @@ def layer_order(layers: list, writes=None) -> tuple:
     return order, behind
 
 
-def _calques(layers: list, report: list | None = None) -> list[MfcObject]:
-    """Les calques TypeEdit du document, dans l'ordre du fichier (`layer_order`) : un premier plan vide ou masqué
-    donne une page blanche dans TypeEdit, alors que l'aperçu de l'explorateur et VectorDrive montrent tout. Le premier
-    plan est seul le plan courant ; l'original d'une copie VD Géo est écrit visible, sa copie cachée."""
+def _calques(layers: list, report: list | None = None, first_shown: bool = False) -> list[MfcObject]:
+    """Les calques TypeEdit du document, dans l'ordre du dessin (`write_order`) ; le premier plan est seul le plan
+    courant. TypeEdit 13 n'affiche à l'ouverture que son premier plan : masqué, le compte rendu le dit (réglage
+    `first_shown` : le premier qui a quelque chose à montrer passe en tête)."""
     built = [(L, _calque(L, tool, False, None)) for L, tool in _tool_layers(layers)]
     made = {id(L): c for L, c in built}
     subs = [L for L, _c in built]
-    order, behind = layer_order(subs, lambda L: bool(made[id(L)].children))
-    front = set(behind.values())
-    moved = bool(order) and order[0] != 0 and subs[order[0]].id not in front
+    order = write_order(subs, lambda L: bool(made[id(L)].children), first_shown)
+    moved = bool(order) and order[0] != 0
     built = [built[k] for k in order]
-    for L, c in built:
-        if L.id in front or L.id in behind:
-            a = bytearray(c.fields['attrs'])
-            a[12:16] = struct.pack('<I', 1 if L.id in front else 0)
-            c.fields['attrs'] = bytes(a)
-    if report is not None:
+    if report is not None and built:
         if moved:
             report.append(f"plan « {built[0][0].name} » écrit en premier : TypeEdit n'affiche à l'ouverture que "
                           'son premier plan')
-        for cid, de in behind.items():
-            name = next((L.name for L in layers if L.id == de), '')
-            line = f'copie en VD Géo du plan « {name} » écrite derrière lui, cachée'
-            if built[0][0].id == de:
-                line += " : TypeEdit ouvrira sur le plan d'origine"
-            report.append(line)
-            orig = next((L for L in layers if L.id == de), None)
-            copy = next((L for L in layers if L.id == cid), None)
-            if orig is not None and copy is not None and len(copy.items) != len(orig.items):
-                report.append(f'le plan « {copy.name} » a des objets que le plan « {name} » n\'a pas : TypeEdit, '
-                              'qui ouvre sur le plan d\'origine, ne les montrera pas')
+        elif not built[0][0].visible and any(L.visible and c.children for L, c in built[1:]):
+            report.append(f"premier plan « {built[0][0].name} » masqué : TypeEdit, qui n'affiche à l'ouverture que "
+                          'son premier plan, ouvrira sur une page blanche')
     if built:
         a = bytearray(built[0][1].fields['attrs'])
         a[4:8] = struct.pack('<I', 1)
@@ -1451,7 +1461,7 @@ def build(doc: Document, template: bytes) -> tuple[bytes, list[str]]:
     root.fields = _obdao_fields(bb)
     root.fields['ctn_version'] = 3
     with _using_tools(doc):
-        root.children.extend(_calques(list(doc.layers), report))   # calques vides compris (comme dans la source)
+        root.children.extend(_calques(list(doc.layers), report, first_shown_of(doc)))   # calques vides compris
     w = MfcWriter()
     w.write_object(root)
     tail = template[root_t.fields['tail_offset']:]
@@ -1594,7 +1604,8 @@ def _tree(doc: Document, page_bbox, report: list | None = None) -> MfcObject:
     root.fields = _obdao_fields(bb)
     root.fields['ctn_version'] = 3
     with _using_tools(doc):
-        root.children.extend(_calques(list(doc.layers) or [Layer(name='Plan 1')], report))   # calques vides compris
+        root.children.extend(_calques(list(doc.layers) or [Layer(name='Plan 1')], report,
+                                      first_shown_of(doc)))  # calques vides compris
     return root
 
 
@@ -1759,7 +1770,9 @@ def write_document(doc: Document, template: bytes | None = None, *,
     global _LIVE
     if live_texts is None:
         live_texts = bool(doc.extra.get('vnd_textes_vivants')) if isinstance(doc.extra, dict) else False
+    doc, merged = merged_copies(doc)
     doc, cleaned = clean_document(doc)
+    cleaned = merged + cleaned
     doc = at_origin(doc)
     if not live_texts:
         data, report = _write_document(doc, template, allow_foreign=allow_foreign)
@@ -1770,6 +1783,35 @@ def write_document(doc: Document, template: bytes | None = None, *,
         return data, cleaned + report
     finally:
         _LIVE = None
+
+
+def merged_copies(doc: Document) -> tuple[Document, list[str]]:
+    """Le document tel que le VND l'écrit : la copie en VD Géo d'un calque (police absente du poste) écrite à sa
+    place, pas en plus (`core.missing_fonts.for_vnd`) ; et les remarques. Le document de l'utilisateur n'est pas
+    touché."""
+    import copy
+    from ..core import missing_fonts as MF
+    layers, info = MF.for_vnd(list(doc.layers))
+    if len(layers) == len(doc.layers) and all(a is b for a, b in zip(layers, doc.layers)):
+        return doc, []
+    out = copy.copy(doc)
+    out.layers = layers
+    report = []
+    for p in info.values():
+        c, L, n = p['copie'], p['original'], p['repris']
+        if p['sorte'] == 'fusion':
+            line = f'plan « {L.name} » : sa copie en {MF.FONT} (police absente du poste) écrite à sa place, pas en plus'
+            if n:
+                line += f" ; {n} objet(s) TypeEdit d'origine"
+            if len(c.items) > n:
+                line += f' ; {len(c.items) - n} modifié(s) ou ajouté(s), tel(s) que VectorDrive les montre'
+            if p['retires']:
+                line += f" ; {p['retires']} objet(s) d'origine retiré(s) de la copie : pas écrit(s)"
+            report.append(line)
+        elif p['sorte'] == 'devant':
+            report.append(f'copie en {MF.FONT} du plan « {L.name} » écrite derrière lui, cachée (sans correspondance '
+                          "de ses objets avec ceux d'origine : dessin d'avant 0.956.0)")
+    return out, report
 
 
 def at_origin(doc: Document) -> Document:

@@ -86,6 +86,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
           [('theme', 'Selon le thème'), ('bandeau', 'Bandeau coloré (TypeEdit)'), ('texte', 'Texte seul'),
            ('aucune', 'Aucune')]),
         B('vue/ruban_reduit', 'Ruban réduit aux onglets (Ctrl+F1, ou le bouton ˄ / ˅ au bout des onglets)', False),
+        B('vue/ruban_mode_point', 'Mode Point : montrer son onglet du ruban', True,
+          tip='En entrant dans le Mode Point (P), son onglet du ruban paraît ; en sortant, l’onglet d’avant revient'),
         C('vue/disposition', 'Disposition du ruban', 'theme',
           [('theme', 'Selon le thème (TypeEdit 13 : celle de TypeEdit 13)'), ('vectordrive', 'VectorDrive'),
            ('typeedit13', 'TypeEdit 13 (lue dans le TypeEdit 13 du poste)')]),
@@ -189,6 +191,10 @@ SPEC: list[tuple[str, list[Opt]]] = [
         B('vnd/textes_vivants', 'Enregistrement en VND : textes TypeEdit modifiables', True,
           tip='Textes en police installée dans Windows ou de TypeEdit, sans mise en forme que TypeEdit ne garde pas ; '
               "les autres en courbes (le compte rendu de l'enregistrement dit pourquoi)"),
+        B('vnd/premier_plan_montre', 'Enregistrement en VND : le premier calque qui a quelque chose à montrer écrit '
+          'en tête', False,
+          tip='TypeEdit 13 n’affiche à l’ouverture que son premier plan : un premier plan vide ou masqué donne une page '
+              'blanche. Décoché : les calques dans l’ordre du dessin'),
         B('symboles/textes_vivants', 'Symboles créés : textes TypeEdit modifiables', True,
           tip='Comme pour un VND : les textes en police installée dans Windows ou de TypeEdit ; les autres en courbes'),
         B('symboles/couleurs', 'Symboles créés : couleurs gardées (bloc VectorDrive en fin de fichier, que '
@@ -381,13 +387,15 @@ SPEC: list[tuple[str, list[Opt]]] = [
         B('assistant/valeurs_couleur', 'Discussion : valeurs des réponses en couleur', True),
         B('assistant/montrer_outils', 'Discussion : montrer les outils appelés', True),
     ]),
+    ('Raccourcis', []),                                  # demande du 19/11 : la page vient de ui/shortcuts.py
 ]
 BY_KEY = {o.key: o for _t, opts in SPEC for o in opts}
 #: onglets de la fenêtre, repris en boutons dans l'onglet Options du ruban : titre → (clé, icône)
 PAGES = {'Général': ('general', 'options'), 'Apparence': ('apparence', 'themes'), 'Dessin': ('dessin', 'bezier'),
          'Affichage': ('affichage', 'view_2d'), 'Fichiers': ('fichiers', 'open'), 'FAO': ('fao', 'cam'),
          'BAT': ('bat', 'pdf'), 'Impression': ('impression', 'print'), 'Mises à jour': ('maj', 'update'), 'Plugins': ('plugins', 'ribbon'),
-         'Performances': ('performances', 'view_3d'), 'Assistant': ('assistant', 'assistant_ia')}
+         'Performances': ('performances', 'view_3d'), 'Assistant': ('assistant', 'assistant_ia'),
+         'Raccourcis': ('raccourcis', 'keyboard')}
 assert list(PAGES) == [t for t, _o in SPEC], 'un bouton par onglet des options'
 #: réglages d'apparence : un changement réapplique le thème
 APPEARANCE = [o.key for o in dict(SPEC)['Apparence']]
@@ -556,6 +564,8 @@ class OptionsDialog(QDialog):
             if title == 'Assistant':
                 from . import assistant_options
                 assistant_options.build(self, form, parent)
+            if title == 'Raccourcis' and hasattr(parent, 'shortcuts_dialog'):
+                self._shortcuts_page(form, parent)
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setWidget(page)
@@ -570,6 +580,27 @@ class OptionsDialog(QDialog):
         bb.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.restore_defaults)
         lay.addWidget(bb)
 
+    def _shortcuts_page(self, form, parent) -> None:
+        """L'onglet Raccourcis (demande du 19/11) : la fenêtre des raccourcis, toute (`shortcuts.dialog_class`,
+        `embedded`) ; OK de la fenêtre des options : retenus et appliqués."""
+        import json
+        from PySide6.QtCore import Qt
+        from . import shortcuts as SC
+        ed = parent.shortcuts_dialog(exec_dialog=False, embedded=True)
+        ed.setWindowFlags(Qt.WindowType.Widget)
+        ed.setMinimumHeight(560)
+        form.addRow(ed)
+        self.shortcuts_editor = ed
+
+        start = json.dumps([ed.scheme, ed.te_entries, ed.custom], sort_keys=True, default=list)
+
+        def keep(ed=ed):
+            if json.dumps([ed.scheme, ed.te_entries, ed.custom], sort_keys=True, default=list) == start:
+                return                                   # onglet pas touché : rien n'est réécrit
+            SC.save(parent.settings, ed.scheme, ed.te_entries, ed.custom)
+            parent._apply_shortcuts()
+        self.on_accept.append(keep)
+
     def filter_options(self, text: str = '') -> int:
         """Seuls les réglages dont le libellé, l'info-bulle ou la clé contient
         le texte (sans accents ni casse) ; onglets sans réglage trouvé grisés,
@@ -582,6 +613,10 @@ class OptionsDialog(QDialog):
             form.setRowVisible(w, on)
             per_tab[tab] = per_tab.get(tab, 0) + on
             found += on
+        ed = getattr(self, 'shortcuts_editor', None)       # l'onglet Raccourcis : jamais grisé par la recherche
+        for i in range(self.tabs.count()):
+            if ed is not None and self.tabs.widget(i).isAncestorOf(ed):
+                per_tab[i] = per_tab.get(i, 0) or (self.tabs.currentIndex() == i or not q)
         for i in range(self.tabs.count()):
             self.tabs.setTabEnabled(i, not q or per_tab.get(i, 0) > 0)
         if q and found and not per_tab.get(self.tabs.currentIndex(), 0):

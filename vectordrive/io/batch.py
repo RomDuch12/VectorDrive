@@ -87,6 +87,7 @@ def _convert_one(src: str, dst: str, overwrite: bool, proof: bool, live_texts: b
         doc = registry.open_document(src_p)
         if isinstance(doc.extra, dict) and dst_p.suffix.lower() in ('.vnd', '.vnl', '.vnm'):
             doc.extra['vnd_textes_vivants'] = bool(live_texts)
+            doc.extra.pop('vnd_premier_plan', None)     # l'ordre des calques du dessin (round 1099), pas un reste
         dst_p.parent.mkdir(parents=True, exist_ok=True)
         registry.save_document(doc, dst_p)
         if proof:

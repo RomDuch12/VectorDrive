@@ -4,6 +4,7 @@ monotrait intégrée, toujours là) ; le calque d'origine, caché, reste tel que
 redessinent dans celle-ci dès qu'elle est installée (`fonts.rescan`), VectorDrive ouvert. Les objets de la copie sont
 des objets neufs (identifiants neufs, sans l'objet TypeEdit d'origine : un VND réécrit n'a pas deux fois le même
 objet) ; les opérations FAO qui usinent les objets du calque usinent aussi leur copie (un calque caché ne s'usine pas).
+Un VND écrit n'a pas la copie en plus de son calque (`for_vnd`, demande du 19/11) : elle y est écrite à sa place.
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ FONT = 'VD Géo'
 MARK = 'police_absente'
 #: fin du nom d'un calque copie : un VND relu sans son compagnon n'a plus la marque, le nom la remplace
 SUFFIX = f' — {FONT}'
+#: dans la marque d'une copie : {id d'un objet de la copie : [id de l'objet d'origine, sa signature à la copie]}
+OBJECTS = 'objets'
 
 
 def _walk(items):
@@ -49,10 +52,88 @@ def copies(doc) -> dict:
             out[de] = L
     by_name = {L.name: L for L in doc.layers}
     for L in doc.layers:
-        c = by_name.get(L.name + SUFFIX)
+        c = by_name.get(L.name + SUFFIX) if isinstance(L.name, str) else None
         if c is not None and c is not L and L.id not in out:
             out[L.id] = c
     return out
+
+
+def signature(it) -> str:
+    """Empreinte d'un objet, sans ses identifiants, ni le tracé d'un texte (recalculé), ni les données TypeEdit :
+    changée, l'objet a été modifié."""
+    import hashlib
+    import json
+    from ..io import native
+
+    def bare(d: dict) -> dict:
+        out = {k: v for k, v in d.items() if k not in ('id', 'children', 'data', 'outline', 'extra')}
+        out['extra'] = {k: v for k, v in (d.get('extra') or {}).items() if not str(k).startswith('vnd')}
+        if 'children' in d:
+            out['children'] = [bare(c) for c in d['children']]
+        if 'data' in d:
+            out['data'] = hashlib.sha256(str(d['data']).encode('ascii', 'replace')).hexdigest()
+        return out
+    raw = json.dumps(bare(native._item_out(it)), sort_keys=True, ensure_ascii=True, default=str)
+    return hashlib.sha256(raw.encode('ascii')).hexdigest()[:24]
+
+
+def for_vnd(layers: list) -> tuple[list, dict]:
+    """Les calques tels qu'un VND les écrit (demande du 19/11 : « ouverture TE produit un calque dupliqué VD géo…
+    peut-on éviter cela ? ») : la copie en VD Géo d'un calque n'y est pas en plus de lui. Montrée, elle est écrite à sa
+    place, sous son nom et son id : ses objets dans son ordre, chacun resté tel que copié remplacé par l'objet d'origine
+    (le texte TypeEdit dans sa police, que TypeEdit redessine sur un poste qui l'a), les autres (modifiés, ajoutés)
+    tels quels — seulement si l'original est caché (les deux montrés : les deux écrits, comme deux calques). Cachée (la
+    police est là), l'original seul ; le compagnon la garde. Une copie sans correspondance de ses objets (marquée avant
+    0.956.0, ou retrouvée par son nom) : comme avant, l'original écrit devant elle, montré, elle cachée — ses textes
+    TypeEdit ne passent jamais en courbes. Les calques ne sont pas touchés (calques à part pour ce qui change). Rend
+    (calques, {id() d'un calque écrit : {'sorte': 'fusion' | 'devant' | 'derriere' | 'cachee', 'copie', 'original',
+    'repris', 'retires'}}) : 'cachee' est rangée sous l'original, écrit tel quel, dont la copie n'est pas écrite."""
+    import types
+    by_id = {L.id: L for L in layers}
+    skip, put, info = set(), {}, {}
+    for de, c in copies(types.SimpleNamespace(layers=layers)).items():
+        L = by_id.get(de)
+        if L is None or L is c:
+            continue
+        if not c.visible:
+            skip.add(c.id)
+            info[id(L)] = {'sorte': 'cachee', 'copie': c, 'original': L, 'repris': 0, 'retires': 0}
+            continue
+        if L.visible:                                    # les deux montrés : deux calques, rien de fusionné
+            continue
+        objs = ((c.extra or {}).get(MARK) or {}).get(OBJECTS)
+        if not isinstance(objs, dict) or not objs:       # pas de correspondance : l'original devant, la copie cachée
+            o = Layer(name=L.name, items=L.items, visible=True, locked=L.locked, id=L.id, extra=L.extra, tool=L.tool)
+            h = Layer(name=c.name, items=c.items, visible=False, locked=c.locked, id=c.id, extra=c.extra, tool=c.tool)
+            put[c.id] = [o, h]
+            skip.add(L.id)
+            info[id(o)] = {'sorte': 'devant', 'copie': c, 'original': L, 'repris': 0, 'retires': 0}
+            info[id(h)] = {'sorte': 'derriere', 'copie': c, 'original': L, 'repris': 0, 'retires': 0}
+            continue
+        kept = {it.id: it for it in L.items}
+        items, used = [], set()
+        for it in c.items:
+            e = objs.get(it.id)
+            o = kept.get(e[0]) if isinstance(e, (list, tuple)) and len(e) == 2 else None
+            if o is not None and id(o) not in used and signature(it) == e[1]:
+                items.append(o)
+                used.add(id(o))
+            else:
+                items.append(it)
+        here = {it.id for it in c.items}
+        mapped = {e[0] for cid, e in objs.items() if cid in here and isinstance(e, (list, tuple)) and e}
+        gone = sum(1 for it in L.items if it.id not in mapped)            # objets d'origine supprimés de la copie
+        m = Layer(name=L.name, items=items, visible=True, locked=c.locked, id=L.id, extra=dict(L.extra or {}),
+                  tool=L.tool)
+        put[c.id] = [m]
+        skip.add(L.id)
+        info[id(m)] = {'sorte': 'fusion', 'copie': c, 'original': L, 'repris': len(used), 'retires': gone}
+    out = []
+    for L in layers:
+        if L.id in skip:
+            continue
+        out.extend(put.get(L.id, [L]))
+    return out, info
 
 
 def missing(doc) -> dict:
@@ -167,7 +248,8 @@ def copy_layers(doc) -> tuple[int, list[str], list, list[str]]:
                     _to_vd_geo(it, table)                  # avant d'oublier l'objet TypeEdit : ses boîtes servent
                     n += 1
                 drop_source_object(it)
-            c.extra[MARK] = {'de': L.id, 'polices': here}
+            c.extra[MARK] = {'de': L.id, 'polices': here,      # objet copié → objet d'origine (VND écrit : `for_vnd`)
+                             OBJECTS: {cit.id: [it.id, signature(cit)] for cit, it in zip(c.items, L.items)}}
             names.update(here)
             L.visible = False
             if act is L:                                   # calque actif (ou premier calque, sans calque actif)

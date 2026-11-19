@@ -1,5 +1,7 @@
 """Round 751 : un VND s'ouvre toujours sur un dessin dans TypeEdit 13, qui n'affiche à l'ouverture que son
-premier plan : un premier plan vide ou masqué passe après le premier plan qui a quelque chose à montrer."""
+premier plan : un premier plan vide ou masqué passe après le premier plan qui a quelque chose à montrer. Depuis
+0.956.0 (round 1099 : « Respecter l'ordre des calques TE-VD »), c'est un réglage, décoché d'office : ces essais le
+cochent."""
 import os
 import struct
 import tempfile
@@ -21,6 +23,7 @@ def written(layers):
     d = Document()
     d.plate = Plate(100, 50)
     d.layers = layers
+    d.extra['vnd_premier_plan'] = True                   # réglage « premier calque montré en tête »
     data, report = vnd_write.write_document(d)
     root, _ar = vnd.parse(data)
     plans = [(c.fields['layer_name'], struct.unpack_from('<IIII', c.fields['attrs']), len(c.children))

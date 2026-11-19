@@ -1,6 +1,7 @@
 """Round 1000 : trois réponses du 14/11 — les symboles créés ont leurs textes TypeEdit modifiables d'office (16) ; à
 l'écriture d'un VND, la copie en VD Géo d'un calque dont la police manque passe derrière son calque d'origine, que
-TypeEdit ouvre (17) ; la liste « Imprimer » dans l'ordre sélection, page BAT, plaque, tout (18)."""
+TypeEdit ouvre (17 ; depuis le round 1099, elle est écrite à sa place, pas en plus) ; la liste « Imprimer » dans
+l'ordre sélection, page BAT, plaque, tout (18)."""
 import os
 import pathlib
 import struct
@@ -118,56 +119,89 @@ class SymbolTexts(unittest.TestCase):
             close(w)
 
 
-class CopyBehind(unittest.TestCase):
+def pair(name='Plan 1'):
+    """(original caché, sa copie en VD Géo montrée, marquée comme `copy_layers` la marque)."""
+    orig, copy = Layer(name=name), Layer(name=name + MF.SUFFIX)
+    orig.items.append(text('Plaque 12', MISSING))
+    orig.visible = False
+    copy.items.append(text('Plaque 12', MF.FONT))
+    copy.extra = {MF.MARK: {'de': orig.id, 'polices': [MISSING],
+                            MF.OBJECTS: {copy.items[0].id: [orig.items[0].id, MF.signature(copy.items[0])]}}}
+    return orig, copy
 
-    def layers(self):
-        orig, copy = Layer(name='Plan 1'), Layer(name='Plan 1' + MF.SUFFIX)
-        orig.items.append(text('Plaque 12', MISSING))
-        orig.visible = False
-        copy.items.append(text('Plaque 12', MF.FONT))
-        copy.extra = {MF.MARK: {'de': orig.id, 'polices': [MISSING]}}
-        return orig, copy
 
-    def test_the_original_first_and_visible(self):
-        orig, copy = self.layers()
-        report = []
-        out = W._calques([copy, orig], report)                      # dans le dessin : la copie devant, montrée
-        self.assertEqual([c.fields['layer_name'] for c in out], [orig.name, copy.name])
-        self.assertEqual((flags(out[0])[1], flags(out[0])[3]), (1, 1))      # courant, visible : celui que TypeEdit ouvre
-        self.assertEqual((flags(out[1])[1], flags(out[1])[3]), (0, 0))      # la copie cachée
-        self.assertTrue(any('VD Géo' in r and orig.name in r for r in report), report)
-        self.assertEqual((orig.visible, copy.visible), (False, True))       # le dessin n'a pas changé
+def planes(data):
+    """[(nom, (verrouillé, courant, outil, visible), nombre d'objets)] des plans d'un VND."""
+    root, _ = vnd.parse(data)
+    return [(c.fields['layer_name'], flags(c), len(c.children)) for c in root.children if c.cls.name == 'CCalque']
+
+
+def doc_of(*layers):
+    d = Document()
+    d.layers = list(layers)
+    return d
+
+
+class CopyMerged(unittest.TestCase):
+    """Round 1099 (demande du 19/11 : « ouverture TE produit un calque dupliqué VD géo… peut-on éviter cela ? ») : la
+    copie n'est plus écrite derrière son calque, mais à sa place."""
+
+    def test_the_copy_written_in_place_of_its_original(self):
+        orig, copy = pair()
+        d = doc_of(copy, orig)
+        data, report = W.write_document(d)
+        (name, f, n), = planes(data)
+        self.assertEqual((name, f[1], f[3], n), (orig.name, 1, 1, 1))     # un plan, sous le nom d'origine, montré
+        self.assertTrue(any('VD Géo' in r and f'« {orig.name} »' in r and "1 objet(s) TypeEdit d'origine" in r
+                            for r in report), report)
+        self.assertEqual([L.name for L in d.layers], [copy.name, orig.name])   # le dessin n'a pas changé
+        self.assertEqual((copy.visible, orig.visible), (True, False))
+        layers, info = MF.for_vnd(d.layers)
+        self.assertEqual(len(layers), 1)
+        self.assertIs(layers[0].items[0], orig.items[0])                    # l'objet d'origine, resté tel que copié
+        self.assertEqual(layers[0].id, orig.id)
+        (p,) = info.values()
+        self.assertEqual((p['sorte'], p['repris']), ('fusion', 1))
+
+    def test_modified_or_added_written_as_shown(self):
+        orig, copy = pair()
+        copy.items[0].matrix = Affine.translation(30, 50)                  # déplacé dans VectorDrive
+        copy.items.append(rect())                                           # ajouté
+        layers, _info = MF.for_vnd([copy, orig])
+        self.assertIs(layers[0].items[0], copy.items[0])
+        self.assertIs(layers[0].items[1], copy.items[1])
+        _data, report = W.write_document(doc_of(copy, orig))
+        self.assertTrue(any('2 modifié(s) ou ajouté(s)' in r for r in report), report)
+
+    def test_hidden_copy_not_written(self):
+        orig, copy = pair()
+        orig.visible, copy.visible = True, False                            # la police est là : l'original montré
+        layers, info = MF.for_vnd([copy, orig])
+        self.assertEqual(layers, [orig])
+        self.assertEqual([p['sorte'] for p in info.values()], ['cachee'])   # le compagnon la rendra
+        data, report = W.write_document(doc_of(copy, orig))
+        self.assertEqual([p[0] for p in planes(data)], [orig.name])
+        self.assertFalse([r for r in report if 'VD Géo' in r], report)
 
     def test_found_by_its_name_alone(self):
-        orig, copy = self.layers()
-        copy.extra = {}                                             # VND relu sans son compagnon : plus de marque
-        out = W._calques([copy, orig], [])
-        self.assertEqual([c.fields['layer_name'] for c in out], [orig.name, copy.name])
-        self.assertEqual([flags(c)[3] for c in out], [1, 0])
+        orig, copy = pair()
+        copy.extra = {}                                                     # VND relu sans son compagnon : plus de marque
+        layers, _info = MF.for_vnd([copy, orig])
+        self.assertEqual([(L.name, L.visible) for L in layers], [(orig.name, True), (copy.name, False)])
+        self.assertIs(layers[0].items, orig.items)          # sans correspondance : comme avant, l'original devant
 
     def test_other_layers_keep_their_place(self):
-        orig, copy = self.layers()
+        orig, copy = pair()
         other, hidden = Layer(name='Autre'), Layer(name='Cachée')
         other.items.append(rect())
         hidden.items.append(rect())
         hidden.visible = False
-        out = W._calques([hidden, other, copy, orig], [])
-        self.assertEqual([c.fields['layer_name'] for c in out], ['Autre', 'Cachée', orig.name, copy.name])
-        self.assertEqual([flags(c)[3] for c in out], [1, 0, 1, 0])
-        self.assertEqual([flags(c)[1] for c in out], [1, 0, 0, 0])
-
-    def test_only_a_shown_copy_with_its_original(self):
-        orig, copy = self.layers()
-        self.assertEqual([flags(c)[3] for c in W._calques([copy], [])], [1])   # sans son original : un calque comme un autre
-        report = []
-        W._calques([copy, orig], report)
-        self.assertEqual(len([r for r in report if 'VD Géo' in r]), 1)         # dit une fois
-        orig.visible, copy.visible = True, False                    # la police est là : l'original montré
-        report = []
-        out = W._calques([copy, orig], report)
-        self.assertEqual([c.fields['layer_name'] for c in out], [orig.name, copy.name])   # le montré devant, comme avant
-        self.assertEqual([flags(c)[3] for c in out], [1, 0])
-        self.assertFalse([r for r in report if 'VD Géo' in r])
+        data, report = W.write_document(doc_of(hidden, other, copy, orig))
+        p = planes(data)
+        self.assertEqual([x[0] for x in p], ['Cachée', 'Autre', orig.name])  # l'ordre du dessin (round 1099)
+        self.assertEqual([x[1][3] for x in p], [0, 1, 1])
+        self.assertEqual([x[1][1] for x in p], [1, 0, 0])
+        self.assertTrue(any('masqué' in r and 'page blanche' in r for r in report), report)
 
     def test_reread_shows_the_copy_again(self):
         tmp = pathlib.Path(tempfile.mkdtemp(prefix='vd1000_'))
@@ -181,13 +215,16 @@ class CopyBehind(unittest.TestCase):
         w = window()
         try:
             self.assertTrue(w.open_path(str(src)))
-            self.assertEqual([L.name.endswith(MF.SUFFIX) for L in w.canvas.doc.layers], [True, False])
+            doc = w.canvas.doc
+            self.assertEqual([L.name.endswith(MF.SUFFIX) for L in doc.layers], [True, False])
+            cl = doc.layers[0]
+            k = next(i for i, it in enumerate(cl.items) if isinstance(it, Shape))
+            x0 = cl.items[k].bbox()[0]
+            cl.items[k] = cl.items[k].transformed(Affine.translation(5, 0))   # modifié dans VectorDrive
             out = tmp / 'reecrit.vnd'
             self.assertTrue(w._write(str(out)))
-            root, _ = vnd.parse(out.read_bytes())
-            cq = [c for c in root.children if c.cls.name == 'CCalque']
-            self.assertEqual([c.fields['layer_name'].endswith(MF.SUFFIX) for c in cq], [False, True])
-            self.assertEqual([flags(c)[3] for c in cq], [1, 0])
+            (name, f, n), = planes(out.read_bytes())                       # un seul plan : pas de calque en double
+            self.assertEqual((name, f[3], n), ('Plan 1', 1, 2))
             for companion in (True, False):
                 if not companion:
                     from vectordrive.io import companion as C
@@ -195,11 +232,13 @@ class CopyBehind(unittest.TestCase):
                 self.assertTrue(w.open_path(str(out)))
                 doc = w.canvas.doc
                 by = {L.name.endswith(MF.SUFFIX): L for L in doc.layers}
-                self.assertEqual(len(doc.layers), 2)
+                self.assertEqual(len(doc.layers), 2, companion)
                 self.assertEqual((by[True].visible, by[False].visible), (True, False), companion)   # la copie montrée
-                if companion:                                # sans lui, le texte en VD Géo est relu en courbes
-                    self.assertEqual([it.font for it in by[True].items if isinstance(it, Text)], [MF.FONT])
-                self.assertEqual([it.font for it in by[False].items if isinstance(it, Text)], [MISSING])
+                self.assertEqual([it.font for it in by[True].items if isinstance(it, Text)], [MF.FONT], companion)
+                self.assertEqual([it.font for it in by[False].items if isinstance(it, Text)], [MISSING], companion)
+                self.assertTrue(all(it.extra.get('vnd_obj') is not None for it in by[False].items if isinstance(it, Text)))
+                moved = [it.bbox()[0] for it in by[True].items if isinstance(it, Shape)]
+                self.assertTrue(any(abs(x - (x0 + 5)) < 1e-3 for x in moved), (companion, moved, x0))
                 self.assertEqual(doc.active_layer.name, by[True].name, companion)   # pas le calque caché
         finally:
             close(w)
@@ -240,9 +279,12 @@ class Companion(unittest.TestCase):
             self.assertEqual((copy.visible, orig.visible), (True, False), name)
             t0 = [it for it in orig.items if isinstance(it, Text)]
             self.assertEqual([t.font for t in t0], [MISSING], name)         # l'original garde son texte TypeEdit
-            self.assertTrue(all('vnd_obj' in t.extra for t in t0), name)
+            self.assertTrue(t0 and all(t.extra.get('vnd_obj') is not None for t in t0), name)   # l'objet TypeEdit lui-même
             self.assertEqual([t.font for t in copy.items if isinstance(t, Text)], [MF.FONT], name)
         self.assertFalse([r for r in doc.report if 'maintenant installée' in r], doc.report)
+
+    def names(self, path):
+        return [p[0] for p in planes(path.read_bytes())]
 
     def test_the_pair_behind_another_layer(self):
         w = self.w
@@ -252,11 +294,9 @@ class Companion(unittest.TestCase):
         w.canvas.doc.layers.insert(0, other)                        # [autre, copie, original]
         out = self.tmp / 'trois.vnd'
         self.assertTrue(w._write(str(out)))
-        root, _ = vnd.parse(out.read_bytes())
-        names = [c.fields['layer_name'] for c in root.children if c.cls.name == 'CCalque']
-        self.assertEqual([n.endswith(MF.SUFFIX) for n in names], [False, False, True])
-        self.assertEqual(names[0], 'Autre')
+        self.assertEqual(self.names(out), ['Autre', 'Plan 1'])      # la copie à la place de son calque
         self.assertTrue(w.open_path(str(out)))
+        self.assertEqual([L.name for L in w.canvas.doc.layers][0], 'Autre')
         self.assertEqual(len(w.canvas.doc.layers), 3)
         self.check(w.canvas.doc, 1)
         self.assertTrue(w._write(str(out)))                         # réécrit puis relu : toujours intact
@@ -269,9 +309,7 @@ class Companion(unittest.TestCase):
         self.assertEqual(len(w.canvas.doc.layers), 4)               # [copie A, A, copie B, B]
         out = self.tmp / 'deux.vnd'
         self.assertTrue(w._write(str(out)))
-        root, _ = vnd.parse(out.read_bytes())
-        names = [c.fields['layer_name'] for c in root.children if c.cls.name == 'CCalque']
-        self.assertEqual([n.endswith(MF.SUFFIX) for n in names], [False, True, False, True])   # chaque original devant
+        self.assertEqual(self.names(out), ['Plan 1', 'Plan 2'])
         self.assertTrue(w.open_path(str(out)))
         self.assertEqual(len(w.canvas.doc.layers), 4)
         self.check(w.canvas.doc, 2)
@@ -289,52 +327,61 @@ class Companion(unittest.TestCase):
         self.assertIs(doc.active_layer, orig)
         self.assertTrue([r for r in doc.report if 'maintenant installée' in r], doc.report)
 
+    def test_vnd_retouched_in_typeedit(self):
+        from vectordrive.io import companion as C
+        w = self.w
+        self.assertTrue(w.open_path(str(self.source())))
+        out = self.tmp / 'retouche.vnd'
+        self.assertTrue(w._write(str(out)))
+        with mock.patch.object(C, '_sha', return_value='0' * 64):   # le VND a changé depuis : il fait foi
+            self.assertTrue(w.open_path(str(out)))
+        doc = w.canvas.doc
+        self.assertTrue([r for r in doc.report if 'a changé' in r], doc.report)
+        self.assertEqual(len(doc.layers), 2)                        # la copie refaite à l'ouverture
+        self.check(doc, 1)
+
 
 class Order(unittest.TestCase):
 
-    def pair(self, name='Plan 1'):
-        orig, copy = Layer(name=name), Layer(name=name + MF.SUFFIX)
-        orig.items.append(text('Plaque 12', MISSING))
-        orig.visible = False
-        copy.items.append(text('Plaque 12', MF.FONT))
-        copy.extra = {MF.MARK: {'de': orig.id, 'polices': [MISSING]}}
-        return orig, copy
-
-    def test_the_order_is_a_function_shared_with_the_companion(self):
-        orig, copy = self.pair()
-        other = Layer(name='Autre')
+    def test_the_order_of_the_drawing(self):
+        other, hidden = Layer(name='Autre'), Layer(name='Cachée')
         other.items.append(rect())
-        order, behind = W.layer_order([other, copy, orig])
-        self.assertEqual((order, behind), ([0, 2, 1], {copy.id: orig.id}))
-        o2, c2 = self.pair('Plan 2')
-        self.assertEqual(W.layer_order([copy, orig, c2, o2])[0], [1, 0, 3, 2])
-        hidden = Layer(name='Cachée')
         hidden.items.append(rect())
         hidden.visible = False
-        self.assertEqual(W.layer_order([hidden, other])[0], [1, 0])        # comme avant : le montré devant
+        self.assertEqual(W.write_order([hidden, other]), [0, 1])                # l'ordre du dessin (round 1099)
+        self.assertEqual(W.write_order([hidden, other], None, True), [1, 0])    # réglage : le montré devant
+        from vectordrive.io import companion
+        self.assertEqual(companion._in_vnd_order([hidden, other], [hidden, other], 'dessin'), [0, 1])
+        self.assertEqual(companion._in_vnd_order([other, hidden], [hidden, other], 'premier'), [1, 0])
+
+    def test_companions_written_before_still_read(self):
+        orig, copy = pair()
+        other = Layer(name='Autre')
+        other.items.append(rect())
+        order, behind = W.layer_order([other, copy, orig])                  # l'ordre d'avant 0.956.0
+        self.assertEqual((order, behind), ([0, 2, 1], {copy.id: orig.id}))
+        o2, c2 = pair('Plan 2')
+        self.assertEqual(W.layer_order([copy, orig, c2, o2])[0], [1, 0, 3, 2])
         from vectordrive.io import companion
         self.assertEqual(companion._in_vnd_order([other, orig, copy], [other, copy, orig]), [0, 2, 1])
         self.assertEqual(companion._in_vnd_order([orig, copy, o2, c2], [copy, orig, c2, o2]), [1, 0, 3, 2])
 
     def test_report_lines(self):
-        orig, copy = self.pair()
-        orig.items.clear()                                          # rien à écrire : TypeEdit ouvrirait une page blanche
-        report = []
-        out = W._calques([copy, orig], report)
-        self.assertEqual(out[0].fields['layer_name'], copy.name)
-        self.assertEqual(flags(out[0])[3], 1)                       # la copie reste en tête, visible
-        self.assertFalse([r for r in report if 'ouvrira sur le plan' in r], report)
-        orig, copy = self.pair()
-        other = Layer(name='Autre')
+        other, hidden = Layer(name='Autre'), Layer(name='Cachée')
         other.items.append(rect())
+        hidden.items.append(rect())
+        hidden.visible = False
         report = []
-        W._calques([other, copy, orig], report)                     # « Autre » en tête : TypeEdit ouvre sur lui
-        self.assertTrue([r for r in report if 'écrite derrière lui' in r], report)
-        self.assertFalse([r for r in report if 'ouvrira sur le plan' in r], report)
-        copy.items.append(rect())                                   # dessiné après l'ouverture, dans la copie
+        out = W._calques([hidden, other], report)
+        self.assertEqual(out[0].fields['layer_name'], 'Cachée')
+        self.assertTrue([r for r in report if 'masqué' in r and 'page blanche' in r], report)
         report = []
-        W._calques([copy, orig], report)
-        self.assertTrue([r for r in report if 'ne les montrera pas' in r], report)
+        out = W._calques([hidden, other], report, True)
+        self.assertEqual(out[0].fields['layer_name'], 'Autre')
+        self.assertTrue([r for r in report if 'écrit en premier' in r], report)
+        report = []
+        W._calques([other, hidden], report)
+        self.assertEqual(report, [])
 
     def test_export_as_a_symbol_follows_the_setting(self):
         from vectordrive.io import smb

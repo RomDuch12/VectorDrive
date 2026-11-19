@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.952.0
+# Command guide — VectorDrive 0.956.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -304,8 +304,6 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Rectangle distance (X, Y, XY) | Shift+D | Rectangle distance (TypeEdit): click the start, click the end — the rectangle of both points, its X and Y sides and the XY diagonal (F3 snapping advised) |
 | Measure a radius |  | Measure a radius: click a circle, an arc or a curve — radius and diameter, angle and length of an arc, radius of curvature of a curve at the clicked point |
 | Measure an angle |  | Measure an angle: click two straight lines, on the side of the wanted angle; elsewhere, three clicks — the vertex then a point on each side (F3: snap to points) |
-| Bounding frame | E | Rectangle right around the selection (or the whole drawing), no margin, at once |
-| Bounding frame… |  | Rectangle (or ellipse) around the selection, with margin and rounded corners |
 
 ### Node mode
 
@@ -585,6 +583,8 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Stretch |  | Stretch: two corners of a crossing window, then a base point and its destination; nodes inside the window move, segments to the others stretch (shapes of the selection, otherwise all) |
 | Scale by reference |  | Scale by reference: base point, end of the reference length, then the new length (3rd click from the base point, or Enter to type it) |
 | Rotate by reference |  | Rotate by reference: centre, reference direction (an edge of the object), then the wanted direction (3rd click, or Enter to type the angle) |
+| Bounding frame | E | Rectangle right around the selection (or the whole drawing), no margin, at once |
+| Bounding frame… |  | Rectangle (or ellipse) around the selection, with margin and rounded corners |
 
 ### Alignment
 
@@ -1024,6 +1024,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Plugins |  | Options (F10), “Plugins” tab |
 | Performance |  | Options (F10), “Performance” tab |
 | Assistant |  | Options (F10), “Assistant” tab |
+| Shortcuts |  | Options (F10), “Shortcuts” tab |
 
 ### Configuration
 
@@ -1031,6 +1032,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 |---|---|---|
 | Options | F10 |  |
 | Keyboard shortcuts |  | Shortcut set (TypeEdit or VectorDrive), import of a TeTurboKey.ini, per-command settings |
+| Favourites… |  | The favourites (button bar at the top): add, remove, arrange, labels |
 | Export parameters… |  | Settings (options, theme, shortcuts, ribbon…), tools, templates and themes in one file, for another computer or as a backup |
 | Import parameters… |  | Load parameters exported from another computer (whatever is replaced is backed up first) |
 | Mouse | F5 | Mouse use (F5): wheel to zoom or scroll, right-click role |

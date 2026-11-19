@@ -1941,9 +1941,9 @@ class MainWindow(QMainWindow):
         a('text_arc', tr('En arc'), lambda _=False: self.text_on_arc(), None, 'text_arc',
           tip=tr('Mettre en arc le texte sélectionné, ou un nouveau texte (sur le cercle sélectionné ou au centre de la vue) ; '
                  'Ctrl+clic : par les angles'))
-        a('symbols', tr('Bibliothèque'), self._toggle_symbols, 'Ctrl+Shift+Y', 'group', checkable=True,
+        a('symbols', tr('Bibliothèque'), self._toggle_symbols, 'Ctrl+Shift+Y', 'library', checkable=True,
           tip=tr('Panneau de la bibliothèque : symboles, DXF et dessins de l\'atelier, rangés en dossiers'))
-        a('library_big', tr('Bibliothèque (fenêtre)'), lambda: self.toggle_library_window(), None, 'group',
+        a('library_big', tr('Bibliothèque (fenêtre)'), lambda: self.toggle_library_window(), None, 'library',
           tip=tr('Bibliothèque (TypeEdit : B) dans sa fenêtre, à tout l\'écran : dossiers, grandes vignettes, '
                  'aperçu ; de nouveau B pour la fermer'))
         # accrochage (TypeEdit : F3 ; Ctrl+D / Ctrl+F mode précédent / suivant)
@@ -2392,6 +2392,8 @@ class MainWindow(QMainWindow):
           tip=tr('Inverser le sens de parcours des contours sélectionnés'))
         a('update', tr('Mises à jour'), lambda: self.check_updates(silent=False), None, 'update',
           tip=tr('Rechercher une nouvelle version'))
+        a('favorites', tr('Favoris…'), lambda _=False: self.favorites_dialog(), None, 'star',
+          tip=tr('Les favoris (barre de boutons du haut) : ajouter, retirer, ranger, libellés'))
         a('shortcuts', tr('Raccourcis clavier'), self.shortcuts_dialog, None, 'options',
           tip=tr('Jeu de raccourcis (TypeEdit ou VectorDrive), import d\'un TeTurboKey.ini, réglage par commande'))
         a('node_start', tr('Point de départ'), lambda _=False: self.node_start(), 'O', 'node',
@@ -2476,6 +2478,7 @@ class MainWindow(QMainWindow):
         title = getattr(self, 'text_tab_title', None)
         if title is not None and 0 <= i < r.count() and r.tabText(i) == title and prev != i:
             self._text_tab_back = prev
+        self._ribbon_prev = prev                         # l'onglet d'avant (Mode Point : celui qui revient)
         self._ribbon_cur = i
 
     def _ribbon_tab_clicked(self, i: int) -> None:
@@ -2722,6 +2725,7 @@ class MainWindow(QMainWindow):
         g = t.group(tr('Configuration'))
         g.add(A['options'])
         g.add(A['shortcuts'], big=False)
+        g.add(A['favorites'], big=False)
         g.add(A['settings_export'], big=False)
         g.add(A['settings_import'], big=False)
         g.add(A['mouse_settings'], big=False)
@@ -2828,8 +2832,6 @@ class MainWindow(QMainWindow):
         g.add(A['tool_measure_rect'], big=False)
         g.add(A['tool_measure_radius'], big=False)
         g.add(A['tool_measure_angle'], big=False)
-        g.add(A['bbox_frame'], big=False)
-        g.add(A['bbox_frame_options'], big=False)
         g = t.group(tr('Mode Point'))
         g.add(A['tool_node'])
         for k in ('node_delete', 'node_break', 'join', 'node_line', 'node_curve', 'node_on_curve',
@@ -2895,7 +2897,7 @@ class MainWindow(QMainWindow):
             g.add(A[k])
         for k in ('mirror_axis', 'rot-90', 'rot_free', 'rotate_mouse', 'move_by', 'transform_again', 'transform_again_copy',
                   'transform_each', 'tool_axis_v', 'tool_axis_h', 'tool_align_points',
-                  'tool_stretch', 'tool_scale_ref', 'tool_rotate_ref'):
+                  'tool_stretch', 'tool_scale_ref', 'tool_rotate_ref', 'bbox_frame', 'bbox_frame_options'):
             g.add(A[k], big=False)
         g = t.group(tr('Alignement'))
         for k in ('align_left', 'align_hcenter', 'align_right', 'align_top', 'align_vcenter',
@@ -3999,6 +4001,34 @@ class MainWindow(QMainWindow):
             self._refresh_layer_tabs()
         else:
             self.canvas.set_solo(None)
+        self._layers_follow_tabs()
+
+    #: réglage : le panneau Calques a été masqué par les onglets de calques (rendu quand ils se ferment)
+    LAYERS_HIDDEN_KEY = 'vue/calques_masques_par_onglets'
+
+    def _layers_follow_tabs(self) -> None:
+        """Calques en onglets (demande du 19/11) : le panneau Calques de la colonne est masqué, les onglets et leur
+        liste « Calques » le remplacent ; les onglets fermés, il revient s'ils l'avaient masqué (aussi d'une session à
+        l'autre). Montré à la main, onglets ouverts, il reste montré jusqu'à la prochaine ouverture des onglets."""
+        from PySide6.QtWidgets import QDockWidget
+        dock = self.findChild(QDockWidget, 'layers')
+        if dock is None or 'layer_tabs' not in getattr(self, 'A', {}):
+            return
+        hidden = self.settings.value(self.LAYERS_HIDDEN_KEY, False) in (True, 'true')
+        if self.A['layer_tabs'].isChecked():
+            if not dock.isHidden() and not getattr(self, '_layers_tabs_shown', False):
+                dock.setVisible(False)
+                self.settings.setValue(self.LAYERS_HIDDEN_KEY, True)
+            self._layers_tabs_shown = True
+        else:
+            self._layers_tabs_shown = False
+            if hidden:
+                self.settings.remove(self.LAYERS_HIDDEN_KEY)
+                cols = getattr(self, 'columns', None)
+                side = cols.side(dock) if cols is not None else None
+                if dock.isHidden() and (side is None or cols.shown(side)):     # pas dans une colonne masquée
+                    dock.setVisible(True)
+                    dock.raise_()
 
     def _refresh_layer_tabs(self) -> None:
         """Un onglet par calque (couleur de son outil) : l'onglet regardé est
@@ -5170,6 +5200,7 @@ class MainWindow(QMainWindow):
             fav = key in self.favorite_keys()
             m.addAction(tr('Retirer des favoris (barre du haut)') if fav else tr('Ajouter aux favoris (barre du haut)'),
                         lambda _=False, k=key, on=not fav: self.add_favorite(k) if on else self.remove_favorite(k))
+            m.addAction(icon('star'), tr('Gérer les favoris…'), lambda: self.favorites_dialog())
             m.addSeparator()
             for rank, t in enumerate(load_all(self.settings)):
                 m.addAction(icon('new'), tr('Ajouter à « {0} »').format(t['titre']),
@@ -5202,6 +5233,9 @@ class MainWindow(QMainWindow):
     TE_TEXT_CONTEXTS = ('idContextRapido',)
     #: commandes de la barre d'accès rapide qui ouvrent un onglet contextuel
     TE_QUICK_CONTEXTS = {'ID_MANIPULER_ZONE_ALIGNER': '1003'}
+    #: commandes de VectorDrive ajoutées au groupe d'un onglet contextuel de TypeEdit (clé → commandes), s'il ne les
+    #: a pas : Cadre englobant dans Manipulation (demande du 19/11)
+    TE_CONTEXT_EXTRA = {'1002': ('bbox_frame', 'bbox_frame_options'), '1010': ('bbox_frame', 'bbox_frame_options')}
 
     def ribbon_layout_name(self) -> str:
         """« vectordrive » ou « typeedit13 » (option, ou selon le thème)."""
@@ -5440,6 +5474,17 @@ class MainWindow(QMainWindow):
                 r.removeTab(idx)
                 w.deleteLater()
                 continue
+            extra = [A[k] for k in self.TE_CONTEXT_EXTRA.get(str(key), ()) if k in A]
+            if extra and page.groups():
+                acts = {gr: [getattr(b, 'defaultAction', lambda: None)() for b, _big in gr._entries]
+                        for gr in page.groups()}
+                # le groupe du titre de l'onglet (Manipulation), sinon le premier qui n'est pas celui de Retour
+                g = next((gr for gr in acts if gr.title.text() == tab.title and back not in acts[gr]),
+                         next((gr for gr in acts if back not in acts[gr]), None))
+                have = {id(a) for v in acts.values() for a in v if a is not None}
+                for a in extra if g is not None else ():
+                    if id(a) not in have:
+                        g.add(a, big=False)
             if str(key) in self.TE_TEXT_CONTEXTS and getattr(self, 'textbar_te', None) is None:
                 from .textbar import TextFormat
                 self.textbar_te = TextFormat(self, page, compact=True)     # police, hauteur, …, préréglages
@@ -5489,6 +5534,7 @@ class MainWindow(QMainWindow):
         """Bouton Mode / Opérations de TypeEdit : son onglet contextuel paraît
         (les autres se ferment) ; la commande liée, s'il y en a une, part."""
         r = self.ribbon
+        self._te_ctx_from = r.currentIndex()             # d'où l'on vient (Mode Point : l'onglet qui revient)
         target = -1
         for i in range(r.count()):
             k = r.widget(i).property('te_context')
@@ -6302,16 +6348,47 @@ class MainWindow(QMainWindow):
         scheme, te, custom = SC.load(self.settings)
         SC.apply(self.A, SC.effective(self._default_shortcuts, scheme, te, custom))
 
-    def shortcuts_dialog(self, exec_dialog: bool = True):
+    def shortcuts_dialog(self, exec_dialog: bool = True, embedded: bool = False):
+        """Les raccourcis clavier, dans leur fenêtre ; `embedded` : la page de l'onglet Raccourcis des options (F10),
+        rendue sans être montrée (la fenêtre des options les retient à son OK)."""
         from . import shortcuts as SC
         scheme, te, custom = SC.load(self.settings)
-        dlg = SC.dialog_class()(self, self.A, self._default_shortcuts, scheme, te, custom)
-        if not exec_dialog:
+        dlg = SC.dialog_class()(self, self.A, self._default_shortcuts, scheme, te, custom,
+                                places=self.action_places(), embedded=embedded)
+        if not exec_dialog or embedded:
             return dlg
         if dlg.exec():
             SC.save(self.settings, dlg.scheme, dlg.te_entries, dlg.custom)
             self._apply_shortcuts()
         return dlg
+
+    def action_places(self) -> dict:
+        """{clé d'une commande : « Onglet › Groupe » du ruban} : le premier endroit où elle est, parmi les onglets
+        montrés, les onglets contextuels de TypeEdit 13, puis les onglets masqués (marqués) ; boutons et leurs menus
+        (pour la fenêtre des raccourcis)."""
+        r = getattr(self, 'ribbon', None)
+        out: dict = {}
+        if r is None:
+            return out
+        keys: dict = {}
+        for k, a in self.A.items():
+            keys.setdefault(id(a), []).append(k)
+        order = [i for i in range(r.count()) if r.isTabVisible(i)]
+        order += [i for i in range(r.count()) if not r.isTabVisible(i) and r.widget(i).property('te_context')]
+        order += [i for i in range(r.count()) if i not in order]
+        for i in order:
+            page = r.page(i)
+            tab = r.tabText(i) if r.isTabVisible(i) or r.widget(i).property('te_context')                 else tr('{0} (onglet masqué)').format(r.tabText(i))
+            for g in page.groups() if page is not None else ():
+                for b, _big in g._entries:
+                    acts = [getattr(b, 'defaultAction', lambda: None)()]
+                    menu = getattr(b, 'menu', lambda: None)()
+                    if menu is not None:
+                        acts += list(menu.actions())
+                    for act in acts:
+                        for k in keys.get(id(act), ()) if act is not None else ():
+                            out.setdefault(k, f'{tab} › {g.title.text()}')
+        return out
 
     def _cam_wrap(self, kind: str):
         if not self.dock_cam.isVisible():
@@ -6561,6 +6638,36 @@ class MainWindow(QMainWindow):
         self._fav_added = []
         self._fav_host = None
 
+    def favorites_dialog(self, exec_dialog: bool = True):
+        """Les favoris (demande du 19/11 : « comment ajouter retirer changer l'ordre ») : une fenêtre pour les
+        ajouter (toutes les commandes, avec recherche), les retirer, les ranger, et les libellés ; OK les retient."""
+        from .fav_dialog import FavoritesDialog
+        dlg = FavoritesDialog(self)
+        if exec_dialog:
+            if dlg.exec():
+                dlg.apply()
+            dlg.deleteLater()
+        return dlg
+
+    def _fav_bar_menu(self, pos, exec_menu: bool = True):
+        """Clic droit sur la barre des favoris (hors d'un bouton) : les gérer, leurs libellés, les agencer."""
+        from . import fav_bar
+        m = QMenu(self)
+        m.addAction(icon('star'), tr('Gérer les favoris…'), lambda: self.favorites_dialog())
+        if self.favorite_keys():
+            a = m.addAction(tr('Afficher les libellés'))
+            a.setCheckable(True)
+            a.setChecked(fav_bar.labels_on(self.settings))
+            a.toggled.connect(self.favorite_labels)
+            a = m.addAction(tr('Agencer les favoris à la souris'))
+            a.setCheckable(True)
+            a.setChecked(bool(getattr(self, '_fav_arranging', False)))
+            a.toggled.connect(self.arrange_favorites)
+        if exec_menu:
+            m.exec(pos)
+            m.deleteLater()
+        return m
+
     def _is_favorite_button(self, button) -> bool:
         """Un bouton des favoris : de leur barre, ou ajouté par eux à la barre d'accès rapide de TypeEdit 13."""
         bar = button.parentWidget()
@@ -6629,7 +6736,8 @@ class MainWindow(QMainWindow):
             bar.setObjectName('favBar')
             bar.setIconSize(QSize(20, 20))
             bar.setMovable(False)
-            bar.setToolTip(tr('Favoris : clic droit sur un bouton du ruban pour l\'y ajouter ou l\'en retirer'))
+            bar.setToolTip(tr('Favoris : clic droit sur un bouton du ruban pour l\'y ajouter ou l\'en retirer ; clic '
+                              'droit sur la barre : Gérer les favoris…'))
             box.insertWidget(0, bar)                     # tout en haut, au-dessus du ruban
             self.fav_bar = bar
         else:
@@ -7695,6 +7803,91 @@ class MainWindow(QMainWindow):
             self._node_just_entered = True
             QTimer.singleShot(0, lambda: setattr(self, '_node_just_entered', False))
 
+    def _point_tab(self) -> int:
+        """L'onglet du ruban du Mode Point : l'onglet contextuel de TypeEdit 13, sinon l'onglet montré qui porte le
+        bouton Mode Point dans un groupe « Mode Point » ; -1 sans lui."""
+        r = getattr(self, 'ribbon', None)
+        if r is None or 'tool_node' not in self.A:
+            return -1
+        for i in range(r.count()):
+            if str(r.widget(i).property('te_context') or '') == '1000':
+                return i
+        node = self.A['tool_node']
+        for i in range(r.count()):
+            if not r.isTabVisible(i) or r.widget(i).property('te_context'):
+                continue
+            page = r.page(i)
+            for g in page.groups() if page is not None else ():
+                if g.title.text() == tr('Mode Point') and any(b.defaultAction() is node for b, _big in g._entries):
+                    return i
+        return -1
+
+    def _on_tab(self, i: int, action) -> bool:
+        r = self.ribbon
+        page = r.page(i) if 0 <= i < r.count() else None
+        return page is not None and any(getattr(b, 'defaultAction', lambda: None)() is action
+                                        for g in page.groups() for b, _big in g._entries)
+
+    def _point_ribbon(self, prev: str, key: str) -> None:
+        """Mode Point (demande du 19/11) : en y entrant, son onglet du ruban paraît ; en sortant, l'onglet d'avant
+        revient — seulement s'il est toujours sur celui du Mode Point (un autre onglet choisi entre-temps reste) ; un
+        onglet contextuel de TypeEdit 13 se referme. Déjà sur son onglet en y entrant : rien à rendre. Un outil de
+        l'onglet du Mode Point (Point de départ, Déplacer un contour) le garde. Ruban plié : rien ne change. Réglage
+        « Mode Point : montrer son onglet du ruban »."""
+        from shiboken6 import isValid
+        from .options import value
+        r = getattr(self, 'ribbon', None)
+        if r is None or prev == key:
+            return
+        if getattr(r, 'collapsed', False):
+            self._point_back = None
+            return
+        if key == 'node':
+            self._point_back = None
+            if not value(self.settings, 'vue/ruban_mode_point'):
+                return
+            i = self._point_tab()
+            if i < 0:
+                return
+            cur = r.currentIndex()
+            ctx = r.widget(i).property('te_context')
+            if cur == i:                                 # bouton Mode Point de TypeEdit : son onglet vient de s'ouvrir
+                before = getattr(self, '_te_ctx_from', -1) if ctx else -1
+                if before == i or not 0 <= before < r.count():
+                    return                               # déjà sur son onglet : rien à rendre
+            else:
+                before = cur
+            title = getattr(self, 'text_tab_title', None)
+            if title is not None and r.tabText(before) == title:         # Mise en forme, qui va se cacher
+                back = getattr(self, '_text_tab_back', -1)
+                if 0 <= back < r.count() and back != i:
+                    before = back
+            self._point_back = (r.widget(before), bool(ctx))
+            if ctx:
+                for k in range(r.count()):               # les autres onglets contextuels se ferment, comme TypeEdit
+                    if r.widget(k).property('te_context') and k != i:
+                        r.setTabVisible(k, False)
+                r.setTabVisible(i, True)
+            r.setCurrentIndex(i)
+            return
+        back = getattr(self, '_point_back', None)
+        if back is None:
+            return
+        i = self._point_tab()
+        if key != 'select' and i >= 0 and self.A.get(f'tool_{key}') is not None                 and self._on_tab(i, self.A[f'tool_{key}']):
+            return                                       # un outil de l'onglet du Mode Point : il reste
+        self._point_back = None
+        if i < 0 or r.currentIndex() != i:
+            return
+        page, ctx = back
+        k = r.indexOf(page) if page is not None and isValid(page) else -1
+        if k < 0 or not r.isTabVisible(k):
+            k = self._te_main_index() if ctx else -1
+        if k >= 0:
+            r.setCurrentIndex(k)
+        if ctx and r.currentIndex() != i:
+            r.setTabVisible(i, False)
+
     def _toggle_node_mode(self, _checked: bool = False) -> None:
         if getattr(self, '_node_just_entered', False):
             self._node_just_entered = False
@@ -7721,6 +7914,7 @@ class MainWindow(QMainWindow):
         self.canvas.tool = key
         self.canvas.snap.clear_tracking()               # nouveau mode : points repérés oubliés
         self.A[f'tool_{key}'].setChecked(True)
+        self._point_ribbon(prev, key)
         makers = {'polygon': lambda: T.RadialTool(self.canvas, 'polygon'),
                   'star': lambda: T.RadialTool(self.canvas, 'star'),
                   'spiral': lambda: T.RadialTool(self.canvas, 'spiral'),
@@ -9314,6 +9508,7 @@ class MainWindow(QMainWindow):
         from .options import value
         if isinstance(doc.extra, dict):
             doc.extra['vnd_textes_vivants'] = bool(value(self.settings, 'vnd/textes_vivants'))
+            doc.extra['vnd_premier_plan'] = bool(value(self.settings, 'vnd/premier_plan_montre'))
 
     def save_filters(self) -> list:
         """Filtres d'« Enregistrer sous » : [(libellé, extensions)] — VDZ, VND, puis tous les formats qu'on sait
@@ -10054,6 +10249,8 @@ class MainWindow(QMainWindow):
         """Les panneaux viennent d'être remis comme à la dernière session (sans signal) : les boutons de colonne et
         les commandes des panneaux disent ce qui est montré."""
         self._panels_restored = True
+        self._layers_tabs_shown = False                  # onglets de calques ouverts : le panneau Calques masqué
+        self._layers_follow_tabs()
         cols = getattr(self, 'columns', None)
         if cols is not None:
             self.dock_actions_follow()
@@ -10845,6 +11042,9 @@ class MainWindow(QMainWindow):
         r = getattr(self, 'ribbon', None)
         if r is not None and obj is r.tabBar():            # onglet du ruban : renommer, supprimer, nouvel onglet
             self._ribbon_tab_menu(r.tabBar().tabAt(ev.pos()), ev.globalPos())
+            return True
+        if obj is not None and (obj is getattr(self, 'fav_bar', None) or obj is getattr(self, 'te_quickbar', None)):
+            self._fav_bar_menu(ev.globalPos())           # la barre des favoris, hors d'un bouton : les gérer
             return True
         from PySide6.QtWidgets import QToolButton
         if isinstance(obj, QToolButton) and obj.defaultAction() is not None \
@@ -12761,7 +12961,7 @@ class MainWindow(QMainWindow):
             'distribute_h', 'distribute_v', 'space_h', 'space_v', 'same_w', 'same_h', 'same_both', 'center_plate')),
         'palette_transform': ('Transformation', (
             'mirror_h', 'mirror_v', 'mirror_axis', 'rot90', 'rot-90', 'rot_free', 'rotate_mouse', 'move_by', 'duplicate',
-            'duplicate_scaled', 'sym_point')),
+            'duplicate_scaled', 'sym_point', 'bbox_frame')),
         'palette_typeart': ('3D', ('galbe', 'typeart_sweep', 'typeart_dome', 'typeart_extrude', 'typeart_revolution',
                                         'typeart_plane', 'galbe_smooth', 'cam_new_relief', 'cam_new_finition')),
         'palette_trades': ('Métiers', (

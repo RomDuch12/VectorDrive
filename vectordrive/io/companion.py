@@ -309,10 +309,16 @@ def sync(doc: Document, vnd_path, mode: str = 'besoin') -> tuple[pathlib.Path | 
                               'données VectorDrive non enregistrées (renommer l\'un des deux)')
     plates = _plates(doc)                                # pas écrites dans le fichier : comptées à part
     written = [L for i, L in enumerate(doc.layers) if i not in plates]
+    if te_native(vnd_path):                              # une copie en VD Géo écrite à la place de son calque
+        from ..core import missing_fonts as MF
+        written = MF.for_vnd(written)[0]
     link = {'version': 1, 'fichier': pathlib.Path(vnd_path).name, 'format': key, 'sha256': _sha(vnd_path),
             'compteurs': [len(L.items) for L in written], 'raisons': why,
             'objets': [[i for i, it in enumerate(L.items) if rich(it)] for L in written],
             'plaques': plates, 'date': dt.datetime.now().isoformat(timespec='seconds')}
+    if te_native(vnd_path):                              # l'ordre des calques écrits (0.956.0) : `_in_vnd_order`
+        from .vnd_write import first_shown_of
+        link['ordre'] = 'premier' if first_shown_of(doc) else 'dessin'
     data = json.dumps(native.to_dict(doc), ensure_ascii=False, separators=(',', ':'))
     tmp = cp.with_suffix('.vdz.tmp')
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -343,25 +349,41 @@ def apply(doc: Document, vnd_path) -> list[str]:
     comp.layers = [C for C in comp.layers if not any(C is P for _i, P in held)]
     msgs = []
     doc.extra.update(_own_extra(comp.extra))
-    order = _in_vnd_order(doc.layers, comp.layers)
-    if len(comp.layers) == len(doc.layers):
-        for L, C in zip(doc.layers, (comp.layers[i] for i in order)):
+    ordre = link.get('ordre')
+    written, info = comp.layers, {}
+    if ordre in ('dessin', 'premier'):                   # 0.956.0 : la copie en VD Géo pas écrite en plus de son calque
+        from ..core import missing_fonts as MF
+        written, info = MF.for_vnd(comp.layers)
+    real = {k: (p['original'] if p['sorte'] == 'devant' else p['copie']) for k, p in info.items()
+            if p['sorte'] in ('devant', 'derriere')}     # écrits montré / caché : leur état à eux est dans le compagnon
+    order = _in_vnd_order(doc.layers, written, ordre)
+    if len(written) == len(doc.layers):
+        for L, C in zip(doc.layers, (written[i] for i in order)):
             if L.name != C.name:                         # pas le même calque (ordre pas retrouvé) : rien n'en est repris
                 continue
-            L.visible, L.locked = C.visible, C.locked
+            R = real.get(id(C), C)
+            L.visible, L.locked = R.visible, R.locked
             if L.name == C.name:                         # même calque : son id (rattachements FAO) et ses données
                 if doc.active == L.id:                   # (surface posée…), le VND ne les a pas
                     doc.active = C.id
                 L.id = C.id
-                L.extra = {**C.extra, **L.extra}
+                L.extra = {**R.extra, **L.extra}
                 _outlines(L, C)
     same = _sha(vnd_path) == link.get('sha256')
     n = 0
-    if same and len(comp.layers) == len(doc.layers):
+    back, hid = {}, {}
+    if same and len(written) == len(doc.layers):
         counts = link.get('compteurs') or []
         wanted = link.get('objets') or []
         for L, k in zip(doc.layers, order):
-            C = comp.layers[k]
+            C = written[k]
+            p = info.get(id(C))
+            if p is not None and p['sorte'] == 'fusion':  # le calque écrit à la place d'une copie : les deux reviennent
+                if L.name == C.name:
+                    back[id(L)] = (p, C)
+                continue
+            if p is not None and p['sorte'] == 'cachee' and L.name == C.name:
+                hid[id(L)] = (p['copie'], C)             # sa copie cachée, pas écrite : elle revient aussi
             if L.name != C.name or len(L.items) != len(C.items) or (k < len(counts) and counts[k] != len(C.items)):
                 continue                                 # jamais les objets d'un calque dans un autre
             for it, cit in zip(L.items, C.items):
@@ -370,9 +392,28 @@ def apply(doc: Document, vnd_path) -> list[str]:
                 if 0 <= i < len(C.items):                # même VND, même rang : sa version en courbes
                     L.items[i] = C.items[i]
                     n += 1
+        if back or hid:                                  # la copie et son original, dans l'ordre du compagnon
+            rank = {id(C): i for i, C in enumerate(comp.layers)}
+            out = []
+            for L in doc.layers:
+                if id(L) in back:
+                    p, W = back[id(L)]
+                    _originals(L, W, p['original'])
+                    out.extend(sorted((p['copie'], p['original']), key=lambda C: rank[id(C)]))
+                elif id(L) in hid:
+                    c, W = hid[id(L)]
+                    out.extend([c, L] if rank[id(c)] < rank[id(W)] else [L, c])
+                else:
+                    out.append(L)
+            doc.layers[:] = out
     kept = ', '.join(link.get('raisons') or [])
     if same:
-        msgs.append(f'compagnon {cp.name} relu : {kept}' + (f' ({n} objet(s) VectorDrive repris)' if n else ''))
+        more = []
+        if n:
+            more.append(f'{n} objet(s) VectorDrive repris')
+        if back or hid:
+            more.append(f'{len(back) + len(hid)} calque(s) en VD Géo repris avec leur original')
+        msgs.append(f'compagnon {cp.name} relu : {kept}' + (f' ({" ; ".join(more)})' if more else ''))
     else:
         what = 'VND' if pathlib.Path(vnd_path).suffix.lower() == '.vnd' else 'fichier'
         msgs.append(f'le {what} a changé depuis son compagnon {cp.name} (retouché dans TypeEdit ?) : '
@@ -384,18 +425,20 @@ def apply(doc: Document, vnd_path) -> list[str]:
     return msgs
 
 
-def _in_vnd_order(layers: list, comp_layers: list) -> list[int]:
-    """Rang dans le compagnon de chaque calque relu du VND. L'écriture du VND passe devant le premier calque qui a
-    quelque chose à montrer (`vnd_write._calques`), le compagnon garde l'ordre du dessin : on refait ce choix sur le
-    compagnon (deux calques du même nom restent à leur place), vérifié par les noms ; sinon, retrouvé par les noms ;
-    sinon, rang pour rang."""
+def _in_vnd_order(layers: list, comp_layers: list, ordre: str | None = None) -> list[int]:
+    """Rang dans le compagnon (ses calques tels que le VND les a écrits) de chaque calque relu du VND. On refait sur
+    le compagnon l'ordre que l'écriture a donné (`ordre` du lien : 'dessin' — l'ordre du dessin, 'premier' — le premier
+    calque qui a quelque chose à montrer en tête, absent — un compagnon d'avant 0.956.0, `vnd_write.layer_order`),
+    vérifié par les noms (deux calques du même nom restent à leur place) ; sinon, retrouvé par les noms ; sinon, rang
+    pour rang."""
     names = [L.name for L in layers]
     k = list(range(len(comp_layers)))
     if len(names) != len(k):
         return k
     from . import vnd_write
     try:                                                 # l'ordre que l'écriture a donné à ces calques
-        order = list(vnd_write.layer_order(comp_layers)[0])
+        order = (vnd_write.write_order(comp_layers, None, ordre == 'premier') if ordre in ('dessin', 'premier')
+                 else list(vnd_write.layer_order(comp_layers)[0]))
     except Exception:                                    # noqa: BLE001 — compagnon abîmé : les essais d'après
         order = []
     if sorted(order) == k and [comp_layers[i].name for i in order] == names:
@@ -483,6 +526,21 @@ def _outlines(L, C) -> None:
             used.add(i)
             L.items[i].extra = {**(L.items[i].extra or {}), surface2d.OUTLINE: True}
             L.items[i].locked = True
+
+
+def _originals(L, W, orig) -> None:
+    """Le calque relu du VND à la place d'une copie en VD Géo (`missing_fonts.for_vnd`, `W` : ce qui a été écrit) :
+    les objets d'origine, écrits tels quels avec leur objet TypeEdit, reprennent la place de leur version du compagnon
+    dans l'original `orig` (le compagnon ne garde pas l'objet TypeEdit : sans lui, le texte passerait en courbes au
+    prochain enregistrement)."""
+    if len(L.items) != len(W.items):
+        return
+    mine = {id(it): k for k, it in enumerate(orig.items)}
+    for it, w in zip(L.items, W.items):
+        k = mine.get(id(w))
+        if k is not None and type(it) is type(w):
+            _copy_ids(it, w)
+            orig.items[k] = it
 
 
 def _copy_ids(it, cit) -> None:

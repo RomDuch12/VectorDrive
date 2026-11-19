@@ -171,6 +171,31 @@ def _group(p):
     pen = QPen(_ACCENT, 2, Qt.PenStyle.DashLine); p.setPen(pen); p.drawRect(QRectF(4, 4, 56, 56))
 
 
+def _library(p):
+    """Bibliothèque : des livres debout sur une étagère, un en couleur, un penché (plus l'icône de Grouper)."""
+    p.drawLine(QPointF(4, 57), QPointF(60, 57))
+    p.drawRect(QRectF(7, 17, 10, 40))
+    p.drawLine(QPointF(9, 25), QPointF(15, 25))
+    p.drawRect(QRectF(19, 9, 10, 48))
+    p.drawLine(QPointF(21, 17), QPointF(27, 17))
+    p.drawLine(QPointF(44, 57), QPointF(51, 21))
+    p.drawLine(QPointF(51, 21), QPointF(60, 23))
+    p.drawLine(QPointF(60, 23), QPointF(54, 57))
+    _accent(p, 4)
+    p.drawRect(QRectF(31, 15, 10, 42))
+
+
+def _keyboard(p):
+    """Raccourcis clavier : un clavier, une touche en couleur."""
+    p.drawRoundedRect(QRectF(4, 16, 56, 34), 4, 4)
+    for y in (22, 31):
+        for x in (9, 18, 27, 36, 45):
+            p.drawRect(QRectF(x, y, 6, 6))
+    p.drawLine(QPointF(16, 43), QPointF(42, 43))
+    _accent(p, 4)
+    p.drawRect(QRectF(46, 40, 8, 5))
+
+
 def _ungroup(p):
     p.drawRect(QRectF(6, 6, 24, 20)); p.drawEllipse(QRectF(32, 32, 26, 26))
 
@@ -2203,7 +2228,8 @@ ICONS = {
     'mirror_h': _mirror_h, 'mirror_v': _mirror_v, 'rotate': _rotate,
     'align_left': _align('left'), 'align_right': _align('right'), 'align_hcenter': _align('hcenter'),
     'align_top': _align('top'), 'align_bottom': _align('bottom'), 'align_vcenter': _align('vcenter'),
-    'center_plate': _center_plate, 'group': _group, 'ungroup': _ungroup, 'delete': _delete,
+    'center_plate': _center_plate, 'group': _group, 'ungroup': _ungroup, 'delete': _delete, 'library': _library,
+    'keyboard': _keyboard,
     'measure': _measure, 'plate': _plate, 'grid': _grid, 'direction': _direction, 'fill': _fill,
     'copy': _copy, 'paste': _paste, 'cut': _cut, 'select_all': _select_all, 'invert': _invert, 'select_filter': _select_filter, 'marquetry': _marquetry, 'leds': _leds, 'cut_pattern': _cut_pattern, 'texture': _texture, 'char_map': _char_map, 'font_recognize': _font_recognize, 'text_arcs': _text_arcs, 'lasso': _lasso, 'selection_modes': _selection_modes, 'variables': _variables, 'insert_variable': _insert_variable, 'variables_produce': _variables_produce, 'duplicate_scaled': _duplicate_scaled,
     'pdf': _pdf, 'snap': _magnet, 'snap_node': _snap_kind('node'), 'snap_middle': _snap_kind('middle'),

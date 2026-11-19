@@ -150,6 +150,11 @@ class LayersPanel(QWidget):
         self.tree.itemChanged.connect(self._changed)
         self.tree.itemClicked.connect(self._clicked)
         self.tree.itemDoubleClicked.connect(self._double)
+        # clic droit sur un calque (comme TypeEdit) : lui seul visible, et actif
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._solo_at)
+        #: (dessin, calque, {id : visible}) : la visibilité d'avant le dernier « seul visible »
+        self._solo_before = None
         self.tree.setItemDelegate(_NameOnly(self.tree))       # double-clic sur le nom : le renommer
         self.tree.setExpandsOnDoubleClick(False)              # Trajectoires : un clic le déplie
         self.tree.itemExpanded.connect(lambda it: self._traj_folded(it, True))
@@ -453,6 +458,50 @@ class LayersPanel(QWidget):
             self.doc.active = L.id
             self.win.canvas.current_tool_index = L.tool
             self._mark_active()
+
+    def _solo_at(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        lid = item.data(self.COL_NAME, Qt.ItemDataRole.UserRole)
+        if lid in (TRAJ, TRAJ_PATH):
+            return
+        self.solo(lid)
+
+    def solo(self, lid) -> bool:
+        """Clic droit sur un calque (demande du 19/11, comme TypeEdit) : lui seul visible, et actif. Le même clic
+        droit sur ce calque, resté seul visible, rend la visibilité d'avant (il reste actif). Rend vrai si fait."""
+        doc = self.doc
+        L = next((x for x in doc.layers if x.id == lid), None)
+        if L is None:
+            return False
+        memo = self._solo_before
+        alone = L.visible and not any(x.visible for x in doc.layers if x is not L)
+        if alone and memo is not None and memo[0] == id(doc) and memo[1] == lid:
+            for x in doc.layers:
+                if x.id in memo[2]:
+                    x.visible = memo[2][x.id]
+            L.visible = True
+            self._solo_before = None
+            msg = tr('Calques : la visibilité d’avant est rendue')
+        else:
+            self._solo_before = (id(doc), lid, {x.id: x.visible for x in doc.layers})
+            for x in doc.layers:
+                x.visible = x is L
+            msg = tr('Calque « {0} » seul visible, et actif (clic droit de nouveau : la visibilité d’avant)').format(
+                L.name)
+        doc.active = L.id
+        self.win.canvas.current_tool_index = L.tool
+        follow = getattr(self.win, '_layers_visibility_changed', None)
+        if callable(follow):
+            follow()
+        else:
+            self.win.canvas.invalidate()
+            self.refresh()
+        bar = getattr(self.win, 'statusBar', None)
+        if callable(bar):
+            bar().showMessage(msg, 6000)
+        return True
 
     def _mark_active(self) -> None:
         """Le calque actif en gras, les cases à jour, sans refaire la liste : le double-clic qui suit le clic tombe

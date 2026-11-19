@@ -30,22 +30,29 @@ def _leaf_paths(items):
             yield it, it.outline
 
 
+def _filled(pairs) -> bool:
+    """La forme combinée est pleine si toutes les formes combinées l'étaient (un texte compte plein) : un texte
+    combiné avec un contour ne remplit plus ce contour (demande du 19/11 : « combiner remplit couleur et c'est
+    persistant en décombinant »)."""
+    return bool(pairs) and all(getattr(it, 'filled', False) or isinstance(it, Text) for it, _p in pairs)
+
+
 def combine(items: list[Item]) -> Shape | None:
     pairs = list(_leaf_paths(items))
     if not pairs:
         return None
     first = pairs[0][0]
-    return Shape(path=Path([c for _it, p in pairs for c in p.contours]), tool=first.tool,
-                 filled=any(getattr(it, 'filled', False) or isinstance(it, Text) for it, _p in pairs))
+    return Shape(path=Path([c for _it, p in pairs for c in p.contours]), tool=first.tool, filled=_filled(pairs))
 
 
 def uncombine(item: Item) -> list[Shape]:
+    """Une forme par contour ; un contour ouvert n'est jamais plein."""
     out = []
     for it, p in _leaf_paths([item]):
         for c in p.contours:
             if c.segments:
-                s = Shape(path=Path([c]), tool=it.tool, filled=getattr(it, 'filled', False) or isinstance(it, Text))
-                out.append(s)
+                full = (getattr(it, 'filled', False) or isinstance(it, Text)) and c.closed
+                out.append(Shape(path=Path([c]), tool=it.tool, filled=full))
     return out
 
 
@@ -118,9 +125,9 @@ def combine_nested(items: list[Item]) -> list[Shape]:
     if not pairs:
         return []
     tool = pairs[0][0].tool
-    filled = any(getattr(it, 'filled', False) or isinstance(it, Text) for it, _p in pairs)
+    filled = _filled(pairs)
     contours = [c for _it, p in pairs for c in p.contours]
-    return [Shape(path=Path([o] + h), tool=tool, filled=filled) for o, h in nest(contours)]
+    return [Shape(path=Path([o] + h), tool=tool, filled=filled and o.closed) for o, h in nest(contours)]
 
 
 # --- répartir ------------------------------------------------------------------

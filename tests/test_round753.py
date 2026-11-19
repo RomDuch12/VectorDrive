@@ -231,6 +231,7 @@ class TestWindow(unittest.TestCase):
         from vectordrive.io import vnd, vnd_write
         d = pdf.read(make_pdf('/OC /MC1 BDC 60 0 m 90 0 l 90 50 l h S EMC\n/OC /MC0 BDC 0 0 m 50 0 l 50 50 l h S EMC', OC))
         self.assertEqual(d.layers[0].name, 'Caché')
+        d.extra['vnd_premier_plan'] = True               # round 1099 : réglage « premier calque montré en tête »
         data, _r = vnd_write.write_document(d)
         root, _ar = vnd.parse(data)
         self.assertEqual(root.children[0].fields['layer_name'], 'Vu')

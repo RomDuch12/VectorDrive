@@ -502,25 +502,85 @@ def apply(actions: dict, mapping: dict[str, list[str]]) -> None:
 
 # --- fenêtre ----------------------------------------------------------------------------------
 
+#: touches du plan de travail, fixes (pas des commandes : elles ne se règlent pas) — (où, touches, effet), pour la
+#: fenêtre des raccourcis (demande du 19/11 : « gestion complète de tous les raccourcis possibles »)
+FIXED_KEYS = (
+    ('Sélection', 'Flèches', 'Déplacer la sélection d’un pas (le pas de l’onglet)'),
+    ('Sélection', 'Maj + flèches', 'Déplacer la sélection de dix pas'),
+    ('Sélection', 'Ctrl + flèche', 'Demander le pas, puis déplacer la sélection dans ce sens'),
+    ('Plan de travail', 'Échap', 'Abandonner l’outil en cours ; sans outil : vider la sélection'),
+    ('Plan de travail', 'Alt', 'Accrochage : le point suivant sous le curseur (multi-accrochage de TypeEdit)'),
+    ('Tracé (polyligne, Bézier, courbes…)', 'Entrée', 'Terminer le tracé'),
+    ('Tracé (polyligne, Bézier, courbes…)', 'Retour arrière', 'Retirer le dernier point posé'),
+    ('Polycourbe', 'Tab, Maj + Tab', 'Type de segment suivant, précédent'),
+    ('Cote', 'Tab, Maj + Tab', 'Sorte de cote suivante, précédente (libre, horizontale, verticale…)'),
+    ('Texte en cours d’écriture', 'Ctrl + Entrée, Échap', 'Finir le texte'),
+    ('Texte en cours d’écriture', 'Ctrl + V', 'Coller dans le texte'),
+    ('Mode Point', '+', 'Ajouter un point au point rouge'),
+    ('Mode Point', '−, Suppr, Retour arrière', 'Supprimer les points choisis'),
+    ('Ruban', 'Maj + clic droit sur un bouton', 'Le menu du bouton (favoris, onglets à soi, mode simple), même pour '
+                                                'un outil qui a ses réglages au clic droit'),
+)
+
+#: vues de la table des commandes : clé → libellé
+VIEWS = (('all', 'Toutes les commandes'), ('set', 'Avec un raccourci'), ('none', 'Sans raccourci'),
+         ('clash', 'En conflit'), ('mine', 'Mes réglages'))
+
+
+#: les touches de FIXED_KEYS, telles que les écrit QKeySequence (portable) : une commande qui en prend une la prend
+#: au plan de travail (déplacer la sélection, Mode Point, finir un tracé…)
+FIXED_SEQS = {
+    'Left': 'Flèches', 'Right': 'Flèches', 'Up': 'Flèches', 'Down': 'Flèches',
+    'Shift+Left': 'Maj + flèches', 'Shift+Right': 'Maj + flèches', 'Shift+Up': 'Maj + flèches',
+    'Shift+Down': 'Maj + flèches', 'Ctrl+Left': 'Ctrl + flèche', 'Ctrl+Right': 'Ctrl + flèche',
+    'Ctrl+Up': 'Ctrl + flèche', 'Ctrl+Down': 'Ctrl + flèche', 'Esc': 'Échap', 'Return': 'Entrée',
+    'Enter': 'Entrée', 'Backspace': 'Retour arrière', 'Tab': 'Tab', 'Shift+Tab': 'Maj + Tab', 'Shift+Backtab': 'Maj + Tab',
+    'Ctrl+Return': 'Ctrl + Entrée', '+': '+', '-': '−', 'Del': 'Suppr',
+}
+
+
+def fixed_keys_in(seq: str) -> str:
+    """La touche fixe du plan de travail que serait `seq` (son libellé), sinon ''."""
+    from PySide6.QtGui import QKeySequence
+    portable = QKeySequence(seq).toString(QKeySequence.SequenceFormat.PortableText)
+    return FIXED_SEQS.get(portable, '')
+
+
 def dialog_class():
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QBrush, QColor, QKeySequence
+    from PySide6.QtGui import QBrush, QColor, QGuiApplication, QKeySequence
     from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView,
                                    QKeySequenceEdit, QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget,
-                                   QTableWidgetItem, QVBoxLayout)
+                                   QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
     class ShortcutsDialog(QDialog):
-        """Jeu de raccourcis, import d'un TeTurboKey.ini, réglage action par action."""
+        """Tous les raccourcis : jeu (VectorDrive, TypeEdit, plugins), import d'un TeTurboKey.ini, réglage commande
+        par commande (touche principale et autres touches), où est la commande dans le ruban, vues (sans raccourci,
+        en conflit, mes réglages), « Qui utilise cette touche ? », copie de la liste, export et import de ses
+        réglages ; et les touches fixes du plan de travail. Dans une fenêtre (Options › Raccourcis clavier) ou dans
+        l'onglet Raccourcis des options (F10) : `embedded`."""
 
-        def __init__(self, parent, actions: dict, defaults: dict, scheme: str, te_entries, custom: dict):
+        COLS = 4
+
+        def __init__(self, parent, actions: dict, defaults: dict, scheme: str, te_entries, custom: dict,
+                     places: dict | None = None, embedded: bool = False):
             super().__init__(parent)
             from .fit import no_hscroll
             no_hscroll(self)                                 # pas de défilement horizontal à l'ouverture
+            self.embedded = bool(embedded)
             self.setWindowTitle(tr('Raccourcis clavier'))
-            self.resize(720, 640)
+            self.resize(900, 680)
             self.actions, self.defaults = actions, defaults
             self.scheme, self.te_entries, self.custom = scheme, te_entries, dict(custom)
-            lay = QVBoxLayout(self)
+            self.places = dict(places or {})
+            outer = QVBoxLayout(self)
+            if self.embedded:
+                outer.setContentsMargins(0, 0, 0, 0)
+            self.pages = QTabWidget()
+            outer.addWidget(self.pages, 1)
+            main = QWidget()
+            lay = QVBoxLayout(main)
+            self.pages.addTab(main, tr('Commandes'))
             row = QHBoxLayout()
             row.addWidget(QLabel(tr('Jeu de raccourcis')))
             self.combo = QComboBox()
@@ -537,12 +597,32 @@ def dialog_class():
             self.source = QLabel()
             self.source.setWordWrap(True)
             lay.addWidget(self.source)
+            row = QHBoxLayout()
             self.filter = QLineEdit()
-            self.filter.setPlaceholderText(tr('Filtrer (nom ou touche)'))
-            self.filter.textChanged.connect(self._filter)
-            lay.addWidget(self.filter)
-            self.table = QTableWidget(0, 3)
-            self.table.setHorizontalHeaderLabels([tr('Commande'), tr('Raccourci'), tr('Autres touches')])
+            self.filter.setPlaceholderText(tr('Filtrer (nom, touche ou place dans le ruban)'))
+            self.filter.setClearButtonEnabled(True)
+            self.filter.textChanged.connect(lambda _t: self._filter())
+            row.addWidget(self.filter, 2)
+            self.view = QComboBox()
+            for k, lab in VIEWS:
+                self.view.addItem(tr(lab), k)
+            self.view.currentIndexChanged.connect(lambda _i: self._filter())
+            row.addWidget(self.view, 1)
+            row.addWidget(QLabel(tr('Qui utilise la touche')))
+            self.find_key = QKeySequenceEdit()
+            self.find_key.setMaximumSequenceLength(1)
+            self.find_key.setToolTip(tr('Appuyez sur une touche : seules les commandes qui l’ont restent'))
+            self.find_key.keySequenceChanged.connect(lambda _s: self._filter())
+            row.addWidget(self.find_key, 1)
+            b = QPushButton('×')
+            b.setToolTip(tr('Oublier la touche cherchée'))
+            b.setFixedWidth(28)
+            b.clicked.connect(self.find_key.clear)
+            row.addWidget(b)
+            lay.addLayout(row)
+            self.table = QTableWidget(0, self.COLS)
+            self.table.setHorizontalHeaderLabels([tr('Commande'), tr('Raccourci'), tr('Autres touches'),
+                                                  tr('Où (ruban)')])
             self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
             self.table.verticalHeader().hide()
             self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -554,19 +634,64 @@ def dialog_class():
             self.edit.setMaximumSequenceLength(1)
             row.addWidget(QLabel(tr('Touche')))
             row.addWidget(self.edit, 1)
-            for text, slot in ((tr('Affecter'), self.assign), (tr('Effacer'), self.clear_row),
-                               (tr('Rétablir le jeu'), self.reset)):
+            for text, tip, slot in (
+                    (tr('Affecter'), tr('La touche devient le raccourci de la commande (retirée des autres)'),
+                     self.assign),
+                    (tr('Ajouter comme autre touche'), tr('La touche s’ajoute aux autres touches de la commande'),
+                     self.add_other),
+                    (tr('Effacer'), tr('La commande n’a plus de raccourci'), self.clear_row),
+                    (tr('Rétablir la commande'), tr('La commande reprend les touches du jeu'), self.reset_row),
+                    (tr('Rétablir le jeu'), tr('Toutes les commandes reprennent les touches du jeu'), self.reset)):
                 b = QPushButton(text)
+                b.setToolTip(tip)
                 b.clicked.connect(lambda _=False, s=slot: s())
                 row.addWidget(b)
+            lay.addLayout(row)
+            row = QHBoxLayout()
+            for text, tip, slot in (
+                    (tr('Copier la liste'), tr('Les commandes montrées et leurs touches, à coller dans un tableur'),
+                     self.copy_list),
+                    (tr('Exporter mes raccourcis…'), tr('Le jeu et vos réglages dans un fichier, pour un autre poste'),
+                     lambda: self.export_file()),
+                    (tr('Importer mes raccourcis…'), tr('Reprendre un fichier exporté par VectorDrive'),
+                     lambda: self.import_mine())):
+                b = QPushButton(text)
+                b.setToolTip(tip)
+                b.clicked.connect(lambda _=False, s=slot: s())
+                row.addWidget(b)
+            if hasattr(parent, 'favorites_dialog'):
+                b = QPushButton(tr('Favoris…'))
+                b.setToolTip(tr('Les favoris (barre de boutons du haut) : ajouter, retirer, ranger'))
+                b.clicked.connect(lambda: parent.favorites_dialog())
+                row.addWidget(b)
+            row.addStretch(1)
             lay.addLayout(row)
             self.info = QLabel()
             self.info.setWordWrap(True)
             lay.addWidget(self.info)
-            bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-            bb.accepted.connect(self.accept)
-            bb.rejected.connect(self.reject)
-            lay.addWidget(bb)
+            self.fixed = QTableWidget(len(FIXED_KEYS), 3)
+            self.fixed.setHorizontalHeaderLabels([tr('Où'), tr('Touches'), tr('Effet')])
+            self.fixed.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            self.fixed.verticalHeader().hide()
+            self.fixed.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            for r, cells in enumerate(FIXED_KEYS):
+                for c, v in enumerate(cells):
+                    self.fixed.setItem(r, c, QTableWidgetItem(tr(v)))
+            self.fixed.resizeColumnsToContents()
+            fixed = QWidget()
+            fl = QVBoxLayout(fixed)
+            note = QLabel(tr('Ces touches agissent sur le plan de travail selon l’outil en cours ; elles ne se '
+                             'règlent pas. Les commandes du ruban, du menu et des favoris sont dans l’onglet '
+                             'Commandes.'))
+            note.setWordWrap(True)
+            fl.addWidget(note)
+            fl.addWidget(self.fixed, 1)
+            self.pages.addTab(fixed, tr('Touches fixes du plan de travail'))
+            self.bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            self.bb.accepted.connect(self.accept)
+            self.bb.rejected.connect(self.reject)
+            outer.addWidget(self.bb)
+            self.bb.setVisible(not self.embedded)
             names = {k: a.text().replace('&', '') for k, a in actions.items()}
             seen: dict[str, int] = {}
             for v in names.values():
@@ -579,16 +704,34 @@ def dialog_class():
             self._keys = sorted(actions, key=lambda k: names[k].lower())
             self.refresh()
 
+        # dans l'onglet des options (F10) : ni OK, ni Annuler, ni Échap à lui (ceux de la fenêtre des options)
+        def accept(self) -> None:
+            if not self.embedded:
+                super().accept()
+
+        def reject(self) -> None:
+            if not self.embedded:
+                super().reject()
+
+        def keyPressEvent(self, ev) -> None:              # noqa: N802 (API Qt)
+            if self.embedded and ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                ev.accept()                              # Entrée dans la page : pas d'OK de toutes les options
+            elif self.embedded:
+                QWidget.keyPressEvent(self, ev)          # Échap : à la fenêtre des options
+            else:
+                super().keyPressEvent(ev)
+
         def mapping(self) -> dict:
             return effective(self.defaults, self.scheme, self.te_entries, self.custom)
 
         def refresh(self) -> None:
             m = self.mapping()
-            clash = {k for ks in conflicts(m).values() for k in ks}
+            self._map = m
+            self._clash = {k for ks in conflicts(m).values() for k in ks}
             self.table.setRowCount(len(self._keys))
             for r, k in enumerate(self._keys):
                 seqs = [QKeySequence(s).toString(QKeySequence.SequenceFormat.NativeText) for s in m.get(k, [])]
-                cells = (self.names[k], seqs[0] if seqs else '', ', '.join(seqs[1:]))
+                cells = (self.names[k], seqs[0] if seqs else '', ', '.join(seqs[1:]), self.places.get(k, ''))
                 for c, v in enumerate(cells):
                     it = QTableWidgetItem(v)
                     it.setData(Qt.ItemDataRole.UserRole, k)
@@ -596,7 +739,7 @@ def dialog_class():
                         f = it.font()
                         f.setBold(True)
                         it.setFont(f)
-                    if k in clash:
+                    if k in self._clash:
                         it.setForeground(QBrush(QColor('#c92a2a')))
                     self.table.setItem(r, c, it)
             from ..plugins import REGISTRY
@@ -612,14 +755,35 @@ def dialog_class():
                     src = tr('TypeEdit n\'est pas installé sur ce poste : importer un TeTurboKey.ini')
             else:
                 src = tr('Raccourcis d\'origine de VectorDrive')
+            n = sum(1 for k in self._keys if m.get(k))
+            src += tr(' ; {0} commandes, {1} avec un raccourci, {2} en conflit').format(
+                len(self._keys), n, len(self._clash))
             self.source.setText(src + (tr(' ; en gras : vos réglages') if self.custom else ''))
-            self._filter(self.filter.text())
+            self._filter()
 
-        def _filter(self, text: str) -> None:
-            t = text.strip().lower()
+        def _filter(self, text: str | None = None) -> int:
+            """Les lignes de la vue, du texte et de la touche cherchés ; rend le nombre montré."""
+            t = (self.filter.text() if text is None else text).strip().lower()
+            view = self.view.currentData()
+            seq = self.find_key.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+            shown = 0
             for r in range(self.table.rowCount()):
-                vis = not t or any(t in (self.table.item(r, c).text().lower()) for c in range(3))
+                k = self.table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                keys = self._map.get(k, [])
+                vis = not t or any(t in (self.table.item(r, c).text().lower()) for c in range(self.COLS))
+                if vis and view == 'set':
+                    vis = bool(keys)
+                elif vis and view == 'none':
+                    vis = not keys
+                elif vis and view == 'clash':
+                    vis = k in self._clash
+                elif vis and view == 'mine':
+                    vis = k in self.custom
+                if vis and seq:
+                    vis = _norm(seq) in {_norm(s) for s in keys}
                 self.table.setRowHidden(r, not vis)
+                shown += vis
+            return shown
 
         def _scheme_changed(self) -> None:
             self.scheme = self.combo.currentData()
@@ -629,9 +793,36 @@ def dialog_class():
             r = self.table.currentRow()
             return self.table.item(r, 0).data(Qt.ItemDataRole.UserRole) if r >= 0 else None
 
+        def select_key(self, key: str) -> bool:
+            for r in range(self.table.rowCount()):
+                if self.table.item(r, 0).data(Qt.ItemDataRole.UserRole) == key:
+                    self.table.selectRow(r)
+                    return True
+            return False
+
         def edit_row(self, r: int) -> None:
             self.table.selectRow(r)
             self.edit.setFocus()
+
+        def _take(self, k: str, seq: str) -> list:
+            """Les commandes qui avaient la touche (rend leurs clés) ; retirée de leurs réglages personnels s'ils en
+            ont, les autres la perdent d'elles-mêmes (`effective` : un réglage l'emporte). La commande `k` passe en
+            dernier dans les réglages : elle l'emporte sur un réglage plus ancien."""
+            m = self.mapping()
+            owners = [o for o, v in m.items() if o != k and _norm(seq) in {_norm(s) for s in v}]
+            for o in self.custom:
+                if o != k:
+                    self.custom[o] = [s for s in self.custom[o] if _norm(s) != _norm(seq)]
+            self.custom.pop(k, None)
+            return owners
+
+        def _said(self, seq: str, owners: list) -> None:
+            text = tr('{0} retiré de : {1}').format(seq, ', '.join(self.names[o] for o in owners)) if owners else ''
+            fixed = fixed_keys_in(seq)
+            if fixed:
+                text = (text + ' ; ' if text else '') + tr('attention : {0} sert aussi au plan de travail ({1})').format(
+                    seq, fixed)
+            self.info.setText(text)
 
         def assign(self) -> None:
             k = self._row_key()
@@ -639,10 +830,22 @@ def dialog_class():
             if not k or not seq:
                 return
             m = self.mapping()
-            owners = [o for o, v in m.items() if o != k and _norm(seq) in {_norm(s) for s in v}]
+            owners = self._take(k, seq)
             self.custom[k] = [seq] + [s for s in m.get(k, []) if _norm(s) != _norm(seq)]
-            self.info.setText(tr('{0} retiré de : {1}').format(seq, ', '.join(self.names[o] for o in owners))
-                              if owners else '')
+            self._said(seq, owners)
+            self.refresh()
+
+        def add_other(self) -> None:
+            k = self._row_key()
+            seq = self.edit.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+            if not k or not seq:
+                return
+            m = self.mapping()
+            if _norm(seq) in {_norm(s) for s in m.get(k, [])}:
+                return
+            owners = self._take(k, seq)
+            self.custom[k] = list(m.get(k, [])) + [seq]
+            self._said(seq, owners)
             self.refresh()
 
         def clear_row(self) -> None:
@@ -651,10 +854,87 @@ def dialog_class():
                 self.custom[k] = []
                 self.refresh()
 
+        def reset_row(self) -> None:
+            k = self._row_key()
+            if k and k in self.custom:
+                del self.custom[k]
+                self.refresh()
+
         def reset(self) -> None:
             self.custom = {}
             self.info.setText('')
             self.refresh()
+
+        def list_text(self) -> str:
+            """Les lignes montrées, colonnes séparées par des tabulations (en-tête compris)."""
+            head = [self.table.horizontalHeaderItem(c).text() for c in range(self.COLS)]
+            rows = ['\t'.join(head)]
+            for r in range(self.table.rowCount()):
+                if not self.table.isRowHidden(r):
+                    rows.append('\t'.join(self.table.item(r, c).text() for c in range(self.COLS)))
+            return '\n'.join(rows) + '\n'
+
+        def copy_list(self) -> str:
+            text = self.list_text()
+            QGuiApplication.clipboard().setText(text)
+            self.info.setText(tr('{0} lignes copiées').format(text.count('\n') - 1))
+            return text
+
+        def export_file(self, path: str | None = None) -> bool:
+            if path is None:
+                path, _ = QFileDialog.getSaveFileName(self, tr('Exporter mes raccourcis'), 'raccourcis.json',
+                                                      'JSON (*.json)')
+                if not path:
+                    return False
+            data = {'format': 'vectordrive-raccourcis', 'version': 1, 'jeu': self.scheme, 'reglages': self.custom,
+                    'typeedit': self.te_entries}
+            try:
+                pathlib.Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+            except OSError as ex:
+                QMessageBox.warning(self, tr('Raccourcis clavier'), str(ex))
+                return False
+            self.info.setText(tr('Raccourcis exportés : {0}').format(path))
+            return True
+
+        def import_mine(self, path: str | None = None) -> bool:
+            if path is None:
+                path, _ = QFileDialog.getOpenFileName(self, tr('Importer mes raccourcis'), '', 'JSON (*.json)')
+                if not path:
+                    return False
+            try:
+                data = json.loads(pathlib.Path(path).read_text(encoding='utf-8'))
+            except (OSError, ValueError) as ex:
+                QMessageBox.warning(self, tr('Raccourcis clavier'), str(ex))
+                return False
+            mine = data.get('reglages') if isinstance(data, dict) else None
+            if not isinstance(mine, dict) or data.get('format') != 'vectordrive-raccourcis':
+                QMessageBox.warning(self, tr('Raccourcis clavier'), tr('Ce fichier n’est pas un export de raccourcis '
+                                                                         'de VectorDrive'))
+                return False
+            kept, bad = {}, 0
+            for k, v in mine.items():
+                keys = [s for s in v if isinstance(s, str) and QKeySequence(s).toString()] \
+                    if isinstance(v, list) else None
+                if keys is None or len(keys) != len(v):
+                    bad += 1
+                if keys is not None:
+                    kept[str(k)] = keys                  # une commande d'un module absent aujourd'hui : gardée
+            if mine and not kept:
+                QMessageBox.warning(self, tr('Raccourcis clavier'), tr('Aucun raccourci lisible dans ce fichier'))
+                return False
+            self.custom = kept
+            te = data.get('typeedit')
+            if isinstance(te, list) and all(isinstance(e, (list, tuple)) and len(e) == 2 for e in te):
+                self.te_entries = [tuple(map(str, e)) for e in te]
+            if data.get('jeu') in schemes():
+                self.combo.blockSignals(True)
+                self.combo.setCurrentIndex(max(0, self.combo.findData(data['jeu'])))
+                self.combo.blockSignals(False)
+                self.scheme = data['jeu']
+            self.info.setText(tr('Raccourcis importés : {0}').format(path)
+                              + (tr(' ; {0} entrée(s) illisible(s) ignorée(s)').format(bad) if bad else ''))
+            self.refresh()
+            return True
 
         def import_file(self, path: str | None = None) -> int:
             if path is None:

@@ -297,6 +297,8 @@ class CompanionOrder(unittest.TestCase):
         w = window()
         try:
             doc = w.canvas.doc
+            w.settings.setValue('vnd/premier_plan_montre', True)       # round 1099 : réglage, décoché d'office
+            self.addCleanup(w.settings.remove, 'vnd/premier_plan_montre')
             a, b = Layer(name='Cachée'), Layer(name='Montrée')
             a.items.append(rect())
             a.visible = False
@@ -321,6 +323,8 @@ class CompanionOrder(unittest.TestCase):
         w = window()
         try:
             doc = w.canvas.doc
+            w.settings.setValue('vnd/premier_plan_montre', True)       # round 1099 : réglage, décoché d'office
+            self.addCleanup(w.settings.remove, 'vnd/premier_plan_montre')
             a, b, c = Layer(name='Plan'), Layer(name='Plan'), Layer(name='Fin')
             a.items.append(rect())
             a.visible = False

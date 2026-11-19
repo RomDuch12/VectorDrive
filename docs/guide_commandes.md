@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.952.0
+# Guide des commandes — VectorDrive 0.956.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -304,8 +304,6 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Distance rectangle (X, Y, XY) | Shift+D | Distance rectangle (TypeEdit) : clic au départ, clic à l'arrivée — le rectangle des deux points, ses côtés X et Y et la diagonale XY (accrochage F3 conseillé) |
 | Mesurer un rayon |  | Mesurer un rayon : clic sur un cercle, un arc ou une courbe — rayon et diamètre, angle et longueur d'un arc, rayon de courbure d'une courbe au point cliqué |
 | Mesurer un angle |  | Mesurer un angle : clic sur deux traits droits, du côté de l'angle voulu ; ailleurs, trois clics — le sommet puis un point de chaque côté (F3 : accrochage aux points) |
-| Cadre englobant | E | Rectangle juste autour de la sélection (ou de tout le dessin), sans marge, tout de suite |
-| Cadre englobant… |  | Rectangle (ou ellipse) autour de la sélection, avec marge et coins arrondis |
 
 ### Mode Point
 
@@ -585,6 +583,8 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Étirer |  | Étirer : deux coins d'une fenêtre de capture, puis un point de base et sa destination ; les nœuds dans la fenêtre bougent, les segments vers les autres s'étirent (formes de la sélection, sinon toutes) |
 | Échelle par référence |  | Échelle par référence : point de base, fin de la longueur de référence, puis la nouvelle longueur (3e clic depuis le point de base, ou Entrée pour la saisir) |
 | Rotation par référence |  | Rotation par référence : centre, direction de référence (un bord de l'objet), puis la direction voulue (3e clic, ou Entrée pour saisir l'angle) |
+| Cadre englobant | E | Rectangle juste autour de la sélection (ou de tout le dessin), sans marge, tout de suite |
+| Cadre englobant… |  | Rectangle (ou ellipse) autour de la sélection, avec marge et coins arrondis |
 
 ### Alignement
 
@@ -1024,6 +1024,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Plugins |  | Options (F10), onglet « Plugins » |
 | Performances |  | Options (F10), onglet « Performances » |
 | Assistant |  | Options (F10), onglet « Assistant » |
+| Raccourcis |  | Options (F10), onglet « Raccourcis » |
 
 ### Configuration
 
@@ -1031,6 +1032,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 |---|---|---|
 | Options | F10 |  |
 | Raccourcis clavier |  | Jeu de raccourcis (TypeEdit ou VectorDrive), import d'un TeTurboKey.ini, réglage par commande |
+| Favoris… |  | Les favoris (barre de boutons du haut) : ajouter, retirer, ranger, libellés |
 | Exporter les paramètres… |  | Réglages (options, thème, raccourcis, ruban…), outils, modèles et thèmes dans un fichier, pour un autre poste ou une sauvegarde |
 | Importer des paramètres… |  | Reprendre les paramètres exportés d'un autre poste (ce qui est remplacé est d'abord sauvegardé) |
 | Souris | F5 | Utilisation de la souris (F5) : molette pour zoomer ou faire défiler, rôle du clic droit |
