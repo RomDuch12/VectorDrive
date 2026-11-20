@@ -543,7 +543,7 @@ KIND_FIELDS = {
                   'foot_pull_max', 'link_previous'},
     'vcarve': {'stock', 'vcarve_finish', 'resolution', 'vcarve_edges_only', 'finish_3d_only', 'finish_skip_frame', 'vcarve_mode', 'vcarve_offset', 'vcarve_max_steps',
                'vcarve_step', 'vcarve_walls', 'link_previous', 'stepover_mm', 'pocket_outside_in', 'corner_pull_angle', 'ramp', 'ramp_angle'},
-    'prismatique': {'climb', 'extension', 'prism_hollow', 'prism_lateral', 'prism_rest'},
+    'prismatique': {'climb', 'extension', 'prism_hollow', 'prism_lateral', 'prism_rest', 'stock', 'vcarve_finish'},
     'relief': {'resolution', 'invert', 'raster_dir', 'stock', 'scan_mode', 'raster_angle', 'raster_turn',
                'spiral_outward', 'parallel_slices', 'follow_profile', 'climb'},
     'surface3d': {'model_path', 'resolution', 'raster_dir', 'stock', 'faces3d', 'contours3d', 'extension',
@@ -581,6 +581,7 @@ STOCK_LABELS = {
     **{k: STOCK_3D for k in ('relief', 'surface3d', 'ebauche3d', 'reprise3d', 'niveaux3d')},
     'finition25d': 'Surépaisseur 3D de l’ébauche (mm, le décalage en XY s’y ajoute)',
     'chanfrein': 'Largeur du chanfrein (mm, 0 : 0,2 mm)',
+    'prismatique': 'OffsetXY : surépaisseur laissée le long des lettres (mm)',
 }
 
 
@@ -864,8 +865,8 @@ class FieldsDialog(QDialog):
         #: parcours unifiés : la famille du parcours et ceux qu'elle offre ici (clés) — une liste les fait choisir ;
         #: `switch_to` : le parcours choisi dans la liste (ce formulaire se ferme, celui du parcours choisi s'ouvre)
         self.family, self.members, self.switch_to = family, tuple(members), ''
-        #: la stratégie est donnée par le type de parcours : pas de liste à choisir, la ligne « Type de parcours » la
-        #: montre (demande du 14/11) ; seule « Nouvelle opération » la fait choisir (`kind_choice`)
+        #: la stratégie est donnée par le type de parcours : pas de liste à choisir, le titre de la fenêtre la dit
+        #: (demandes du 14/11 et du 20/11) ; seule « Nouvelle opération » la fait choisir (`kind_choice`)
         self.fixed_kind = isinstance(obj, model.Operation) and not kind_choice
         from .fit import no_hscroll
         no_hscroll(self)                                 # pas de défilement horizontal à l'ouverture
@@ -929,8 +930,18 @@ class FieldsDialog(QDialog):
             cols.addWidget(self.illustration)
         outer = QVBoxLayout(self)
         self.template_box = None
+        self.head = None
+        if is_op and 'name' in self.widgets:             # en tête : le nom (celui de la liste des parcours calculés)
+            self.head = QHBoxLayout()
+            nlab, nw = self.rows['name']
+            nw.setToolTip(tr('Le nom de l\'opération : celui de la liste des parcours calculés'))
+            self.head.addWidget(nlab)
+            self.head.addWidget(nw, 1)
+            outer.addLayout(self.head)
         if is_op and preset:                             # modèles du parcours, comme dans TypeEdit
-            row = QHBoxLayout()
+            row = self.head if self.head is not None else QHBoxLayout()
+            if self.head is not None:
+                row.addSpacing(12)
             row.addWidget(QLabel(tr('Modèle')))
             from .template_picker import TemplateCombo
             self.template_box = TemplateCombo()          # déroulée : la liste à colonnes (filtre, tri, colonnes)
@@ -948,7 +959,8 @@ class FieldsDialog(QDialog):
                             'colonne des parcours'))
             b.clicked.connect(lambda: self.save_template())
             row.addWidget(b)
-            outer.addLayout(row)
+            if row is not self.head:
+                outer.addLayout(row)
         outer.addLayout(cols, 1)
         if self._auto_title:
             if self.template_box is not None:            # le modèle que la liste montre vraiment
@@ -1070,6 +1082,13 @@ class FieldsDialog(QDialog):
                 self._ramp_row(form)
                 continue
             lab = QLabel(tr(LABELS.get(n, n)))
+            if is_op and n == 'name':                    # en tête du formulaire, sur la ligne du modèle
+                self.rows[n] = (lab, self.widgets[n])
+                continue
+            if is_op and n == 'enabled':                 # la case Active : dans la liste des opérations seulement
+                self.widgets[n].setParent(g)
+                self.widgets[n].hide()
+                continue
             form.addRow(lab, self.widgets[n])
             self.rows[n] = (lab, self.widgets[n])
             if n == 'tool_id' and is_op:                 # sous l'outil : l'outil proposé et sa vérification
@@ -1674,6 +1693,16 @@ class FieldsDialog(QDialog):
                 self._build_params()                         # réglages de la stratégie (ou de l'instruction) choisie
             known = kind in model.OP_KINDS                   # stratégie de plugin : tous les champs
             own = KIND_FIELDS.get(kind, set())
+            sw, fw = self.widgets.get('stock'), self.widgets.get('vcarve_finish')
+            offset = kind == 'prismatique' and sw is not None and sw.value() > 1e-9
+            if fw is not None and kind != 'prismatique':
+                self._prism_off = None                   # un autre parcours : rien de proposé en revenant
+            elif fw is not None:                         # OffsetXY non nul (positif) : la passe de finition proposée
+                if offset and getattr(self, '_prism_off', None) is False:     # (cochée, décochable) ; demande du 20/11
+                    fw.blockSignals(True)
+                    fw.setChecked(True)
+                    fw.blockSignals(False)
+                self._prism_off = offset
             for n, (lab, w) in self.rows.items():
                 if kind == 'instruction':
                     show = n in INSTRUCTION_FIELDS
@@ -1685,14 +1714,16 @@ class FieldsDialog(QDialog):
                     show = False
                 if n == 'family':                            # parcours unifiés : la liste de la famille, toujours
                     show = True
-                if n == 'kind_label':                        # le type de parcours, sans liste (ni sous celle de la famille)
-                    show = bool(getattr(self, 'fixed_kind', False)) and not hasattr(self, 'family_box')
+                if n == 'kind_label':                        # le type de parcours : plus dans le formulaire (son titre
+                    show = False                             # le dit ; demande du 20/11)
                     ps = presets()
                     pre = ps.get(self.preset) if self.preset else None
                     w.setText(tr(pre[0]) if pre is not None and pre[1] == kind     # le parcours de la palette
                               else tr(model.op_kinds().get(kind, kind)))
                 if n == 'stock':                             # XY, 3D, largeur de chanfrein : selon le parcours
                     lab.setText(tr(field_label(n, kind)))
+                if n == 'vcarve_finish' and kind == 'prismatique':    # seulement avec un OffsetXY
+                    show = show and offset
                 lab.setVisible(show)
                 w.setVisible(show)
             for g in self.findChildren(QGroupBox):           # sections vides masquées

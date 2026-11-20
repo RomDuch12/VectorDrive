@@ -30,7 +30,7 @@ class TestQuickAccess(unittest.TestCase):
         try:
             dlg = w.file_browser(exec_dialog=False)
             p = dlg.panel
-            q = p.tree.topLevelItem(2)
+            q = p._quick_item()                     # (sous Récents, Favoris et la bibli : 1118)
             self.assertEqual(q.data(0, 256), FB.QUICK)
             self.assertEqual([q.child(i).text(0) for i in range(q.childCount())], ['Clients', 'GRAVURE'])
             p._folder_clicked(q)

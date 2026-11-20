@@ -48,10 +48,40 @@ SCRIPT_STEPS = 200000
 SCRIPT_SEGMENTS = 20000
 MAX_COMMANDS = 300
 #: les outils du panneau par groupe, qu'une option retire
-TOOL_GROUPS = {'memory_read': 'memory', 'memory_write': 'memory', 'list_scripts': 'scripts', 'read_script': 'scripts',
+TOOL_GROUPS = {'memory_read': 'memory', 'memory_write': 'memory', 'memory_topics': 'memory',
+               'memory_topic_read': 'memory', 'list_scripts': 'scripts', 'read_script': 'scripts',
                'run_script': 'scripts', 'save_script': 'scripts', 'list_commands': 'commands',
-               'run_command': 'commands'}
+               'run_command': 'commands',
+               **{k: 'cam' for k in ('cam_machines', 'cam_set_machine', 'cam_presets', 'cam_tools', 'cam_operations',
+                                     'cam_operation_settings', 'cam_add_operation', 'cam_edit_operation',
+                                     'cam_remove_operation', 'cam_move_operation', 'cam_compute', 'cam_program')},
+               'save_copy': 'copies', 'list_copies': 'copies'}
 MAX_DOC = 12000
+#: la FAO de l'assistant (demande du 20/11) : les champs d'une opération qu'il ne change pas par « settings » (les
+#: règles de trajet, la reprise, l'instruction, les fichiers ; l'outil, le nom, active : leurs propres arguments,
+#: vérifiés) ; les textes libres permis ; les pas (0, ou au moins CAM_STEP_MIN mm) ; les entiers bornés ; au plus
+#: tant de caractères d'un programme rendu
+CAM_FIXED = frozenset({'id', 'kind', 'items', 'sources', 'gravure_rule', 'finish_rule', 'gamme_rule', 'prism_rule',
+                       'link_rule', 'sweep_rule', 'restart_from', 'restart_to', 'restart_sig', 'instruction',
+                       'model_path', 'wrap_model', 'tool_id', 'ref_tool_id', 'name', 'enabled'})
+CAM_FREE_TEXT = frozenset({'pass_depths'})
+CAM_STEP_FIELDS = frozenset({'step_down', 'peck', 'troch_step', 'vcarve_step', 'stepover_mm', 'resolution', 'hatch_step',
+                             'line_step', 'fill_dx', 'fill_dy', 'wobble_pitch', 'pitch', 'tex_len_min', 'tex_len_max',
+                             'tab_spacing'})
+CAM_STEP_MIN = 0.01
+#: jamais négatifs (le formulaire : les valeurs de l'outil, au moins 0 ; les hauteurs de dégagement : jamais sous la
+#: surface) ; la profondeur au plus (mm)
+CAM_POSITIVE = frozenset({'step_down', 'feed', 'plunge', 'spindle', 'finish_feed', 'stepover_mm', 'safe_z', 'clear_z',
+                          'safe_z_faced'})
+CAM_DEPTH_MAX = 500.0
+CAM_FLOAT_MAX = 100000.0
+CAM_INT_MAX = {'copies_x': 200, 'copies_y': 200, 'laser_passes': 100, 'tabs': 200, 'tab_max': 200,
+               'parallel_slices': 100}
+CAM_PROGRAM_CHARS = 40000
+#: les copies de l'assistant (demande du 20/11, 16 h 08) : le réglage de leur dossier, le registre de celles qu'il a
+#: écrites (dans ses données)
+KEY_COPIES = 'assistant/dossier_copies'
+COPIES_REGISTRY = 'copies.json'
 
 NUM = {'type': 'number'}
 IDS = {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1,
@@ -63,7 +93,8 @@ def denied(key: str) -> bool:
     fenêtre… (fermer un contour reste permis)."""
     import re as _re
     toks = [t for t in _re.split(r'[_+-]', key.lower()) if t]
-    if key in DENIED_KEYS or key.startswith(('recent', 'machine_')) or any(t.startswith(DENIED) for t in toks):
+    if key in DENIED_KEYS or key.startswith(('recent', 'machine_', 'ia_bouton_')) \
+            or any(t.startswith(DENIED) for t in toks):            # un bouton IA : jamais lancé par l'assistant
         return True
     if 'close' in toks and not set(toks) & {'contour', 'path', 'node', 'compare', 'curve'}:
         return True
@@ -83,6 +114,88 @@ def memory_path():
         return pathlib.Path(env)
     from ..portable import data_dir
     return data_dir() / 'assistant' / 'memoire.md'
+
+
+def assistant_dir():
+    """Le dossier des données de l'assistant (VECTORDRIVE_ASSISTANT_DIR : un autre, essais)."""
+    import os
+    import pathlib
+    env = os.environ.get('VECTORDRIVE_ASSISTANT_DIR')
+    if env:
+        return pathlib.Path(env)
+    from ..portable import data_dir
+    return data_dir() / 'assistant'
+
+
+def copies_dir(settings=None):
+    """Le dossier des copies de l'assistant : celui des options, sinon « copies » dans ses données."""
+    import pathlib
+    chosen = str(settings.value(KEY_COPIES, '') or '').strip() if settings is not None else ''
+    return pathlib.Path(chosen) if chosen else assistant_dir() / 'copies'
+
+
+def file_hash(path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def copy_key(path) -> str:
+    import os
+    return os.path.normcase(os.path.abspath(str(path)))
+
+
+def copies_registry() -> dict:
+    """Les fichiers que l'assistant a écrits : {chemin normalisé : {'path', 'sha256'}} (l'empreinte du fichier tel
+    qu'il l'a écrit — changé depuis, il n'est plus le sien)."""
+    import json
+    try:
+        data = json.loads((assistant_dir() / COPIES_REGISTRY).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if isinstance(v, dict) and isinstance(v.get('path'), str) and isinstance(v.get('sha256'), str)}
+
+
+def record_copy(path, digest: str) -> None:
+    """Retient `path` comme une copie de l'assistant : le registre relu juste avant (une autre fenêtre a pu y écrire),
+    l'entrée ajoutée, écrit par un fichier provisoire à nom unique."""
+    import json
+    import os
+    import secrets
+    st = os.stat(path)
+    reg = copies_registry()
+    reg[copy_key(path)] = {'path': str(path), 'sha256': digest, 'size': st.st_size, 'mtime_ns': st.st_mtime_ns}
+    p = assistant_dir() / COPIES_REGISTRY
+    p.parent.mkdir(parents=True, exist_ok=True)
+    t = p.with_name(f'{p.name}.{secrets.token_hex(4)}.tmp')
+    try:
+        t.write_text(json.dumps(reg, ensure_ascii=False, indent=1), encoding='utf-8')
+        os.replace(t, p)
+    finally:
+        if t.exists():
+            t.unlink()
+
+
+def own_copy(path, reg=None) -> bool:
+    """Un fichier que l'assistant a écrit et que rien n'a changé depuis : au registre, même taille, même date, même
+    empreinte."""
+    import os
+    entry = (copies_registry() if reg is None else reg).get(copy_key(path))
+    if not entry:
+        return False
+    try:
+        st = os.stat(path)
+        if 'size' in entry and (st.st_size != entry['size'] or st.st_mtime_ns != entry.get('mtime_ns')):
+            return False
+        return file_hash(path) == entry['sha256']
+    except OSError:
+        return False
 
 
 def memory_text() -> str:
@@ -193,11 +306,15 @@ class ToolSet:
             raise ToolError('missing argument(s): ' + ', '.join(missing))
 
         def work():
-            self._name, self._stepped = name, False
+            self._name, self._stepped, self._held = name, False, None
             try:
                 out = fn(arguments)
             except KeyError as ex:                       # pas « outil inconnu » : une erreur de l'outil lui-même
                 raise RuntimeError(f'KeyError: {ex}') from ex
+            finally:
+                held, self._held = self._held, None
+                if held is not None:                     # le pas unique d'un outil FAO (`_cam_step`) : refermé
+                    held[0].__exit__(None, None, None)
             if self._stepped:
                 self.win.canvas.invalidate()
                 self.win._on_doc_changed()
@@ -671,6 +788,11 @@ class ToolSet:
           f'rewrites it all (an empty text clears it). At most {MAX_MEMORY} characters in all; keep it short.',
           _schema({'text': {'type': 'string'}, 'mode': {'type': 'string', 'enum': ['append', 'replace']}}, ['text']),
           self.memory_write, True)
+        a('memory_topics', 'The thematic memories saved by the user (title, description): each one holds operations '
+          'done on drawings, to reuse when a request fits it.', _schema({}), self.memory_topics)
+        a('memory_topic_read', 'Read a thematic memory by its title (memory_topics): its description and its entries '
+          '(the most recent ones if it is long).', _schema({'title': {'type': 'string'}}, ['title']),
+          self.memory_topic_read)
         a('list_scripts', 'List the shape scripts: the user\'s own (folder "user"), the templates chosen by the user '
           '("templates") and those of TypeEdit when it is installed ("typeedit"). They are examples for new scripts; '
           'start from a template when one fits.', _schema({}), self.list_scripts)
@@ -699,6 +821,53 @@ class ToolSet:
           'close drawings, switch tabs, change the settings or clear the history are refused. '
           'A command that opens a window waits until the user closes it.',
           _schema({'key': {'type': 'string'}}, ['key']), self.run_command, True)
+        a('cam_machines', 'CAM: the machines (post-processors) available, and the one this drawing uses.', _schema({}),
+          self.cam_machines)
+        a('cam_set_machine', 'CAM: choose the machine (post-processor) of this drawing by its key (cam_machines). One '
+          'undo step.', _schema({'key': {'type': 'string'}}, ['key']), self.cam_set_machine, True)
+        a('cam_presets', 'CAM: the kinds of operations that can be added (key, title, strategy).', _schema({}),
+          self.cam_presets)
+        a('cam_tools', 'CAM: the tools of this drawing (id, number, name, kind, diameter, angle, tip).', _schema({}),
+          self.cam_tools)
+        a('cam_operations', 'CAM: the program, its operations in machining order: id, name, kind, tool, enabled, '
+          'depth, and whether its toolpath is computed (moves, warnings).', _schema({}), self.cam_operations)
+        a('cam_operation_settings', 'CAM: all the settings of one operation (names and values), to change them with '
+          'cam_edit_operation (those in "fixed" are not). Depths are in mm, positive below the surface; 0 for a '
+          'speed or a step: the value of the tool.',
+          _schema({'id': {'type': 'string'}}, ['id']), self.cam_operation_settings)
+        a('cam_add_operation', 'CAM: add an operation of kind "preset" (cam_presets) on the objects "ids" (default: '
+          'the selection; in machining-by-colour mode, the colours of these objects), with "tool_id" (cam_tools), '
+          '"name" and "settings" {name: value} (names from cam_operation_settings) if given; it is computed. One undo '
+          'step. The relief range (gamme_relief) is set up in the CAM panel only.',
+          _schema({'preset': {'type': 'string'}, 'ids': IDS, 'tool_id': {'type': 'string'}, 'name': {'type': 'string'},
+                   'settings': {'type': 'object'}}, ['preset']), self.cam_add_operation, True)
+        a('cam_edit_operation', 'CAM: change an operation — "settings" {name: value} (cam_operation_settings, '
+          'checked: type, range, allowed values; not the "fixed" ones), "name", "enabled", "tool_id", "ids" (the '
+          'objects it machines, not colours); it is recomputed. One undo step.',
+          _schema({'id': {'type': 'string'}, 'settings': {'type': 'object'}, 'name': {'type': 'string'},
+                   'enabled': {'type': 'boolean'}, 'tool_id': {'type': 'string'}, 'ids': IDS}, ['id']),
+          self.cam_edit_operation, True)
+        a('cam_remove_operation', 'CAM: remove an operation and its toolpath. One undo step.',
+          _schema({'id': {'type': 'string'}}, ['id']), self.cam_remove_operation, True)
+        a('cam_move_operation', 'CAM: move an operation to position "index" (0: first) in the machining order, with '
+          'the operations linked to it (a linked one moves alone); linked or rest operations whose previous ones '
+          'changed are recomputed. One undo step.', _schema({'id': {'type': 'string'}, 'index': {'type': 'integer'}}, ['id', 'index']),
+          self.cam_move_operation, True)
+        a('cam_compute', 'CAM: compute the toolpaths of the operations "ids" (default: every enabled operation).',
+          _schema({'ids': {'type': 'array', 'items': {'type': 'string'}}}), self.cam_compute, True)
+        a('cam_program', f'CAM: the machine program of the toolpaths shown, as it would be written (nothing is written '
+          f'to disk; the user writes it with the Post-process button). "recompute": toolpaths redone first if the '
+          f'drawing changed since. At most {CAM_PROGRAM_CHARS} characters per file.',
+          _schema({'recompute': {'type': 'boolean'}}), self.cam_program, True)
+        a('save_copy', 'Save a copy of the drawing as "name" in the copies folder, in "format" (vdz by default: it '
+          'keeps everything — shapes, layers, CAM settings; or dxf, svg, pdf, vnd, png…: an extension or a format key, '
+          'which keep what that format can hold). The drawing open stays as it is (same file, not marked saved). A '
+          'file that is not one of your copies is never overwritten; one of your copies (unchanged since) is replaced '
+          'only with "overwrite": true. "notes": what the format could not keep.',
+          _schema({'name': {'type': 'string'}, 'format': {'type': 'string'}, 'overwrite': {'type': 'boolean'}},
+                  ['name']), self.save_copy, True)
+        a('list_copies', 'The copies you saved (save_copy) that still exist: name, path, "yours" (unchanged since, so you '
+          'may overwrite it), and the copies folder.', _schema({}), self.list_copies)
         for name, group in TOOL_GROUPS.items():         # retirés par les options (F10 › Assistant)
             if group in self.without:
                 self._tools.pop(name, None)
@@ -874,13 +1043,512 @@ class ToolSet:
             raise ToolError(f'no command "{key}" (list_commands)')
         if denied(key):
             raise ToolError(f'"{key}" is refused: the assistant never saves, exports, prints, writes files, opens or '
-                            f'closes drawings, switches tabs, changes the settings or clears the history')
+                            f'closes drawings, switches tabs, changes the settings or clears the history '
+                            f'(save_copy, when available, writes copies of the drawing)')
         act = acts[key]
         if not act.isEnabled():
             raise ToolError(f'"{key}" is not available now (nothing selected, or another mode)')
         act.trigger()                                    # la commande pose son pas d'annulation, comme au clic
         return {'ran': key, 'objects': sum(len(L.items) for L in self.doc.layers),
                 'selected': [it.id for it in self.win.canvas.selection][:MAX_LISTED]}
+
+
+    # --- la FAO (demande du 20/11, 15 h 59 : « Assistant IA peut générer des programmes FAO, sélectionner la machine,
+    # et retoucher le programme à la demande ») : la machine, les opérations, le calcul, le programme (jamais écrit) ---
+    def _cam(self):
+        cam = getattr(self.win, 'cam_panel', None)
+        if cam is None:
+            raise ToolError('the CAM panel is not available')
+        return cam
+
+    def _cam_step(self) -> None:
+        """Le pas d'annulation d'un outil FAO : le dessin et ses réglages FAO (Ctrl+Z rend les opérations) ; un seul
+        jusqu'à la fin de l'outil (`one_undo` : la date du jour posée par un calcul y entre aussi)."""
+        if not self._stepped:
+            cm = self.win.one_undo(tr('Assistant : {0}').format(self._name), with_cam=True)
+            self._held = (cm, cm.__enter__())
+            self._stepped = True
+
+    def _cam_unstep(self) -> None:
+        """Rien n'a changé finalement : le pas retiré."""
+        if getattr(self, '_held', None) is not None:
+            self._held[1]['used'] = False
+            self._stepped = False                        # le dessin n'est pas marqué modifié
+
+    def _cam_op(self, s, op_id):
+        if not isinstance(op_id, str):
+            raise ToolError('"id" must be an operation id (cam_operations)')
+        o = next((x for x in s.operations if x.id == op_id), None)
+        if o is None:
+            raise ToolError(f'no operation "{op_id}" (cam_operations)')
+        from ..cam import external
+        if external.is_external(o):
+            raise ToolError('this operation belongs to a plugin: it is changed in its own panel')
+        return o
+
+    def _cam_settings(self, settings) -> dict:
+        """Les réglages donnés, vérifiés : des champs simples de l'opération, du bon type."""
+        import dataclasses
+        import math
+        from ..cam import model
+        if settings is None:
+            return {}
+        if not isinstance(settings, dict):
+            raise ToolError('"settings" must be an object {name: value}')
+        from ..cam import strategies
+        fields = {f.name: f for f in dataclasses.fields(model.Operation)}
+        out = {}
+        for k, v in settings.items():
+            f = fields.get(k)
+            if f is None or k in CAM_FIXED:
+                raise ToolError(f'"{k}" is not a setting that can be changed here (cam_operation_settings; tool, name '
+                                f'and enabled have their own arguments)')
+            default = f.default if f.default is not dataclasses.MISSING else None
+            why = ''
+            if isinstance(default, bool):
+                ok = isinstance(v, bool)
+            elif isinstance(default, int):
+                lo, hi = (-1 if k == 'body3d' else 0), CAM_INT_MAX.get(k, 9999)       # comme le formulaire, au plus
+                ok = isinstance(v, int) and not isinstance(v, bool)
+                if ok and not lo <= v <= hi:
+                    ok, why = False, f' from {lo} to {hi}'
+            elif isinstance(default, float):
+                ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                if ok:
+                    raw, v = float(v), round(float(v), 3)    # au millième, comme le formulaire
+                    if abs(v) > CAM_FLOAT_MAX:
+                        ok, why = False, f' of at most {CAM_FLOAT_MAX:g} in absolute value'
+                    elif k in CAM_STEP_FIELDS and raw != 0 and abs(raw) < CAM_STEP_MIN:
+                        ok, why = False, f' of 0 (the default) or at least {CAM_STEP_MIN} mm'
+                    elif k == 'ramp_angle' and not 0 <= v <= strategies.RAMP_ANGLE_MAX:
+                        ok, why = False, f' from 0 to {strategies.RAMP_ANGLE_MAX:g}'
+                    elif k in CAM_POSITIVE and v < 0:
+                        ok, why = False, ' of at least 0 (0 for a speed or a step: the value of the tool)'
+                    elif k == 'depth' and not 0 < v <= CAM_DEPTH_MAX:
+                        ok, why = False, f' above 0 and at most {CAM_DEPTH_MAX:g} mm'
+            elif isinstance(default, str):
+                allowed = self._cam_choices(k)
+                ok = isinstance(v, str) and (v in allowed if allowed is not None else len(v) <= 200)
+                if isinstance(v, str) and not ok and allowed is not None:
+                    why = ' among: ' + ', '.join(repr(c) for c in allowed)
+            else:
+                ok = False                               # listes, dictionnaires : pas par ici
+            if not ok:
+                raise ToolError(f'"{k}": expected a '
+                                f'{type(default).__name__ if default is not None else "simple value"}{why}')
+            out[k] = v
+        return out
+
+    @staticmethod
+    def _cam_choices(k):
+        """Les valeurs permises d'un réglage texte (None : texte libre, CAM_FREE_TEXT) ; un texte sans liste connue
+        n'est pas réglable ici (liste vide)."""
+        from ..cam import model
+        from ..cam import wobble
+        from ..cam import wrap
+        from ..ui.cam_panel import FIELD_CHOICES, SIDES
+        if k in CAM_FREE_TEXT:
+            return None
+        table = {**FIELD_CHOICES, 'side': SIDES, 'wobble': wobble.SHAPES, 'wrap': wrap.MODES, 'thread': model.THREADS}
+        return list(table.get(k, {}))
+
+    def _cam_tool_id(self, s, tool_id):
+        if tool_id is None:
+            return None
+        if not isinstance(tool_id, str) or all(t.id != tool_id for t in s.tools):
+            raise ToolError(f'no tool "{tool_id}" in this drawing (cam_tools)')
+        return tool_id
+
+    def _cam_summary(self, cam, o) -> dict:
+        tools = {t.id: t for t in cam.setup().tools}
+        t = tools.get(o.tool_id)
+        tps = [x for x in cam.toolpaths if x.op_id == o.id]
+        warn = list(dict.fromkeys(w for x in tps for w in (getattr(x, 'warnings', None) or [])))
+        return {'id': o.id, 'name': o.name, 'kind': o.kind, 'label': cam.op_label(o), 'enabled': bool(o.enabled),
+                'tool': {'id': t.id, 'number': t.number, 'name': t.name} if t is not None else None,
+                'depth': o.depth, 'step_down': o.step_down, 'objects': len(o.items or []),
+                'colours': list(o.sources or [])[:50], 'computed': bool(tps),
+                'moves': sum(len(x.moves) for x in tps), 'warnings': warn[:20]}
+
+    def cam_machines(self, _args: dict) -> dict:
+        from ..cam import machines as MC
+        from ..cam import post
+        cam = self._cam()
+        cur = cam.post_key()
+        out = [{'key': k, 'label': label, 'current': k == cur}
+               for k, label, _m in MC.choices(post.posts(cam.machines_dir()))]
+        return {'current': cur, 'machines': out[:MAX_LISTED]}
+
+    def cam_set_machine(self, args: dict) -> dict:
+        key = args.get('key')
+        known = {m['key'] for m in self.cam_machines({})['machines']}
+        if not isinstance(key, str) or key not in known:
+            raise ToolError(f'no machine "{key}" (cam_machines)')
+        cam = self._cam()
+        if cam.setup().post == key:
+            return {'machine': key, 'changed': False}
+        self._cam_step()
+        cam.set_post(key)
+        return {'machine': cam.post_key(), 'changed': True,
+                'note': 'computed toolpaths are kept; recompute (cam_compute) if this machine needs other settings'}
+
+    def cam_presets(self, _args: dict) -> dict:
+        from ..ui.cam_panel import presets
+        return {'presets': [{'key': k, 'title': tr(v[0]), 'kind': v[1]} for k, v in presets().items()]}
+
+    def cam_tools(self, _args: dict) -> dict:
+        return {'tools': [{'id': t.id, 'number': t.number, 'name': t.name, 'kind': t.kind, 'diameter': t.diameter,
+                           'angle': t.angle, 'tip': t.tip} for t in self._cam().setup().tools][:MAX_LISTED]}
+
+    def cam_operations(self, _args: dict) -> dict:
+        cam = self._cam()
+        return {'machine': cam.post_key(), 'operations': [self._cam_summary(cam, o) for o in cam.setup().operations]}
+
+    def cam_operation_settings(self, args: dict) -> dict:
+        cam = self._cam()
+        o = self._cam_op(cam.setup(), args.get('id'))
+        d = o.to_dict()
+        for k in list(d):
+            if isinstance(d[k], (list, dict)):
+                d[k] = f'({len(d[k])} values: not editable here)' if k not in ('items', 'sources') else d[k][:50]
+        return {'id': o.id, 'settings': d, 'fixed': sorted(CAM_FIXED)}
+
+    def _cam_items(self, ids):
+        items = [it for _layer, it in self._items(ids)]  # objets de premier niveau du dessin
+        pairs = self._items(ids)
+        frozen = [it.id for layer, it in pairs if getattr(it, 'locked', False) or getattr(layer, 'locked', False)]
+        if frozen:
+            raise ToolError('frozen object(s) or on a locked layer, never machined from here: ' + ', '.join(frozen))
+        return [it.id for _layer, it in pairs]
+
+    @staticmethod
+    def _cam_ref_tool(s, o) -> None:
+        """L'outil changé : l'outil de référence d'un reste matière, s'il n'est plus plus gros, refait comme dans le
+        panneau (`CamPanel._after_tool_chosen`) : le plus petit des plus gros."""
+        if not o.ref_tool_id:
+            return
+        tool, ref = s.tool(o.tool_id), s.tool(o.ref_tool_id)
+        if tool is None:
+            return
+        depth = abs(o.depth)
+        if ref is not None and ref.radius_at(depth) > tool.radius_at(depth):
+            return
+        bigger = [t for t in s.tools if t.kind in ('fraise', 'boule') and t.radius_at(depth) > tool.radius_at(depth)]
+        o.ref_tool_id = min(bigger, key=lambda t: t.diameter).id if bigger else ''
+
+    def cam_add_operation(self, args: dict) -> dict:
+        from ..ui.cam_panel import presets
+        cam = self._cam()
+        key = args.get('preset')
+        if not isinstance(key, str) or key not in presets():
+            raise ToolError(f'no preset "{key}" (cam_presets)')
+        if key == 'gamme_relief':                        # ses outils se choisissent dans sa fenêtre
+            raise ToolError('the relief range is set up in the CAM panel (its tools are chosen in its window)')
+        s = cam.setup()
+        settings = self._cam_settings(args.get('settings'))
+        tool_id = self._cam_tool_id(s, args.get('tool_id'))
+        name = args.get('name')
+        if name is not None and (not isinstance(name, str) or not name.strip() or len(name) > 120):
+            raise ToolError('"name": a text of 1 to 120 characters')
+        if key == 'gamme' and (settings or tool_id or name is not None):
+            raise ToolError('this preset adds a roughing and a finishing operation: add it without "settings", '
+                            '"tool_id" or "name", then change each one with cam_edit_operation')
+        ids = self._cam_items(args['ids']) if args.get('ids') is not None else None
+        if ids is not None:
+            self.win.canvas.select([self._find(i) for i in ids])
+        elif cam._scope() is None:
+            raise ToolError('nothing to machine: give "ids" (list_objects) or select objects first')
+        before = {o.id for o in s.operations}
+        self._cam_step()
+        cam.new_operation(key, exec_dialog=False)
+        s = cam.setup()
+        new = [o for o in s.operations if o.id not in before]
+        if not new:
+            self._cam_unstep()
+            return {'added': [], 'note': 'nothing was added'}
+        o = new[-1]
+        if ids is not None and cam.machining_mode() != 'couleur':
+            o.items, o.sources = list(ids), []
+        changed = bool(settings or tool_id or name is not None)
+        if changed and len(new) > 1:                     # un modèle à plusieurs opérations : chacune se retouche
+            return {'added': [x.id for x in new], 'note': 'several operations were added: "settings", "tool_id" and '
+                    '"name" were not applied; change each one with cam_edit_operation'}
+        for k, v in settings.items():
+            setattr(o, k, v)
+        if tool_id:
+            o.tool_id = tool_id
+            self._cam_ref_tool(s, o)
+        if name is not None:
+            o.name = name.strip()
+        if changed:
+            cam.save(s)
+            cam.compute_op(next(x for x in cam.setup().operations if x.id == o.id))
+        return {'added': [x.id for x in new], 'operation': self._cam_summary(cam, next(
+            x for x in cam.setup().operations if x.id == o.id))}
+
+    def cam_edit_operation(self, args: dict) -> dict:
+        cam = self._cam()
+        s = cam.setup()
+        o = self._cam_op(s, args.get('id'))
+        settings = self._cam_settings(args.get('settings'))
+        tool_id = self._cam_tool_id(s, args.get('tool_id'))
+        name, enabled = args.get('name'), args.get('enabled')
+        if name is not None and (not isinstance(name, str) or not name.strip() or len(name) > 120):
+            raise ToolError('"name": a text of 1 to 120 characters')
+        if enabled is not None and not isinstance(enabled, bool):
+            raise ToolError('"enabled": true or false')
+        ids = self._cam_items(args['ids']) if args.get('ids') is not None else None
+        if not (settings or tool_id or name is not None or enabled is not None or ids is not None):
+            raise ToolError('nothing to change: give "settings", "name", "enabled", "tool_id" or "ids"')
+        self._cam_step()
+        s = cam.setup()                                  # (relu après le pas)
+        o = next(x for x in s.operations if x.id == o.id)
+        for k, v in settings.items():
+            setattr(o, k, v)
+        if tool_id:
+            o.tool_id = tool_id
+            self._cam_ref_tool(s, o)
+        if name is not None:
+            o.name = name.strip()
+        if enabled is not None:
+            o.enabled = enabled
+        if ids is not None:
+            o.items, o.sources = list(ids), []
+        cam.save(s)
+        o = next(x for x in cam.setup().operations if x.id == o.id)
+        if o.enabled:
+            cam.compute_op(o)
+        else:
+            cam.remove_op_paths(o)
+        return {'operation': self._cam_summary(cam, next(x for x in cam.setup().operations if x.id == o.id))}
+
+    def cam_remove_operation(self, args: dict) -> dict:
+        cam = self._cam()
+        o = self._cam_op(cam.setup(), args.get('id'))
+        self._cam_step()
+        s = cam.setup()
+        s.operations = [x for x in s.operations if x.id != o.id]
+        cam.save(s)
+        if any(t.op_id == o.id for t in cam.toolpaths):
+            cam.display([t for t in cam.toolpaths if t.op_id != o.id])
+        return {'removed': o.id, 'operations': len(cam.setup().operations)}
+
+    def cam_move_operation(self, args: dict) -> dict:
+        cam = self._cam()
+        s = cam.setup()
+        o = self._cam_op(s, args.get('id'))
+        index = args.get('index')
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(s.operations):
+            raise ToolError(f'"index": from 0 to {len(s.operations) - 1}')
+        ops = list(s.operations)
+        i = [x.id for x in ops].index(o.id)
+        if o.link_previous:                              # liée à la précédente : seule, comme dans le panneau
+            block, rest = [ops[i]], ops[:i] + ops[i + 1:]
+            at = min(index, len(rest))
+        else:                                            # avec ses opérations liées, d'un bloc
+            e = cam.chain_end(ops, i)
+            block, rest = ops[i:e + 1], ops[:i] + ops[e + 1:]
+            at = min(index, len(rest))
+            while 0 < at < len(rest) and rest[at].link_previous:  # jamais au milieu d'un autre bloc : avant lui en
+                at = at - 1 if index < i else at + 1             # montant, après lui en descendant
+            while at < len(rest) and rest[at].link_previous:
+                at += 1
+        order = [x.id for x in rest[:at] + block + rest[at:]]
+        before = [x.id for x in ops]
+        if order == before:
+            return {'order': before}
+        self._cam_step()
+        s = cam.setup()
+        by_id = {x.id: x for x in s.operations}
+        s.operations = [by_id[k] for k in order]
+        cam.save(s)
+        cam.follow_order(before)                         # les parcours dans l'ordre des opérations
+        # une opération liée, ou qui reprend le reste, dont les précédentes ont changé : son parcours recalculé
+        ops = cam.setup().operations
+        prev_before = {k: before[:before.index(k)] for k in before}
+        redo = [x for n, x in enumerate(ops) if x.enabled and (x.link_previous or x.rest_previous
+                                                               or cam._needs_previous(x))
+                and [y.id for y in ops[:n]] != prev_before[x.id] and any(t.op_id == x.id for t in cam.toolpaths)]
+        done = []
+        for x in redo:
+            if cam.compute_op(next(y for y in cam.setup().operations if y.id == x.id)) is None:
+                break
+            done.append(x.id)
+        return {'order': [x.id for x in cam.setup().operations], 'recomputed': done}
+
+    def cam_compute(self, args: dict) -> dict:
+        cam = self._cam()
+        s = cam.setup()
+        ids = args.get('ids')
+        if ids is None:
+            ops = [o for o in s.operations if o.enabled]
+        else:
+            if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                raise ToolError('"ids" must be a list of operation ids')
+            ops = [self._cam_op(s, i) for i in dict.fromkeys(ids)]
+        done = []
+        for o in ops:
+            if not o.enabled:
+                continue
+            if cam.compute_op(o) is None:
+                break                                    # annulé : les autres non plus
+            done.append(o.id)
+        return {'computed': done,
+                'operations': [self._cam_summary(cam, o) for o in cam.setup().operations if o.id in set(done)]}
+
+    def cam_program(self, args: dict) -> dict:
+        cam = self._cam()
+        got = cam.program_preview(recompute=bool(args.get('recompute', False)))
+        files = [{'name': n, 'text': t[:CAM_PROGRAM_CHARS], 'truncated': len(t) > CAM_PROGRAM_CHARS,
+                  'characters': len(t)} for n, t in got.get('files', [])]
+        return {'machine': got.get('key', ''), 'files': files, 'warnings': list(got.get('warnings', []))[:40],
+                'note': got.get('note', '')}
+
+
+    # --- les copies du dessin (demande du 20/11, 16 h 08 : « Assistant IA peut enregistrer des copies de fichier (sans
+    # pouvoir écraser ce qui n'est pas de lui, mais peut ecraser ce qu'il a fait lui) ») ---------------------------------
+    def _copy_format(self, wanted):
+        from ..io import registry
+        fmts = [f for f in registry.FORMATS if f.writer is not None and not f.machine]   # le cœur seulement
+        w = str(wanted or 'vdz').strip().lower().lstrip('.')
+        for f in fmts:
+            if w == f.key or ('.' + w) in f.extensions:
+                return f, ('.' + w) if ('.' + w) in f.extensions else f.extensions[0]
+        raise ToolError(f'no format "{wanted}"; one of: ' + ', '.join(f.key for f in fmts))
+
+    def save_copy(self, args: dict) -> dict:
+        import os
+        import re as _re
+        import secrets
+        import shutil
+        import threading
+        name = args.get('name')
+        if not isinstance(name, str) or not _re.fullmatch(r'[\w -]{1,60}', name.strip()) \
+                or _re.fullmatch(r'(CON|PRN|AUX|NUL|(COM|LPT)[0-9¹²³])', name.strip(), _re.IGNORECASE):
+            raise ToolError('"name": 1 to 60 letters, digits, spaces, - or _ (not a reserved name of the system)')
+        name = name.strip()
+        fmt, ext = self._copy_format(args.get('format'))
+        overwrite = args.get('overwrite', False)
+        if not isinstance(overwrite, bool):
+            raise ToolError('"overwrite" must be true or false')
+        folder = copies_dir(getattr(self.win, 'settings', None))
+        path = folder / (name + ext)
+        existed = os.path.lexists(path)
+        if existed:
+            if not path.is_file() or path.is_symlink() or not own_copy(path):
+                raise ToolError(f'"{path.name}" exists and is not one of your copies (or it was changed since): it is '
+                                f'never overwritten; choose another name')
+            if not overwrite:
+                raise ToolError(f'"{path.name}" is one of your copies: "overwrite": true to replace it, or choose '
+                                f'another name')
+        from ..io import companion, native, registry
+        doc = self.win.canvas.doc
+        snap = native.snapshot(doc)                      # le dessin ouvert n'est pas touché (extra copié) ; écrit
+        snap.report = []                                 # dans un fil
+        notes = []
+        if companion.te_native(path):
+            if hasattr(self.win, '_vnd_options'):
+                self.win._vnd_options(snap)              # les réglages d'écriture des VND, comme Enregistrer
+            if snap.extra.get('vnd_partial'):
+                notes.append('the drawing was read in part from a VND: the objects not read are not in this copy')
+        if fmt.key != 'vdz':
+            notes.append('only the vdz format keeps everything (CAM settings, editable texts, plates)')
+        # un dossier provisoire du même disque : le fichier y porte déjà son vrai nom (titre d'un PDF, nom d'un STEP…)
+        work = folder / f'.~{secrets.token_hex(4)}'
+        tmp = work / path.name
+        try:
+            work.mkdir(parents=True)
+        except OSError as ex:
+            raise ToolError(f'the copies folder could not be made: {ex}') from ex
+        state, lock = {'abandoned': False}, threading.Lock()
+
+        def write():
+            try:
+                registry.save_document(snap, tmp)
+            finally:
+                with lock:                               # annulé pendant l'écriture : le fil range derrière lui
+                    if state['abandoned']:
+                        shutil.rmtree(work, ignore_errors=True)
+        placed = False
+        try:
+            from ..ui.progress import Cancelled, run
+            try:
+                run(self.win, tr('Copie de l’assistant : {0}').format(path.name), write)
+            except Cancelled as ex:
+                with lock:
+                    state['abandoned'] = True
+                raise ToolError('the copy was cancelled by the user') from ex
+            digest = file_hash(tmp)                      # l'empreinte de ce qui a été écrit, avant de le poser
+            if existed:
+                if not own_copy(path):                   # changé pendant l'écriture : plus le sien
+                    raise ToolError(f'"{path.name}" was changed meanwhile: it is not overwritten')
+                os.replace(tmp, path)
+            else:
+                try:
+                    os.link(tmp, path)                   # jamais par-dessus un fichier venu entre-temps
+                except FileExistsError as ex:
+                    raise ToolError(f'"{path.name}" appeared meanwhile: choose another name') from ex
+                except OSError:                          # pas de lien sur ce disque : créé en exclusif, puis copié
+                    try:
+                        dst = open(path, 'xb')
+                    except FileExistsError as ex:
+                        raise ToolError(f'"{path.name}" appeared meanwhile: choose another name') from ex
+                    try:
+                        with dst, open(tmp, 'rb') as src:
+                            shutil.copyfileobj(src, dst)
+                    except OSError:
+                        os.remove(path)                  # le sien, à moitié écrit
+                        raise
+            placed = True
+            record_copy(path, digest)
+        except ToolError:
+            raise
+        except Exception as ex:                          # noqa: BLE001 — format, disque, convertisseur absent…
+            if placed:
+                raise ToolError(f'"{path.name}" was written but could not be recorded as one of your copies ({ex}): '
+                                f'it will not be overwritten') from ex
+            raise ToolError(f'the copy could not be written: {ex}') from ex
+        finally:
+            with lock:
+                shutil.rmtree(work, ignore_errors=True)  # (annulé : le fil finit, puis range)
+        notes += [str(x) for x in snap.report][:20]
+        out = {'saved': str(path), 'format': fmt.key, 'replaced': existed}
+        if notes:
+            out['notes'] = notes
+        return out
+
+    def list_copies(self, _args: dict) -> dict:
+        import os
+        folder = copies_dir(getattr(self.win, 'settings', None))
+        reg = copies_registry()
+        out = []
+        for entry in list(reg.values())[-MAX_LISTED:]:
+            p = entry['path']
+            if os.path.isfile(p):
+                out.append({'name': os.path.basename(p), 'path': p, 'yours': own_copy(p, reg),
+                            'in_folder': copy_key(os.path.dirname(p)) == copy_key(folder)})
+        return {'folder': str(folder), 'copies': out}
+
+
+    # --- les mémoires thématiques (demande du 20/11, 15 h 36) : remplies par l'utilisateur (« Ajouter à une
+    # mémoire… »), lues ici --------------------------------------------------------------------------------------------
+    def memory_topics(self, _args: dict) -> dict:
+        from . import memories as M
+        return {'memories': [{'title': t['title'], 'description': t['description'], 'characters': t['characters']}
+                             for t in M.topics()[:M.MAX_TOPICS]], 'note': M.NOTES}
+
+    def memory_topic_read(self, args: dict) -> dict:
+        from . import memories as M
+        title = args.get('title')
+        if not isinstance(title, str) or not title.strip():
+            raise ToolError('"title" must be the title of a memory (memory_topics)')
+        try:
+            got = M.read(title)
+        except (OSError, UnicodeDecodeError) as ex:
+            raise ToolError(f'the memory could not be read: {ex}') from ex
+        if got is None:
+            raise ToolError(f'no memory titled "{title.strip()}" (memory_topics)')
+        return got
 
 
 def _shapes_in(group):

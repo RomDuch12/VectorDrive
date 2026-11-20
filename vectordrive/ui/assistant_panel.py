@@ -207,9 +207,23 @@ class AssistantPanel(QWidget):
         self.btn_memory = QPushButton(tr('Mémoire…'))
         self.btn_memory.setToolTip(tr('Ce que l’assistant retient d’une discussion à l’autre : le voir, le corriger'))
         self.btn_memory.clicked.connect(lambda _=False: self.edit_memory())
-        for b in (self.btn_send, self.btn_stop, self.btn_new, self.btn_memory):
+        self.btn_add_memory = QPushButton(tr('Ajouter à une mémoire…'))
+        self.btn_add_memory.setToolTip(tr('Les opérations faites sur ce dessin, dans une mémoire nouvelle ou existante '
+                                          '(titre, description) que l’assistant lit quand elle sert'))
+        self.btn_add_memory.clicked.connect(lambda _=False: self.add_to_memory())
+        for b in (self.btn_send, self.btn_stop, self.btn_new, self.btn_memory, self.btn_add_memory):
             row.addWidget(b)
         lay.addLayout(row)
+        # les boutons IA personnalisés (demande du 20/11, 15 h 32) : leur rangée, « + » pour en créer
+        self._override = None                            # (outils retirés, tours) du bouton lancé ; None : les options
+        self._button_run = None
+        self.validation_box = None
+        from .flow import FlowLayout
+        self.ai_box = QWidget()                          # à la ligne quand la colonne est étroite
+        self.ai_row = FlowLayout(self.ai_box)
+        self.ai_row.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.ai_box)
+        self.fill_ai_buttons()
         self.status = QLabel('')
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
@@ -301,7 +315,13 @@ class AssistantPanel(QWidget):
                     from ..agent.protocol import ToolError
                     raise ToolError('the user is now looking at another drawing tab: this conversation belongs to '
                                     'its own tab; ask the user to come back to it, then try again')
-                return fn()
+                run_ = getattr(self, '_button_run', None)   # un bouton IA : les pas posés par ses outils, comptés
+                before = getattr(self.win, '_undo_pushes', 0)
+                try:
+                    return fn()
+                finally:
+                    if run_ is not None and run_ is getattr(self, '_button_run', None):
+                        run_['tool_steps'] += getattr(self.win, '_undo_pushes', 0) - before
             return self.bridge.run(guarded)
         return run
 
@@ -405,22 +425,32 @@ class AssistantPanel(QWidget):
 
     def conversation(self):
         """La discussion en cours ; refaite (vide) si le fournisseur, le modèle, l'adresse ou la clé a changé."""
-        key = self._settings_key()
+        ov = getattr(self, '_override', None)            # un bouton IA : ses outils et ses tours
+        key = self._settings_key() + (ov,)
+        old, old_key = self.conv, self._conv_key
         if self.conv is None or key != self._conv_key:
             from ..agent.chat import Conversation
             from ..agent.tools import ToolSet
             p, model, url, api_key = key[:4]
             from . import assistant_options as AO
             st = self.win.settings
-            tools = ToolSet(self.win, self._runner(self._tab), extended=True, without=AO.without(st))
+            tools = ToolSet(self.win, self._runner(self._tab), extended=True,
+                            without=ov[0] if ov else AO.without(st))
             self.conv = Conversation(p, model, api_key, tools, url=url, client=self.client_for(p),
-                                     system=AO.system_text(st), max_steps=self._option('assistant/tours_max'),
+                                     system=AO.system_text(st, removed=ov[0] if ov else None),
+                                     max_steps=ov[1] if ov else self._option('assistant/tours_max'),
                                      on_text=self.relay.text.emit, on_tool=self._tool_seen)
             # les jetons de chaque tour : comptés pour la session et pour le dessin de cette discussion (son onglet,
             # suivi s'il est remplacé sur place), même si un autre onglet est affiché entre-temps
             self.conv.on_usage = (lambda used, holder=self._tab, c=self.conv:
                                   self.relay.usage.emit((holder, c.provider, c.model, used)))
-            if self._conv_key is not None and self.view.toPlainText().strip():
+            # seuls les outils ou les tours changent (un bouton IA, la demande d'après) : la même discussion
+            carry = old is not None and old_key is not None and old_key[:-1] == key[:-1]
+            if carry:                                    # même fournisseur : même backend ; OpenAI la tient chez lui
+                for attr in ('messages', 'last_id', '_pending'):
+                    if hasattr(old._backend, attr) and hasattr(self.conv._backend, attr):
+                        setattr(self.conv._backend, attr, getattr(old._backend, attr))
+            if not carry and self._conv_key is not None and self.view.toPlainText().strip():
                 self._line(tr('— Nouvelle discussion ({0}, {1}) —').format(self.providers[p][0], model or '…'))
             self._conv_key = key
         return self.conv
@@ -547,6 +577,249 @@ class AssistantPanel(QWidget):
             except OSError as ex:
                 self.status.setText(str(ex))
         d.accepted.connect(keep)
+        if exec_dialog:
+            d.exec()
+        return d
+
+    # --- les boutons IA personnalisés (demande du 20/11, 15 h 32) ------------------------------------------------------
+    def fill_ai_buttons(self) -> None:
+        """La rangée des boutons IA : un bouton par bouton défini (clic : lancé ; clic droit : modifier, dupliquer,
+        favoris, supprimer), puis « + » pour en créer un."""
+        from PySide6.QtWidgets import QToolButton
+        from ..agent import ai_buttons as AB
+        while self.ai_row.count():
+            w = self.ai_row.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        self.ai_buttons = {}
+        lbl = QLabel(tr('Boutons IA :'))
+        self.ai_row.addWidget(lbl)
+        for b in AB.load(self.win.settings):
+            t = QToolButton()
+            t.setText(b.label)
+            t.setToolTip(b.task[:300])
+            t.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            t.clicked.connect(lambda _=False, bid=b.id: self.run_button(bid))
+            t.customContextMenuRequested.connect(lambda pos, bid=b.id, w=t: self._ai_menu(bid, w.mapToGlobal(pos)))
+            self.ai_row.addWidget(t)
+            self.ai_buttons[b.id] = t
+        add = QToolButton()
+        add.setText('+')
+        add.setToolTip(tr('Nouveau bouton IA : un plan de travail, une tâche, des règles, le contrôle final, une '
+                          'mémoire'))
+        add.clicked.connect(lambda _=False: self.new_ai_button())
+        self.ai_row.addWidget(add)
+        self.ai_add = add
+
+    def _ai_buttons_changed(self, buttons) -> None:
+        from ..agent import ai_buttons as AB
+        from . import assistant_buttons as UB
+        AB.save(self.win.settings, buttons)
+        UB.install(self.win)
+        self.win._apply_shortcuts()                      # les raccourcis des boutons (créés, retirés)
+        if hasattr(self.win, '_custom_relays'):          # onglets à soi : un bouton supprimé en part, renommé suit
+            r = self.win.ribbon
+            shown = r.tabText(r.currentIndex())
+            self.win._build_custom_tab()
+            at = next((i for i in range(r.count()) if r.tabText(i) == shown), -1)
+            if at >= 0 and at != r.currentIndex():       # l'onglet affiché, refait : on y reste
+                r.setCurrentIndex(at)
+        self.win.refresh_favorites()
+        self.fill_ai_buttons()
+
+    def new_ai_button(self, exec_dialog: bool = True, source=None):
+        """Un nouveau bouton IA (`source` : un bouton à dupliquer). Rend la fenêtre."""
+        import dataclasses
+        from ..agent import ai_buttons as AB
+        from .assistant_buttons import ButtonDialog
+        if len(AB.load(self.win.settings)) >= AB.MAX_BUTTONS:   # dit avant la saisie, pas après
+            self.status.setText(tr('Au plus {0} boutons IA').format(AB.MAX_BUTTONS))
+            return None
+        start = None
+        if source is not None:
+            start = dataclasses.replace(source, id=AB.AIButton().id, label=(source.label + ' 2')[:AB.LABEL_MAX])
+        d = ButtonDialog(self.win, start, favorite=True, parent=self)
+        if source is None or start is None:
+            d.setWindowTitle(tr('Nouveau bouton IA'))
+
+        def kept():
+            buttons = AB.load(self.win.settings)
+            if len(buttons) >= AB.MAX_BUTTONS:
+                self.status.setText(tr('Au plus {0} boutons IA').format(AB.MAX_BUTTONS))
+                return
+            b = d.button()
+            self._ai_buttons_changed(buttons + [b])
+            if d.favorite.isChecked():
+                self.win.add_favorite(b.key)
+            self.status.setText(tr('Bouton IA « {0} » créé').format(b.label))
+        d.accepted.connect(kept)
+        if exec_dialog:
+            d.exec()
+        return d
+
+    def edit_ai_button(self, bid: str, exec_dialog: bool = True):
+        from ..agent import ai_buttons as AB
+        from .assistant_buttons import ButtonDialog
+        b = AB.find(self.win.settings, bid)
+        if b is None:
+            return None
+        d = ButtonDialog(self.win, b, favorite=b.key in self.win.favorite_keys(), parent=self)
+
+        def kept():
+            nb = d.button()
+            self._ai_buttons_changed([nb if x.id == bid else x for x in AB.load(self.win.settings)])
+            if d.favorite.isChecked():
+                self.win.add_favorite(nb.key)
+            else:
+                self.win.remove_favorite(nb.key)
+        d.accepted.connect(kept)
+        if exec_dialog:
+            d.exec()
+        return d
+
+    def delete_ai_button(self, bid: str) -> bool:
+        from ..agent import ai_buttons as AB
+        buttons = AB.load(self.win.settings)
+        b = next((x for x in buttons if x.id == bid), None)
+        if b is None:
+            return False
+        self.win.remove_favorite(b.key)
+        self._ai_buttons_changed([x for x in buttons if x.id != bid])
+        self.status.setText(tr('Bouton IA « {0} » supprimé').format(b.label))
+        return True
+
+    def _ai_menu(self, bid: str, at, exec_menu: bool = True):
+        from PySide6.QtWidgets import QMenu, QMessageBox
+        from ..agent import ai_buttons as AB
+        b = AB.find(self.win.settings, bid)
+        if b is None:
+            return None
+        m = QMenu(self)
+        m.addAction(tr('Lancer'), lambda: self.run_button(bid))
+        m.addAction(tr('Modifier…'), lambda: self.edit_ai_button(bid))
+        m.addAction(tr('Dupliquer…'), lambda: self.new_ai_button(source=b))
+        fav = b.key in self.win.favorite_keys()
+        m.addAction(tr('Retirer des favoris') if fav else tr('Ajouter aux favoris'),
+                    lambda: self.win.remove_favorite(b.key) if fav else self.win.add_favorite(b.key))
+        m.addSeparator()
+
+        def delete():
+            if QMessageBox.question(self, tr('Bouton IA'), tr('Supprimer le bouton « {0} » ?').format(b.label)) \
+                    == QMessageBox.StandardButton.Yes:
+                self.delete_ai_button(bid)
+        m.addAction(tr('Supprimer…'), delete)
+        if exec_menu:
+            m.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            m.exec(at)
+        return m
+
+    def run_button(self, bid: str) -> bool:
+        """Lance le bouton IA `bid` : sa demande (plan de travail, tâche, règles, mémoire, contrôle) avec ses outils et
+        ses tours ; rend False si elle ne part pas (dit dans la barre du panneau)."""
+        from ..agent import ai_buttons as AB
+        from . import assistant_buttons as UB
+        from . import assistant_options as AO
+        b = AB.find(self.win.settings, bid)
+        if b is None:
+            self.status.setText(tr('Ce bouton IA n’existe plus'))
+            return False
+        if self.running:
+            self.status.setText(tr('Une demande est en cours : attendez sa fin, ou Arrêter'))
+            return False
+        items, description = UB.scope_items(self.win, b.scope)
+        if not items:
+            self.status.setText(UB.empty_text(b.scope))
+            return False
+        st = self.win.settings
+        without = tuple(sorted(set(AO.without(st)) | (set(AB.GROUPS) - set(b.tools))))
+        turns = b.turns or self._option('assistant/tours_max')
+        before = (self._override, self.conv)
+        self._override = None if (without == AO.without(st) and not b.turns) else (without, turns)
+        if b.new_chat:
+            self.conv = None
+        ids = [it.id for it in items]
+        stack = self.win._undo
+        # « tool_steps » : les pas posés par ses outils (compté dans _runner) ; Défaire n'annule qu'eux
+        self._button_run = {'button': b, 'pushes': getattr(self.win, '_undo_pushes', 0), 'tool_steps': 0,
+                            'stack': stack, 'mark': stack[-1] if stack else None,
+                            'outside': UB.outside(self.win, ids), 'doc': self.win.canvas.doc}
+        ok = False
+        try:
+            ok = bool(self.send(UB.compose(b, items, description, memory_allowed='memory' not in AO.without(st))))
+        finally:
+            if not ok:                                   # partie ou pas, jamais un état collé
+                self._button_run = None
+                self._override, self.conv = before
+        return ok
+
+    def _after_button(self) -> None:
+        """La demande d'un bouton IA finie : les objets hors du plan de travail changés dits ; contrôle
+        « validation » : Garder ou Défaire."""
+        from . import assistant_buttons as UB
+        run, self._button_run = getattr(self, '_button_run', None), None
+        if run is None:
+            return
+        b = run['button']
+        steps = run['tool_steps']
+        if self.win.canvas.doc is not run['doc']:        # un autre onglet entre-temps : rien à comparer ici
+            if b.control == 'validation' and steps > 0:
+                self.status.setText(tr('Le dessin du bouton « {0} » n’est plus affiché : Garder ou Défaire impossible '
+                                       'ici (Ctrl+Z sur son onglet)').format(b.label))
+            return
+        moved = UB.changed(run['outside'], self.win)
+        if moved:
+            self.status.setText(tr('Attention : {0} objet(s) hors du plan de travail ont changé (Ctrl+Z pour '
+                                   'revenir)').format(len(moved)))
+        if b.control == 'validation' and steps > 0:
+            prev = getattr(self, 'validation_box', None)
+            if prev is not None:                         # celle d'un lancement d'avant : remplacée
+                try:
+                    prev.hide()
+                    prev.deleteLater()
+                except RuntimeError:                     # déjà détruite
+                    pass
+            box = UB.ValidationBox(self, b, steps, moved)
+            stack, mark = run['stack'], run['mark']
+            only_its = getattr(self.win, '_undo_pushes', 0) - run['pushes'] == steps   # rien d'autre posé pendant
+            top = stack[-1] if stack else None
+
+            def its_own() -> bool:
+                """Le haut de la pile : exactement ses pas, posés sur le pas d'avant le lancement."""
+                if not only_its or self.win._undo is not stack or not stack or stack[-1] is not top:
+                    return False
+                at = -1 if mark is None else next((i for i in range(len(stack) - 1, -1, -1) if stack[i] is mark),
+                                                  None)
+                return at is not None and len(stack) - 1 - at == steps
+
+            def undo():
+                if self.running:                         # une autre demande travaille sur le dessin
+                    self.status.setText(tr('Une demande est en cours : attendez sa fin, ou Arrêter'))
+                    return
+                if self.win.canvas.doc is not run['doc'] or not its_own():
+                    self.status.setText(tr('D’autres modifications que celles du bouton : Ctrl+Z à la main'))
+                    return
+                for _ in range(steps):
+                    self.win.undo()
+                self.status.setText(tr('Modifications du bouton « {0} » défaites').format(b.label))
+            box.undo_button.clicked.connect(lambda _=False: undo())   # « clicked » passe un booléen
+            self.validation_box = box
+            box.show()                                   # pas open() : modale à la fenêtre, elle bloquerait l'assistant
+
+    def add_to_memory(self, exec_dialog: bool = True):
+        """« Ajouter à une mémoire… » (demande du 20/11, 15 h 36) : les opérations du dessin affiché dans une mémoire
+        thématique, nouvelle ou existante. Rend la fenêtre."""
+        from .assistant_memories import AddToMemory
+        d = AddToMemory(self.win, self)
+
+        def kept():
+            from . import assistant_options as AO
+            if 'memory' in AO.without(self.win.settings):
+                self.status.setText(tr('Gardé dans la mémoire « {0} » ; l’assistant ne la lit pas : sa mémoire est '
+                                       'retirée dans les options (Options › Assistant)').format(d.saved_title))
+                return
+            self.status.setText(tr('Gardé dans la mémoire « {0} » : l’assistant la lit quand elle sert (les '
+                                   'prochaines discussions la voient d’office)').format(d.saved_title))
+        d.accepted.connect(kept)
         if exec_dialog:
             d.exec()
         return d
@@ -744,3 +1017,7 @@ class AssistantPanel(QWidget):
         if message:
             self._line('<i style="color:#a05a00">{0}</i>'.format(html.escape(message)), raw=True)
         self._out = None
+        try:
+            self._after_button()
+        finally:
+            self._override = None                        # la demande suivante : les réglages des options

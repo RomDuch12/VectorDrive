@@ -42,6 +42,8 @@ os.environ.setdefault('VECTORDRIVE_SESSION', os.path.join(_dir, 'session'))
 os.environ.setdefault('VECTORDRIVE_BIBLIOTHEQUE', os.path.join(_dir, 'bibliotheque'))
 # carnet de clients du BAT : jamais celui du poste
 os.environ.setdefault('VECTORDRIVE_CLIENTS', os.path.join(_dir, 'clients'))
+# copies de l'assistant IA et leur registre : jamais celles du poste
+os.environ.setdefault('VECTORDRIVE_ASSISTANT_DIR', os.path.join(_dir, 'assistant'))
 atexit.register(shutil.rmtree, _dir, True)
 
 

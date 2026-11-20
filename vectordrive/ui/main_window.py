@@ -627,6 +627,8 @@ class MainWindow(QMainWindow):
         from .. import plugins
         plugins.load()
         self._build_actions()
+        from . import assistant_buttons
+        assistant_buttons.install(self)            # les boutons IA personnalisés : leurs commandes (favoris)
         self.layout_active = False                 # disposition TypeEdit 13 du ruban
         self._te_layout = None
         self._te_actions: list = []
@@ -4138,6 +4140,9 @@ class MainWindow(QMainWindow):
             name = a.property('vd_icon')
             if name:
                 a.setIcon(icon(name))
+            elif a.property('vd_badge'):                 # un bouton IA : son icône marquée, à l'encre du thème
+                from .assistant_buttons import badge_icon
+                a.setIcon(badge_icon(a.property('vd_badge')))
         act = self.A['theme_dark']
         act.blockSignals(True)
         act.setChecked(current().dark)
@@ -5361,10 +5366,18 @@ class MainWindow(QMainWindow):
                 t = lay.contexts.get(key)
                 title = self._te_context_title(key, t.title if t else cmd)
                 base = A.get(TE_ACTIONS.get(cmd, ''))
+                bkey = TE_ACTIONS.get(cmd, '')
+                if not (bkey.startswith('tool_') or bkey == 'text_vertical' or str(key) in self.TE_TEXT_CONTEXTS):
+                    # une famille (Manipulation, Alignement, Formes, Duplication, Surface…) : ses commandes sont
+                    # dans l'onglet qui s'ouvre — plus de fenêtre au pointeur ni de commande lancée en même temps
+                    # (demande du 20/11) ; un outil (Point, Texte, Mesures) reste pris, comme dans TypeEdit
+                    base = None
                 own = str(key) in self.TE_CONTEXT_TITLES and base is not None    # Texte, Texte vertical
                 a = QAction(icon(self.TE_MODE_ICONS.get(cmd, self.TE_MODE_ICONS.get(str(key), 'tools'))),
                             base.text() if own else title, self)
                 a.setToolTip(title + (' — ' + base.text() if base is not None else ''))
+                if base is None and bkey in A:
+                    a.setProperty('vd_family_cmd', bkey)     # la commande écartée : dans l'onglet, ou au clic s'il n'y en a pas
                 a.triggered.connect(lambda _=False, k=key, b=base: self.show_te_context(k, b))
                 self._te_actions.append(a)
                 modes[cmd] = a
@@ -5492,8 +5505,19 @@ class MainWindow(QMainWindow):
             if not fill(page, tab):
                 r.removeTab(idx)
                 w.deleteLater()
+                for m, a in modes.items():               # sans onglet : le bouton Mode lance sa commande, comme avant
+                    k = a.property('vd_family_cmd')
+                    if str(lay.modes[m]) == str(key) and k in A:
+                        a.triggered.disconnect()
+                        a.triggered.connect(lambda _=False, kk=key, b=A[k]: self.show_te_context(kk, b))
                 continue
             extra = [A[k] for k in self.TE_CONTEXT_EXTRA.get(str(key), ()) if k in A]
+            pal = [A[k] for m, ck in lay.modes.items() if str(ck) == str(key)
+                   for k in self.PALETTES.get(TE_ACTIONS.get(m, ''), ('', ()))[1] if k in A]
+            pal += [A[k] for m, ck in lay.modes.items() if str(ck) == str(key)    # la commande de la famille
+                    for k in (TE_ACTIONS.get(m, ''),)                       # (Dupliquer, Enveloppe…) : plus lancée
+                    if k in A and k not in self.PALETTES and m in modes    # au clic, elle est dans son onglet
+                    and modes[m].property('vd_family_cmd') == k]
             if extra and page.groups():
                 acts = {gr: [getattr(b, 'defaultAction', lambda: None)() for b, _big in gr._entries]
                         for gr in page.groups()}
@@ -5503,6 +5527,14 @@ class MainWindow(QMainWindow):
                 have = {id(a) for v in acts.values() for a in v if a is not None}
                 for a in extra if g is not None else ():
                     if id(a) not in have:
+                        g.add(a, big=False)
+            if pal and page.groups():                    # la palette de la famille : ce qui manque à l'onglet
+                have = {id(getattr(b, 'defaultAction', lambda: None)()) for gr in page.groups()
+                        for b, _big in gr._entries}
+                more = [a for a in dict.fromkeys(pal) if id(a) not in have]
+                if more:
+                    g = page.group(tr('VectorDrive'))
+                    for a in more:
                         g.add(a, big=False)
             if str(key) in self.TE_TEXT_CONTEXTS and getattr(self, 'textbar_te', None) is None:
                 from .textbar import TextFormat
@@ -6581,6 +6613,16 @@ class MainWindow(QMainWindow):
             d.raise_()
         p.input.setFocus()
         return p
+
+    def run_ai_button(self, bid: str) -> bool:
+        """Un bouton IA personnalisé (favoris, raccourci) : le panneau de l'assistant montré, sa demande lancée."""
+        from ..agent import ai_buttons as AB
+        p = self.show_assistant_panel()
+        b = AB.find(self.settings, bid)
+        ok = p.run_button(bid)
+        self.statusBar().showMessage(tr('Bouton IA « {0} » lancé').format(b.label) if ok and b is not None
+                                     else p.status.text(), 5000)
+        return ok
 
     def move_button_mode(self, key: str, to_simple: bool) -> None:
         """Le bouton de la commande `key` montré aussi en mode simple, ou réservé au mode expert (clic droit)."""
@@ -8247,20 +8289,30 @@ class MainWindow(QMainWindow):
     def undo(self) -> None:
         self.finish_typing()                             # la saisie en cours est un pas d'annulation
         if self._undo:
+            guard = getattr(self, 'fao_guard', None)
+            if guard is not None:                        # formes à la base d'un parcours : comparées après (20/11)
+                guard.history_before()
             s = self._undo.pop()
             self._redo.append(self._counter_snapshot(s))
             self._links_cache = {}                        # le dessin revient en arrière, copies comprises
             self._restore(s)
             self._history_changed()
+            if guard is not None:
+                guard.history_after()
 
     def redo(self) -> None:
         self.finish_typing()
         if self._redo:
+            guard = getattr(self, 'fao_guard', None)
+            if guard is not None:
+                guard.history_before()
             s = self._redo.pop()
             self._undo.append(self._counter_snapshot(s))
             self._links_cache = {}
             self._restore(s)
             self._history_changed()
+            if guard is not None:
+                guard.history_after()
 
     # --- fichiers -----------------------------------------------------------
     def _confirm_discard(self) -> bool:
@@ -8747,6 +8799,7 @@ class MainWindow(QMainWindow):
         guard = getattr(self, 'fao_guard', None)
         if guard is not None:                            # un autre dessin : rien à comparer, plus rien ne clignote
             guard.forget()
+            guard.drop_history()
             self.canvas.flash([])
         dock = getattr(self, 'dock_assistant', None)
         ai = dock.widget() if dock is not None else None

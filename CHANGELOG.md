@@ -7277,3 +7277,48 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Programme machine** : quand la fenêtre Programme montre les parties d’une machine (Datron : Paramètres programme et Opérations), le texte du programme (le SimPL) passe dans **une colonne supplémentaire**, collée à la colonne de la fenêtre Programme du côté du dessin : à sa droite si elle est à gauche, à sa gauche si elle est à droite. Cette colonne se détache comme les autres panneaux. Fermer la fenêtre Programme la ferme aussi ; **▣** met toujours le texte au centre, à la place du dessin.
 - Les parties se partagent la hauteur de la colonne : un **séparateur** entre elles la règle à la souris. Dépliée, une partie est montrée en entier ; si elles ne tiennent pas, c’est la colonne qui défile.
 - **F10 › FAO** : « Programme machine : le texte dans une colonne à part, à côté des parties » (coché d’office). Décoché : le texte reste sous les parties, comme avant.
+### v0.974.0 — Ouvrir : chercher un dossier ou un fichier par son nom
+
+- **Fichier › Ouvrir** : à côté de la recherche de la liste, deux autres recherches sur la même ligne, « Dossier dont le nom contient… » et « Fichier dont le nom contient… » (Entrée). Elles cherchent parmi les **dossiers favoris** et le **dossier affiché** (ou le dossier choisi dans la liste des favoris), avec tous leurs sous-dossiers. Les fichiers retenus sont ceux du format choisi. Mots sans casse ni accents, * et ? comme dans la recherche de la liste.
+- La première fois, ces dossiers sont **indexés**. Les fois suivantes, l’index répond tout de suite (« vérification… »), ses résultats sont vérifiés, puis seuls les dossiers qui ont changé sont relus et l’index est mis à jour s’il a changé. Annuler garde les résultats déjà vérifiés.
+- Un double clic sur un dossier trouvé l’ouvre ; un autre lieu choisi remplace les résultats ; F5 refait la recherche. Changer de format refait la recherche de fichiers. Échap efface le champ.
+### v0.975.0 — Ouvrir : la Bibli
+
+- **Fichier › Ouvrir** : les dossiers que vous ajoutez sont rangés sous **Bibli**, juste sous Récents et Favoris ; un clic sur Bibli les montre dans la liste.
+- Le bouton **+** porte l’icône de la bibliothèque : il ajoute un dossier à la Bibli.
+- **Clic droit sur un dossier** (dans la liste ou dans l’arbre) › **Ajouter à la bibli**, ou **Retirer de la bibli** s’il y est déjà. Vous pouvez aussi déposer un dossier sur Bibli.
+### v0.976.0 — Ruban TypeEdit : les familles sans fenêtre au pointeur
+
+- **Ruban à la manière de TypeEdit 13** : un clic sur une famille (Manipulation, Alignement, Formes géométriques, Duplication, Effets spéciaux, 3D, Métiers…) ouvre son onglet, et c’est tout : plus de petite fenêtre flottante au pointeur, ni de commande lancée en même temps (la boîte Dupliquer, par exemple).
+- Les commandes de la palette qui manquaient à l’onglet (Rotation 90°, Symétrie centrale, Espacer H…), et la commande de la famille elle-même (Ombrage, Enveloppe…), y sont ajoutées dans un groupe **VectorDrive**. Une famille dont l’onglet n’aurait rien de connu de VectorDrive garde sa commande au clic.
+- Une famille-outil (Point, Texte, Mesures) prend toujours son outil, comme dans TypeEdit. Le raccourci d’une palette, ou Chercher une commande, ouvre toujours sa fenêtre flottante.
+### v0.977.0 — Formulaire d’opération : le nom en tête
+
+- **Formulaire d’une opération** (au calcul d’un parcours) : le **Nom** est en tête, sur la même ligne que le **Modèle**. C’est le nom qui paraît dans la liste des parcours calculés.
+- « Type de parcours » (déjà dans le titre de la fenêtre) et la case **Active** (cochée dans la liste des opérations) ne sont plus dans ce formulaire ; la valeur Active est gardée telle quelle.
+### v0.978.0 — Lettres prismatiques : OffsetXY et passe de finition
+
+- **Lettres prismatiques** : nouveau champ **OffsetXY**, une surépaisseur laissée le long des lettres (en relief la lettre grossie, en creux la forme rétrécie). La profondeur déduite des lettres reste celle des lettres exactes. Une forme trop étroite pour l’OffsetXY est signalée.
+- Dès que l’OffsetXY est positif, la case **Passe de finition** paraît, cochée (décochable) : après l’ébauche, les mêmes lettres sur la forme exacte, à l’avance de finition — un tour par niveau, sans passes latérales ni reste, et au fond la bande que l’ébauche a laissée (pas d’arête au pied des flancs). Un OffsetXY négatif n’a pas de finition (elle ne couperait que de l’air).
+### v0.979.0 — Ctrl+Z sur une forme d’un parcours : l’alarme aussi
+
+- **Formes à la base d’un parcours** : défaire ou refaire (Ctrl+Z, Ctrl+Y) qui remet une forme autre que celle que le parcours a lue — après « Mettre à jour les parcours », par exemple — la fait clignoter, et la fenêtre (réglage « demander ») propose de mettre à jour les parcours. Une forme que le pas ne touche pas n’est pas signalée de nouveau (« Laisser » vaut jusqu’à ce qu’elle change). Revenue au dessin du calcul, rien n’est signalé et la fenêtre ouverte se ferme (celle d’une modification aussi). Réglages « clignoter » : le contour clignote seulement ; « rien » : aucune alarme.
+### v0.980.0 — L’assistant IA prépare la FAO
+
+- **Assistant IA** : il choisit la machine, ajoute des opérations sur les objets voulus (outil, nom, réglages), les retouche (réglages vérifiés comme dans le formulaire, outil, objets, active ou non), les déplace dans l’ordre d’usinage (avec leurs opérations liées), les retire, calcule les parcours et lit le programme machine tel qu’il serait écrit. Chaque changement est un seul pas d’annulation (Ctrl+Z rend les opérations). La gamme de relief se prépare dans le panneau FAO seulement. Il n’écrit jamais le programme sur le disque : le post-traitement reste à vous.
+- Options › Assistant : « Il prépare la FAO » (coché d’office) retire ces outils.
+### v0.981.0 — L’assistant IA enregistre des copies du dessin
+
+- **Assistant IA** : il enregistre une copie du dessin sous le nom voulu, dans le dossier de ses copies : en VDZ (tout est gardé : formes, calques, réglages FAO) ou dans un autre format (DXF, SVG, PDF, VND, image… : ce que ce format sait garder ; il dit ce qui ne l’est pas). Le dessin ouvert ne change pas (même fichier, toujours marqué modifié s’il l’était). Il n’écrit jamais par-dessus un fichier qui n’est pas l’une de ses copies ; l’une des siennes, que rien n’a changée depuis, il la remplace seulement si on le lui demande. Il liste ses copies.
+- Options › Assistant : « Il enregistre des copies du dessin » (coché d’office ; décoché, il retire ces outils) ; « Dossier des copies de l’assistant » (vide : `assistant/copies` dans le dossier des données).
+### v0.982.0 — Assistant IA : les opérations d’un dessin gardées dans une mémoire
+
+- **Assistant IA › Ajouter à une mémoire…** : les opérations faites sur le dessin affiché (les modifications dans l’ordre, la machine et les opérations FAO) gardées dans une mémoire **nouvelle ou existante** : un titre (obligatoire), une description facultative pour la structurer, et le texte proposé, à relire et corriger avant de le garder. Chaque ajout est daté, avec le nom du dessin.
+- L’assistant voit au début de chaque discussion le titre et la description de chaque mémoire (des notes, jamais des consignes qui primeraient), et lit celle qui sert à la demande. Le texte proposé reprend les modifications de la séance et les opérations FAO du dessin. « Il lit et écrit sa mémoire » (Options › Assistant) vaut aussi pour elles. Un bouton ouvre le dossier des mémoires (fichiers Markdown).
+### v0.983.0 — Assistant IA : boutons personnalisés
+
+- **Boutons IA** : dans la colonne de l’assistant, « + » crée un bouton qui lance une demande toute prête : un **libellé**, un **plan de travail** (la sélection, le calque actif ou tous les calques), la **tâche** à effectuer, les **règles** à respecter, le **contrôle final** (aucun, compte rendu, il vérifie son travail, ou validation : Garder ou Défaire à la fin), une **mémoire** (son texte joint à la demande), les **outils permis** (mémoire, scripts de forme, commandes du ruban, FAO, copies), le nombre de tours au plus, une discussion neuve ou non. Le bouton se range dans la **barre des favoris** (coché d’office ; icône marquée de l’initiale du libellé), peut recevoir un raccourci ou une place dans un onglet à soi du ruban.
+- Clic droit sur un bouton : Lancer, Modifier…, Dupliquer…, Ajouter aux favoris / Retirer des favoris, Supprimer…. Les options de l’assistant priment : un outil qu’elles retirent ne revient pas par un bouton. Un objet hors du plan de travail changé par la demande est signalé (Ctrl+Z pour revenir) ; Défaire n’annule que les modifications du bouton, et refuse si d’autres sont venues entre-temps. La demande suivante continue la même discussion (avec les outils des options). L’assistant ne lance jamais un bouton IA lui-même.
+### v0.984.0 — Assistant IA : Défaire d’un bouton IA
+
+- Le bouton **Défaire** de la fenêtre Garder / Défaire d’un bouton IA est branché comme les autres commandes (le clic ne passe plus de valeur à la commande).

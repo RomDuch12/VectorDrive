@@ -901,7 +901,7 @@ def prismatic_heights(reg, tool, te: bool = False) -> tuple[float, float]:
     return max(0.0, (max(radii) - rt) / tan_h), max(0.0, (min(radii) - rt) / tan_h)
 
 
-def _prism_parts(reg, geoms, tol) -> tuple:
+def _prism_parts(reg, geoms, tol, reach: float = 1e-6) -> tuple:
     """Les formes de la région dans l'ordre de TE13 : celui du dessin, ce qui est à l'intérieur d'une forme avant elle. Et les points de départ
     des contours du dessin."""
     import numpy as np
@@ -912,7 +912,7 @@ def _prism_parts(reg, geoms, tol) -> tuple:
     n = len(parts)
     rank = np.full(n, len(firsts), dtype=int)
     if firsts and n:
-        src, dst = shapely.STRtree(parts).query(shapely.points(firsts), predicate='dwithin', distance=1e-6)
+        src, dst = shapely.STRtree(parts).query(shapely.points(firsts), predicate='dwithin', distance=reach)
         for f, p in sorted(zip(src.tolist(), dst.tolist()), reverse=True):
             rank[p] = f
     filled = shapely.polygons(shapely.get_exterior_ring(parts))
@@ -935,7 +935,7 @@ PRISM_OUTSIDE = 1113
 PRISM_MIN_TURN = 22.5                                     # relevé dans TE13 : pas d'arête pour un tournant de 20°, une pour 25°, saillant ou rentrant
 
 
-def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
+def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h, base=None) -> None:
     """Lettres prismatiques, relevées dans TE13 sur mes dessins. Le centre de l'outil suit, à chaque niveau z, le contour décalé vers
     l'intérieur en onglet : de (H + z)·tan en relief, le contour exact au fond ; de |z|·tan en creux. En relief les niveaux partent du fond, en creux
     de la surface. Passes latérales : à chaque niveau, tous les décalages entre le flanc et le bord (en relief), ou entre le flanc et le centre
@@ -946,7 +946,7 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
     from shapely.geometry import Point
     from . import skeleton as SK
     outside = not op.prism_hollow and getattr(op, 'prism_rule', 0) >= PRISM_OUTSIDE
-    h_max, h_min = prismatic_heights(reg, tool, te=True)
+    h_max, h_min = prismatic_heights(reg if base is None else base, tool, te=True)   # sans l'OffsetXY : la même profondeur en finition
     H = abs(op.depth) if op.depth else h_max
     if outside:
         if not op.depth:                              # rien ne la donne (l'arête du toit n'existe plus) : pas de défaut risqué
@@ -976,7 +976,8 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
     if outside:                                       # relief : l'outil hors des formes (règle 1113) ; en avalant,
         _prism_outside(setup, op, tool, tp, em, here, reg, H, step, tan_h, lateral, bool(op.climb))   # les lettres à droite
         return
-    parts, firsts = _prism_parts(reg, geoms, setup.tolerance)
+    parts, firsts = _prism_parts(reg, geoms, setup.tolerance,
+                                 1e-6 + (2 * abs(float(op.stock or 0.0)) if base is not None else 0.0))
     if not len(parts):
         return
     first_tree = shapely.STRtree(shapely.points(firsts)) if firsts else None
@@ -1017,10 +1018,16 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
         if getattr(op, 'prism_rest', False):
             tp.warnings.append('lettres prismatiques : le reste jusqu\'à l\'outil d\'avant est pour les lettres en relief')
         zs = [-k * step for k in range(1, int(H / step + 1e-9) + 1) if k * step < H - 1e-9] + [-H]
+        band = float(getattr(op, '_prism_band', 0.0) or 0.0)
+        pitch = max(0.02, 2 * (tool.tip / 2 + FLAT_RIDGE * tan_h))
         for z in zs:
             d = -z * tan_h
             if not lateral:
                 cut_level(z, d, True)
+                k = 1
+                while band > 0 and z == zs[-1] and k * pitch < band - 1e-9:   # finition après un OffsetXY : la bande
+                    cut_level(z, d + k * pitch, True)                          # du fond, que l'ébauche laisse plus
+                    k += 1                                                     # large que la pointe
                 continue
             while cut_level(z, d, True):                  # jusqu'au centre de chaque forme
                 d += step * tan_h
@@ -1042,8 +1049,11 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
                     qs = S._quad_segs(max(setup.tolerance, 1e-3), setup.tolerance)
                     pitch = max(0.02, 2 * (tool.tip / 2 + FLAT_RIDGE * tan_h))
                     k = int(ext / pitch + 1e-9)
-                    while k >= 1:
-                        ring_list = [(pts, True) for pts in S.rings_of(S.buffer_checked(reg, k * pitch, qs), region_right)]
+                    band = float(getattr(op, '_prism_band', 0.0) or 0.0)       # finition après un OffsetXY : sa
+                    while k >= 1:                                              # bande en onglet, comme le flanc
+                        kw = {'join_style': 'mitre', 'mitre_limit': 20.0} if k * pitch <= band + 1e-9 else {}
+                        ring_list = [(pts, True) for pts in S.rings_of(S.buffer_checked(reg, k * pitch, qs, **kw),
+                                                                       region_right)]
                         for pts, closed in S.order_chains(ring_list, em.pos or here):
                             S.cut_chain(em, pts, closed, [z])
                         k -= 1
@@ -1093,7 +1103,8 @@ def _prism_outside(setup, op, tool, tp, em, here, reg, H: float, step: float, ta
     ext = max(0.0, getattr(op, 'extension', 0.0) or 0.0)
     pitch = max(0.02, 2 * (tool.tip / 2 + FLAT_RIDGE * tan_h))
     rt = tool.tip / 2                                  # la troncature hors de la lettre : le dessus gardé entier
-    far = [rt + H * tan_h + k * pitch for k in range(int(ext / pitch + 1e-9), 0, -1)]
+    band = float(getattr(op, '_prism_band', 0.0) or 0.0)    # finition après un OffsetXY : sa bande en onglet
+    far = [(rt + H * tan_h + k * pitch, k * pitch <= band + 1e-9) for k in range(int(ext / pitch + 1e-9), 0, -1)]
     rest = (_PrismRest.of(setup, tool, tp, reg, H, tan_h, region_right, outside=True)
             if getattr(op, 'prism_rest', False) else None)
     cache: dict = {}
@@ -1110,7 +1121,7 @@ def _prism_outside(setup, op, tool, tp, em, here, reg, H: float, step: float, ta
         if rest is not None:
             rest.cut(em, here, z)
         deeper = zs[i:] if lateral else [z]
-        ds = (([(d, False) for d in far] if deeper[-1] == zs[-1] else [])
+        ds = ((list(far) if deeper[-1] == zs[-1] else [])
               + [(rt - z2 * tan_h, True) for z2 in reversed(deeper)])
         for d, flank in ds:
             for pts, closed in S.order_chains(chains(d, flank), em.pos or here):
@@ -1226,15 +1237,32 @@ def _prismatic(doc, setup, op, tool, tp, em, here) -> None:
     if reg.is_empty:
         tp.warnings.append('lettres prismatiques : aucun contour fermé')
         return
+    base = reg
+    off = float(getattr(op, 'stock', 0.0) or 0.0)
+    if abs(off) > 1e-9:                                   # OffsetXY (demande du 20/11) : de la matière laissée le long des
+        import shapely                                    # lettres — en relief la lettre grossie, en creux la forme
+        qs0 = S._quad_segs(max(tol, 1e-3), tol)          # rétrécie (le trajet d'avant 882 : relief seulement)
+        hollow = bool(op.prism_hollow) and getattr(op, 'prism_rule', 0) >= 882
+        reg = S.buffer_checked(reg, -off if hollow else off, qs0, join_style='mitre', mitre_limit=20.0)
+        if reg.is_empty:
+            tp.warnings.append(f'lettres prismatiques : OffsetXY de {off:g} mm trop grand pour ces formes')
+            return
+        lost = int((~shapely.intersects(shapely.get_parts(base), reg)).sum())
+        if lost:
+            tp.warnings.append(f'lettres prismatiques : {lost} forme(s) trop étroite(s) pour l’OffsetXY de {off:g} mm, '
+                               + ('faite(s) par la finition seulement' if getattr(op, 'vcarve_finish', False) and off > 0
+                                  else 'pas usinée(s)'))
+        tp.warnings.append(f'lettres prismatiques : OffsetXY de {off:g} mm laissé le long des lettres'
+                           + (' ; passe de finition ensuite' if getattr(op, 'vcarve_finish', False) and off > 0 else ''))
     tan_h = math.tan(math.radians(tool.angle) / 2)
     if getattr(op, 'prism_rule', 0) >= 882:
-        _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h)
+        _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h, base=base if base is not reg else None)
         return
     if getattr(op, 'prism_rest', False):
         tp.warnings.append('lettres prismatiques : le reste jusqu\'à l\'outil d\'avant demande le trajet relevé dans TE13 '
                            '(règle 882)')
     rt = tool.tip / 2
-    h_top, h_low = prismatic_heights(reg, tool)
+    h_top, h_low = prismatic_heights(base, tool)
     H = abs(op.depth) if op.depth else h_top
     h_tool = (_body(tool) / 2 - rt) / tan_h
     if H > h_tool + 1e-9:
@@ -1262,6 +1290,35 @@ def _prismatic(doc, setup, op, tool, tp, em, here) -> None:
             rings = [(pts, True) for pts in S.rings_of(g, region_right)]
             for pts, closed in S.order_chains(rings, em.pos or here):
                 S.cut_chain(em, pts, closed, [z])
+
+
+def _prismatic_op(doc, setup, op, tool, tp, em, here) -> None:
+    """Les lettres prismatiques, puis leur passe de finition (case « Passe de finition », proposée dès que l'OffsetXY
+    est positif ; demande du 20/11) : les mêmes lettres sur la forme exacte (OffsetXY nul), sans passes latérales ni
+    reste, à l'avance de finition (`Emitter.fin`) — un tour par niveau (et les arêtes du toit, dans le trajet relevé
+    dans TE13), puis au fond la bande que l'ébauche laisse entre elles, plus large que la pointe : en relief le
+    Débordement depuis la forme exacte, sur l'OffsetXY ; en creux, des tours au pas du plat (`_prism_band`)."""
+    import copy
+    _prismatic(doc, setup, op, tool, tp, em, here)
+    off = float(op.stock or 0.0)
+    if not getattr(op, 'vcarve_finish', False) or off <= 1e-9:
+        return                                            # OffsetXY négatif : la finition ne couperait que de l'air
+    if tool.kind != 'conique' or not 0 < tool.angle < 180:
+        return                                            # déjà dit
+    hollow = bool(op.prism_hollow) and getattr(op, 'prism_rule', 0) >= 882
+    fin = copy.copy(op)
+    fin.stock, fin.vcarve_finish, fin.prism_lateral, fin.prism_rest = 0.0, False, False, False
+    fin.extension = 0.0 if hollow else off
+    fin._prism_band = off                                 # en relief : ce Débordement en onglet, comme le flanc ébauché
+    if em.pos is not None:
+        here = em.pos[:2]
+    was = getattr(em, 'fin', False)
+    em.fin = True
+    try:
+        _prismatic(doc, setup, fin, tool, tp, em, here)
+    finally:
+        em.fin = was
+    tp.warnings[:] = list(dict.fromkeys(tp.warnings))
 
 
 def engraving_surface(reg, cone, depth: float, x0: float, y0: float, nx: int, ny: int, res: float):
@@ -1354,7 +1411,7 @@ STRATEGIES = {
     'fer_dorer': lambda *a: _emboss(*a),
     'finition25d': _finish25d,
     'vcarve': _vcarve_op,
-    'prismatique': _prismatic,
+    'prismatique': _prismatic_op,
     'relief': _relief,
     'surface3d': _surface3d,
     'ebauche3d': _rough3d,

@@ -20,7 +20,8 @@ KEY_TEMPLATES = 'assistant/dossier_modeles'
 MAX_INSTRUCTIONS = 4000
 #: les groupes d'outils qu'un réglage peut retirer : réglage → groupe de `agent.tools.ToolSet(without=…)`
 TOOL_GROUPS = {'assistant/outils_memoire': 'memory', 'assistant/outils_scripts': 'scripts',
-               'assistant/outils_commandes': 'commands'}
+               'assistant/outils_commandes': 'commands', 'assistant/outils_fao': 'cam',
+               'assistant/outils_copies': 'copies'}
 
 
 def instructions(settings) -> str:
@@ -41,17 +42,22 @@ def templates_dir(settings=None) -> pathlib.Path:
     return pathlib.Path(chosen) if chosen else SS.user_dir() / 'modeles'
 
 
-def system_text(settings) -> str:
-    """Ce qui s'ajoute aux consignes de l'assistant : les consignes personnelles, puis sa mémoire (si permise)."""
+def system_text(settings, removed=None) -> str:
+    """Ce qui s'ajoute aux consignes de l'assistant : les consignes personnelles, puis sa mémoire (si permise) ;
+    `removed` : les groupes d'outils retirés, s'ils ne sont pas ceux des options (un bouton IA)."""
     parts = []
     mine = instructions(settings)
     if mine:
         parts.append('Standing instructions from the user (set in the options of the application):\n' + mine)
-    if 'memory' not in without(settings):
+    if 'memory' not in (without(settings) if removed is None else removed):
         from ..agent.tools import memory_prompt
         mem = memory_prompt()
         if mem:
             parts.append(mem)
+        from ..agent.memories import prompt as topics_prompt
+        topics = topics_prompt()                         # les mémoires thématiques : titres et descriptions
+        if topics:
+            parts.append(topics)
     return '\n\n'.join(parts)
 
 

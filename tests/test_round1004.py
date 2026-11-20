@@ -67,7 +67,7 @@ class Order(unittest.TestCase):
         tile = d.board.tiles['Outil']
         self.assertTrue(tile.isAncestorOf(d.widgets['tool_id']))
         self.assertTrue(tile.isAncestorOf(d.widgets['ramp']))           # la plongée angulaire reste sous l'outil
-        self.assertTrue(d.board.tiles['Opération'].isAncestorOf(d.widgets['name']))
+        self.assertFalse(d.board.tiles['Opération'].isAncestorOf(d.widgets['name']))   # en tête (1120)
 
     def test_expert_only_sections(self):
         d = self.open()                                                 # d'office : mode expert, tout est là

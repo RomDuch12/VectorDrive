@@ -106,7 +106,7 @@ class Form(unittest.TestCase):
         d = self.open(model.Operation(kind='poche'))
         self.assertTrue(d.rows['kind'][1].isHidden())                         # avant : la liste des natures
         lab = d.rows['kind_label'][1]
-        self.assertFalse(lab.isHidden())
+        self.assertTrue(lab.isHidden())                                       # 1120 : plus dans le formulaire
         self.assertEqual(lab.text(), tr(model.op_kinds()['poche']))
         d.widgets['kind'].setCurrentIndex(d.widgets['kind'].findData('contour'))
         self.assertEqual(lab.text(), tr(model.op_kinds()['contour']))

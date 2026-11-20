@@ -15,8 +15,16 @@ le calcul : celles que le calcul a lues, pas celles ajoutées depuis dans la mê
   Ctrl+Z ;
 - « bloquer » : la modification est défaite aussitôt (et ne se refait pas par Ctrl+Y), les formes clignotent ;
 - « rien » : aucune alarme, comme le mode FAO de TypeEdit.
-Un objet supprimé ne clignote pas (les parcours le disent déjà) ; défaire, refaire, la date du jour posée par le calcul,
-un autre dessin ne déclenchent rien.
+Un objet supprimé ne clignote pas (les parcours le disent déjà) ; la date du jour posée par le calcul, un autre dessin ne
+déclenchent rien.
+
+Défaire, refaire (demande du 20/11 : « Si on Ctrl+Z retour dessin précédent il faut aussi une popup clignotement pour
+indiquer cela ») : chaque parcours retient l'empreinte des formes que son calcul a lues (prise avant toute modification
+d'après, même en mode « rien ») ; une forme que Ctrl+Z / Ctrl+Y change, et qui n'est plus alors celle du calcul (après
+« Mettre à jour les parcours », par exemple), clignote et, en mode « demander », la fenêtre propose de mettre à jour les
+parcours. Une forme que le pas ne touche pas n'est pas signalée de nouveau (« Laisser » vaut jusqu'à ce qu'elle change).
+Revenue par Ctrl+Z / Ctrl+Y à l'état du calcul : rien n'est signalé et la fenêtre ouverte se ferme. Défaire la date du
+jour posée par un calcul remet un texte daté autre que celui du calcul : il est signalé.
 """
 from __future__ import annotations
 
@@ -65,6 +73,16 @@ class Guard(QObject):
         self.timer.setSingleShot(True)
         self.timer.setInterval(0)
         self.timer.timeout.connect(self.check)
+        #: défaire / refaire : comparé une fois le pas remis ; `_hbefore` : les empreintes des formes suivies juste
+        #: avant le premier pas pas encore comparé ; `_internal` : un pas défait par l'alarme elle-même
+        self.htimer = QTimer(self)
+        self.htimer.setSingleShot(True)
+        self.htimer.setInterval(0)
+        self.htimer.timeout.connect(self.history_check)
+        self._hbefore = None
+        self._internal = False
+        self._box_undo = False
+        self._box_moved: list = []
         #: les dernières formes signalées (essais) ; la fenêtre « demander » ouverte, s'il y en a une
         self.flagged: list = []
         self.box = None
@@ -101,8 +119,9 @@ class Guard(QObject):
                     ids = set()                          # ni objets ni couleurs (surfaçage du brut…) : rien de lu
                 else:                                    # calculée seule (formulaire) : sur tous ses objets
                     ids = {it.id for it in S.source_items(doc, op, only=None if k in whole else only)}
-                self.watched[k] = (frozenset(uids[k]), frozenset(ids))
-        return set().union(*(ids for _u, ids in self.watched.values())) if self.watched else set()
+                # (parcours, formes lues, leurs empreintes au calcul : retenues avant toute modification d'après)
+                self.watched[k] = (frozenset(uids[k]), frozenset(ids), self.prints(self._items(ids)) if ids else {})
+        return set().union(*(v[1] for v in self.watched.values())) if self.watched else set()
 
     def _items(self, ids: set) -> dict:
         from ..core.document import Group
@@ -139,10 +158,17 @@ class Guard(QObject):
     def before_change(self) -> None:
         """Un pas d'annulation vient d'être posé : l'état des formes suivies avant la modification."""
         try:
+            if self._hbefore is not None:                # un Ctrl+Z pas encore comparé : avant cette modification
+                if self.htimer.isActive() and QApplication.mouseButtons() == Qt.MouseButton.NoButton and \
+                        QApplication.activeModalWidget() is None:
+                    self.history_check()
+                else:
+                    self.drop_history()
             if self.before is not None and self.timer.isActive() and \
                     QApplication.mouseButtons() == Qt.MouseButton.NoButton:
                 self.check()                             # le pas d'avant d'abord (commandes enchaînées)
             if mode(self.win.settings) == 'rien':
+                self._watch()                            # (les empreintes du calcul, pour un autre réglage ensuite)
                 self.forget()
                 return
             ids = self._watch()
@@ -157,6 +183,77 @@ class Guard(QObject):
             self.mark = getattr(win, '_undo_pushes', 0)
         except Exception:                                # jamais une commande empêchée par l'alarme
             self.forget()
+
+    def history_before(self) -> None:
+        """Ctrl+Z / Ctrl+Y va remettre un autre état : les parcours calculés depuis la dernière modification retenus
+        avec les formes qu'ils ont lues, et l'état de ces formes juste avant le pas (plusieurs pas : avant le premier)."""
+        if self._internal:
+            return
+        if not self.htimer.isActive():
+            self._hbefore = None                         # (aucune comparaison en attente)
+        try:
+            ids = self._watch()
+            if self._hbefore is None and mode(self.win.settings) != 'rien':
+                self._hbefore = self.prints(self._items(ids)) if ids else {}
+        except Exception:                                # jamais un pas empêché par l'alarme
+            self._hbefore = None
+
+    def history_after(self) -> None:
+        """Le pas est remis : comparé une fois la main rendue (plusieurs pas d'un coup : une seule fois)."""
+        if not self._internal and self._hbefore is not None:
+            self.htimer.start()
+
+    def drop_history(self) -> None:
+        """Un autre dessin : rien à comparer après un pas de l'autre."""
+        self.htimer.stop()
+        self._hbefore = None
+
+    def history_check(self) -> list:
+        """Après Ctrl+Z / Ctrl+Y : les formes à la base d'un parcours que le pas a changées et qui ne sont plus celles
+        que son calcul a lues clignotent ; en mode « demander », la fenêtre propose de mettre à jour les parcours.
+        Revenues à l'état du calcul : la fenêtre ouverte se ferme. Rend les identifiants signalés."""
+        how = mode(self.win.settings)
+        if how == 'rien' or self._hbefore is None:
+            self._hbefore = None
+            return []
+        cam = getattr(self.win, 'cam_panel', None)
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton or getattr(cam, '_computing', False) or \
+                QApplication.activeModalWidget() is not None:
+            self.htimer.start(120)
+            return []
+        before, self._hbefore = self._hbefore, None
+        try:
+            self._watch()
+            refs: dict = {}                              # forme → son empreinte au calcul (une par opération)
+            for _u, _ids, was in self.watched.values():
+                for k, d in was.items():
+                    refs.setdefault(k, set()).add(d)
+            got = self._items(set(refs))
+            now = self.prints(got)
+        except Exception:
+            return []
+        stepped = [k for k, d in now.items() if before.get(k) != d]          # changées par le pas
+        moved = [k for k in stepped if refs[k] - {now[k]}]                   # et plus celles d'un calcul
+        if not moved:
+            if stepped and self.box is not None and not any(
+                    refs.get(k, set()) - {now[k]} for k in self._box_moved if k in now):
+                self.close_box()                         # ses formes revenues à l'état du calcul : plus lieu d'être
+            return []
+        self.flagged = moved
+        self._flash([got[k] for k in moved])
+        self.win.statusBar().showMessage(tr('Défaire / refaire : une forme à la base d’un parcours calculé n’est plus '
+                                            'celle du calcul — Mettre à jour les parcours ou Ctrl+Z / Ctrl+Y'), 8000)
+        if how == 'demander':
+            self.ask(moved, None, -1, None, undo=True)
+        return moved
+
+    def _quiet(self, fn) -> None:
+        """Un pas défait / refait par l'alarme elle-même (« bloquer », Dupliquer le dessin) : pas signalé."""
+        self._internal = True
+        try:
+            fn()
+        finally:
+            self._internal = False
 
     def changed(self) -> None:
         """Le dessin a changé : comparé une fois la modification finie (souris relâchée, calcul fini)."""
@@ -196,7 +293,7 @@ class Guard(QObject):
         if how == 'bloquer' and undo and top is not None and undo[-1] is top and \
                 getattr(win, '_undo_pushes', 0) == mark:
             redo = list(win._redo)
-            win.undo()                                   # la modification défaite…
+            self._quiet(win.undo)                        # la modification défaite…
             win._redo[:] = redo                          # … et pas à refaire par Ctrl+Y
             win._history_changed()
             self.forget()
@@ -213,10 +310,10 @@ class Guard(QObject):
         return moved
 
     # --- « demander » : dupliquer le dessin ou mettre à jour les parcours -------------------------------------------
-    def ask(self, moved: list, top, mark, was=None) -> None:
+    def ask(self, moved: list, top, mark, was=None, undo: bool = False) -> None:
         """La fenêtre du réglage « demander », qui ne bloque rien et ne prend pas le clavier : Dupliquer le dessin,
         Mettre à jour les parcours, Laisser ; « Ne plus demander » passe au clignotement. `was` : les empreintes
-        d'avant la modification."""
+        d'avant la modification. `undo` : après Ctrl+Z / Ctrl+Y (Mettre à jour les parcours ou Laisser)."""
         import weakref
 
         from PySide6.QtWidgets import QCheckBox, QMessageBox
@@ -228,11 +325,18 @@ class Guard(QObject):
         box.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)    # Ctrl+Z, les flèches, la frappe : au dessin
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle(tr('Forme d’un parcours modifiée'))
-        box.setText(tr('{0} forme(s) à la base d’un parcours calculé déplacée(s) ou modifiée(s).').format(len(moved)))
-        box.setInformativeText(tr('Dupliquer le dessin : la forme d’origine revient pour le parcours, la forme '
-                                  'modifiée devient une copie à part. Mettre à jour : les parcours concernés sont '
-                                  'recalculés avec la forme modifiée.'))
-        dup = box.addButton(tr('Dupliquer le dessin'), QMessageBox.ButtonRole.ActionRole)
+        if undo:
+            box.setText(tr('Défaire / refaire : {0} forme(s) à la base d’un parcours calculé ne sont plus celles du '
+                           'calcul.').format(len(moved)))
+            box.setInformativeText(tr('Mettre à jour : les parcours concernés sont recalculés avec le dessin remis. '
+                                      'Ctrl+Z / Ctrl+Y : revenir au dessin du calcul.'))
+            dup = None
+        else:
+            box.setText(tr('{0} forme(s) à la base d’un parcours calculé déplacée(s) ou modifiée(s).').format(len(moved)))
+            box.setInformativeText(tr('Dupliquer le dessin : la forme d’origine revient pour le parcours, la forme '
+                                      'modifiée devient une copie à part. Mettre à jour : les parcours concernés sont '
+                                      'recalculés avec la forme modifiée.'))
+            dup = box.addButton(tr('Dupliquer le dessin'), QMessageBox.ButtonRole.ActionRole)
         upd = box.addButton(tr('Mettre à jour les parcours'), QMessageBox.ButtonRole.AcceptRole)
         box.addButton(tr('Laisser'), QMessageBox.ButtonRole.RejectRole)
         never = QCheckBox(tr('Ne plus demander (le contour clignote seulement ; F10 › FAO)'))
@@ -246,6 +350,7 @@ class Guard(QObject):
             state['done'] = True
             if self.box is box:
                 self.box = None
+                self._box_undo = False
             button = box.clickedButton()                 # la croix de la fenêtre : aucun
             if never.isChecked():
                 win.settings.setValue(KEY, 'clignoter')
@@ -253,18 +358,21 @@ class Guard(QObject):
                 return
             if doc() is not win.canvas.doc:              # un autre onglet entre-temps
                 win.statusBar().showMessage(tr('Ce dessin n’est plus celui affiché : rien n’est fait'), 6000)
-            elif button is dup:
+            elif dup is not None and button is dup:
                 self.duplicate(moved, top, mark, was)
             else:
                 self.update_paths(moved)
         box.finished.connect(done)                      # un bouton ou la croix
         self.box = box
+        self._box_undo = undo
+        self._box_moved = list(moved)
         box.show()
         canvas = getattr(win, 'canvas', None)
         if canvas is not None:
             canvas.setFocus()
 
     def close_box(self) -> None:
+        self._box_undo = False
         if self.box is not None:
             box, self.box = self.box, None
             try:
@@ -309,11 +417,11 @@ class Guard(QObject):
             win.statusBar().showMessage(refused, 8000)
             return False
         redo = list(win._redo)
-        win.undo()                                       # l'état d'avant : les formes d'origine
+        self._quiet(win.undo)                            # l'état d'avant : les formes d'origine
         items = self._items(set(moved))
         same = was is None or all(was.get(k) == d for k, d in self.prints(items).items() if k in was)
         orig = {k: struct_copy(it) for k, it in items.items()}
-        win.redo()                                       # la modification, de nouveau
+        self._quiet(win.redo)                            # la modification, de nouveau
         win._redo[:] = redo
         if not same:                                     # plusieurs pas comparés d'un coup : pas celui-ci seul
             self.forget()

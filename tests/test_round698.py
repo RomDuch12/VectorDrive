@@ -77,7 +77,7 @@ class TestLastValues(unittest.TestCase):
         s = self.p.setup()
         dlg = FieldsDialog(self.p, 'essai', model.Operation.from_dict(op.to_dict()), self.w.canvas.doc, s.tools)
         self.assertTrue(dlg.rows['kind'][1].isHidden())                  # round 1019 : jamais de liste
-        self.assertFalse(dlg.rows['kind_label'][1].isHidden())           # le type de parcours, montré
+        self.assertTrue(dlg.rows['kind_label'][1].isHidden())            # 1120 : dans le titre seulement
         dlg.close()
 
     def test_prefilled_with_last_values(self):

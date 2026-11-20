@@ -26,10 +26,11 @@ import time
 import unicodedata
 
 from PySide6.QtCore import QByteArray, QFileInfo, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QPalette, QStandardItemModel
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QPalette, QStandardItemModel
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFileIconProvider, QHBoxLayout, QHeaderView, QLabel, QListView,
-                               QListWidgetItem, QMenu, QPushButton, QSizePolicy, QStyle, QStyledItemDelegate,
+                               QLineEdit, QListWidgetItem, QMenu, QPushButton, QSizePolicy, QStyle,
+                               QStyledItemDelegate,
                                QStyleOptionViewItem,
                                QToolButton, QVBoxLayout, QWidget)
 
@@ -75,6 +76,10 @@ COLUMNS_KEY = 'navigateur/colonnes'
 TEXTS_KEY = 'navigateur/textes'
 #: dernières recherches lancées (proposées à la frappe)
 HISTORY_KEY, HISTORY_MAX = 'navigateur/recherches', 20
+#: l'index des dossiers où chercher un dossier, un fichier par son nom (`core.fav_index`), dans les caches
+FAV_INDEX_FILE = 'favoris_index.json'
+#: les derniers dossiers affichés où ces recherches ont eu lieu : gardés dans l'index (les plus récents)
+OTHERS_KEY, OTHERS_MAX = 'navigateur/index_dossiers', 5
 #: (date de modification, taille ou None, type) d'une ligne de l'affichage Détails
 ROLE_DETAILS = Qt.ItemDataRole.UserRole + 7
 
@@ -185,6 +190,12 @@ class DetailsDelegate(QStyledItemDelegate):
 FILTER_KEY = 'navigateur/filtre'
 #: nœud de l'arbre : accès rapides de Windows
 QUICK = '::acces_rapide'
+#: la bibli : les dossiers ajoutés (bouton « + », clic droit › Ajouter à la bibli), sous Récents et Favoris
+BIBLI = '::bibli'
+
+
+def _key(path) -> str:
+    return os.path.normcase(os.path.abspath(str(path))) if str(path) else ''
 #: accès rapides lus pour la séance (None : pas encore lus)
 _QUICK: list | None = None
 #: Ouvrir : agrandie la première fois, puis sa dernière taille, agrandie ou en plein écran (⛶, F11) comprises
@@ -340,6 +351,29 @@ class FileBrowserPanel(SymbolPanel):
         nav = _layout_of(self.deep, self.layout())
         if nav is not None:                                          # à côté de « Sous-dossiers »
             nav.insertWidget(nav.indexOf(self.deep), self.in_texts)
+        # deux autres recherches sur la même ligne (demande du 20/11) : un dossier, un fichier dont le nom contient…,
+        # parmi les favoris et le dossier affiché, avec tous leurs sous-dossiers (index : `core.fav_index`) ; Entrée
+        tip = tr('Cherche parmi les dossiers favoris et le dossier affiché, avec tous leurs sous-dossiers (mots sans '
+                 'casse ni accents, * et ?) — Entrée. La première fois, ils sont indexés ; ensuite l\'index répond '
+                 'd\'abord, puis les dossiers changés sont relus')
+        self.fav_dir = QLineEdit()
+        self.fav_dir.setPlaceholderText(tr('Dossier dont le nom contient…'))
+        self.fav_file = QLineEdit()
+        self.fav_file.setPlaceholderText(tr('Fichier dont le nom contient…'))
+        top = _layout_of(self.search, self.layout())
+        for i, ed in enumerate((self.fav_dir, self.fav_file)):
+            ed.setToolTip(tip)
+            ed.setClearButtonEnabled(True)
+            ed.installEventFilter(self)                  # Entrée : la recherche (pas le bouton Ouvrir) ; Échap : effacé
+            if top is not None:
+                top.insertWidget(top.indexOf(self.search) + 1 + i, ed, 1)
+        # le bouton « + » (ajouter un dossier) : « + » et l'icône de la bibliothèque (demande du 20/11)
+        from .icons import icon
+        self.b_bibli = next((b for b in self.findChildren(QPushButton) if b.text() == '+'), None)
+        if self.b_bibli is not None:
+            self.b_bibli.setIcon(icon('library'))
+            self.b_bibli.setToolTip(tr('Ajouter un dossier à la bibli (sous Récents et Favoris)'))
+            self.b_bibli.setFixedWidth(52)
         self._apply_view()
         self._sort_indicator()
         self._size_key = 'navigateur/taille'
@@ -404,6 +438,10 @@ class FileBrowserPanel(SymbolPanel):
             self.show_recents()
         elif getattr(self, '_favs_shown', False):
             self.show_favorites()
+        elif getattr(self, '_fav_shown', False) and getattr(self, '_fav_last', None):
+            self.show_fav_results(*self._fav_last)       # un dossier, un fichier cherché par son nom
+        elif getattr(self, '_bibli_shown', False):
+            self.show_bibli()
         elif getattr(self, '_folder', None) is not None:
             self.show_folder(self._folder)
 
@@ -416,6 +454,14 @@ class FileBrowserPanel(SymbolPanel):
 
     def eventFilter(self, obj, ev) -> bool:                          # noqa: N802 (API Qt)
         from PySide6.QtCore import QEvent
+        if obj in (getattr(self, 'fav_dir', None), getattr(self, 'fav_file', None)) \
+                and ev.type() == QEvent.Type.KeyPress:
+            if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.search_favorites('dossier' if obj is self.fav_dir else 'fichier', obj.text().strip())
+                return True                              # (pas le bouton Ouvrir de la fenêtre)
+            if ev.key() == Qt.Key.Key_Escape and obj.text():
+                obj.clear()
+                return True
         if obj is getattr(self, 'search', None) and ev.type() == QEvent.Type.KeyPress \
                 and ev.key() == Qt.Key.Key_Escape and self.search.text():
             self.search.clear()                          # Échap : recherche effacée (sinon : la boîte se ferme)
@@ -566,6 +612,10 @@ class FileBrowserPanel(SymbolPanel):
             self._history_model.setStringList(h)
 
     def _clear_search(self) -> None:
+        self._bibli_shown = False                        # (un autre lieu montré)
+        if getattr(self, '_fav_shown', False) and not self._in_search:
+            self._fav_shown = False                      # un autre lieu remplace les résultats cherchés
+            self._search_results = False                 # par nom (dossier, fichier)
         if self.search.text() and not self._in_search:
             self.search.blockSignals(True)
             self.search.clear()
@@ -580,13 +630,183 @@ class FileBrowserPanel(SymbolPanel):
         self._fill_quick()
 
     def _fill_tree(self) -> None:
+        bibli = self.bibli_paths()
+        self._bibli_keys = keys = {_key(p) for p in bibli}               # (lue une fois : menu, arbre)
+        if hasattr(self, '_sys_roots'):                  # les racines suivent (clé branchée depuis, dossier parti…)
+            self.roots = self._local_roots(bibli) + list(self._sys_roots)
         super()._fill_tree()
         from PySide6.QtWidgets import QTreeWidgetItem
+        # la bibli (les dossiers ajoutés par « + » ou le clic droit) : un nœud sous Récents et Favoris, plus ses
+        # dossiers parmi les lecteurs (demande du 20/11)
+        for i in reversed(range(2, self.tree.topLevelItemCount())):
+            if _key(self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) or '') in keys:
+                self.tree.takeTopLevelItem(i)
+        from .icons import icon
+        b = QTreeWidgetItem([tr('Bibli')])
+        b.setIcon(0, icon('library'))
+        b.setData(0, Qt.ItemDataRole.UserRole, BIBLI)
+        b.setToolTip(0, tr('Les dossiers ajoutés à la bibli (bouton + ou clic droit sur un dossier › Ajouter à la bibli)'))
+        self.tree.insertTopLevelItem(2, b)
+        for p in bibli:
+            ch = QTreeWidgetItem([p.name or str(p)])
+            ch.setData(0, Qt.ItemDataRole.UserRole, str(p))
+            ch.setToolTip(0, str(p))
+            b.addChild(ch)
+            self._add_placeholder(ch, p)
+        b.setExpanded(True)
         q = QTreeWidgetItem(['⚡ ' + tr('Accès rapide')])
         q.setData(0, Qt.ItemDataRole.UserRole, QUICK)
         q.setToolTip(0, tr('Les accès rapides de l\'explorateur Windows'))
-        self.tree.insertTopLevelItem(2, q)
+        self.tree.insertTopLevelItem(3, q)
         self._fill_quick()
+
+    # --- la bibli ---------------------------------------------------------------------------
+    def bibli_paths(self, settings=None) -> list[pathlib.Path]:
+        """Les dossiers de la bibli, dans l'ordre d'ajout : ceux qui existent (un partage : sans le lire), sans les
+        dossiers déjà montrés d'office (Bureau, Documents, lecteurs : un ancien « + » les retenait aussi)."""
+        from .symbols import is_remote
+        settings = self.settings if settings is None else settings
+        v = settings.value(self.ROOTS_KEY, []) or []
+        v = [v] if isinstance(v, str) else list(v)       # (INI : une liste d'un seul élément relue en texte)
+        sys_keys = set(getattr(self, '_sys_keys', set()))
+        seen, out = set(), []
+        for x in v:
+            if not isinstance(x, str) or not x:
+                continue
+            k = _key(x)
+            if k in seen or k in sys_keys:
+                continue
+            seen.add(k)
+            p = pathlib.Path(x)
+            if is_remote(p) or os.path.isdir(p):
+                out.append(p)
+        return out
+
+    def in_bibli(self, path) -> bool:
+        return _key(path) in getattr(self, '_bibli_keys', set())
+
+    def _bibli_item(self):
+        return next((self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
+                     if self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == BIBLI), None)
+
+    @staticmethod
+    def _local_roots(paths) -> list[pathlib.Path]:
+        """Les dossiers de la bibli comptés parmi les racines (dossier parent, emplacement, corbeille) : pas un
+        partage (injoignable, il figerait chaque clic)."""
+        from .symbols import is_remote
+        return [p for p in paths if not is_remote(p)]
+
+    def select_in_tree(self, path: pathlib.Path) -> None:
+        """Le dossier choisi dans l'arbre : sous la Bibli s'il est dans un de ses dossiers."""
+        cur = self.tree.currentItem()
+        if cur is not None and _key(cur.data(0, Qt.ItemDataRole.UserRole) or '') == _key(path):
+            return                                       # déjà choisi (par un clic dans une autre branche)
+        r = self._root_of(path)
+        node = self._bibli_item() if r is not None and self.in_bibli(r) else None
+        if node is None:
+            super().select_in_tree(path)
+            return
+        it = next((node.child(k) for k in range(node.childCount())
+                   if _key(node.child(k).data(0, Qt.ItemDataRole.UserRole)) == _key(r)), None)
+        try:
+            parts = path.resolve().relative_to(r.resolve()).parts
+        except (ValueError, OSError):
+            return
+        for part in parts:
+            if it is None:
+                return
+            it.setExpanded(True)
+            self._expand(it)
+            it = next((it.child(k) for k in range(it.childCount()) if it.child(k).text(0) == part), None)
+        if it is not None:
+            self.tree.blockSignals(True)
+            self.tree.setCurrentItem(it)
+            self.tree.blockSignals(False)
+
+    def selected_paths(self, widget=None) -> list[pathlib.Path]:
+        """(Récents, Favoris, la Bibli, Accès rapide : pas des dossiers à renommer ni à jeter.)"""
+        return [p for p in super().selected_paths(widget) if not str(p).startswith('::')]
+
+    def _protected(self, path) -> bool:
+        """Un dossier de la bibli ou montré d'office (Bureau, lecteurs…) : jamais renommé, jeté ni déplacé ici
+        (un partage n'a pas de corbeille)."""
+        k = _key(path)
+        return k in getattr(self, '_bibli_keys', set()) or k in getattr(self, '_sys_keys', set())
+
+    def place_files(self, files, folder, copy: bool = False) -> int:
+        """Déposés sur la Bibli : les dossiers y sont ajoutés ; sur Accès rapide, Récents… : rien ; un dossier de
+        la bibli ou un lecteur glissé ailleurs : jamais déplacé."""
+        if str(folder) == BIBLI:
+            return self.add_to_bibli([pathlib.Path(f) for f in files if os.path.isdir(f)])
+        if str(folder).startswith('::'):
+            return 0
+        files = [f for f in files if not self._protected(f)]
+        return super().place_files(files, folder, copy) if files else 0
+
+    def rename(self, path, name=None):
+        if self._protected(path):
+            return None
+        return super().rename(path, name)
+
+    def delete(self, paths, confirm: bool = True) -> int:
+        return super().delete([p for p in paths if not self._protected(p)], confirm)
+
+    def current_folder(self):
+        """(Récents, Favoris, la Bibli, Accès rapide choisis : pas un dossier — rien n'y est créé ni importé.)"""
+        f = super().current_folder()
+        return None if f is not None and str(f).startswith('::') else f
+
+    def _set_bibli(self, paths) -> None:
+        self.settings.setValue(self.ROOTS_KEY, [str(p) for p in paths])
+        self._fill_tree()
+        if getattr(self, '_folder', None) is not None:
+            self.select_in_tree(self._folder)            # (l'arbre refait : le dossier affiché y reste choisi)
+        if getattr(self, '_bibli_shown', False):
+            self.show_bibli()
+
+    def add_to_bibli(self, paths) -> int:
+        """Les dossiers `paths` ajoutés à la bibli (à la fin) ; rend le nombre ajouté."""
+        v = self.settings.value(self.ROOTS_KEY, []) or []
+        cur = [str(x) for x in ([v] if isinstance(v, str) else v) if x]
+        have = {_key(x) for x in cur}
+        have |= set(getattr(self, '_sys_keys', set()))   # (Bureau, Documents, lecteurs : déjà montrés)
+        new = [str(pathlib.Path(p)) for p in paths if os.path.isdir(p) and _key(p) not in have]
+        if new:
+            self._set_bibli(cur + list(dict.fromkeys(new)))
+        return len(new)
+
+    def remove_from_bibli(self, paths) -> int:
+        v = self.settings.value(self.ROOTS_KEY, []) or []
+        cur = [str(x) for x in ([v] if isinstance(v, str) else v) if x]
+        gone = {_key(p) for p in paths}
+        keep = [x for x in cur if _key(x) not in gone]
+        if len(keep) != len(cur):
+            self._set_bibli(keep)
+        return len(cur) - len(keep)
+
+    def _add_root(self) -> None:
+        """Bouton « + » : un dossier choisi, ajouté à la bibli."""
+        from PySide6.QtWidgets import QFileDialog
+        start = getattr(self, '_folder', None)
+        d = QFileDialog.getExistingDirectory(self, tr('Ajouter un dossier à la bibli'), str(start or ''))
+        if d:
+            self.add_to_bibli([pathlib.Path(d)])
+
+    def show_bibli(self) -> None:
+        """Les dossiers de la bibli dans la liste."""
+        self._clear_search()
+        self._folder = None
+        self._recents_shown = self._favs_shown = False
+        folders = self.bibli_paths()
+        self.show_files([], folders=folders)
+        self._bibli_shown = True
+        node = self._bibli_item()
+        if node is not None:
+            self.tree.blockSignals(True)
+            self.tree.setCurrentItem(node)
+            self.tree.blockSignals(False)
+        self.where.setText(tr('Bibli') + f' ({len(folders)})')
+        self._visit(BIBLI)
 
     def _quick_item(self):
         return next((self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
@@ -632,6 +852,8 @@ class FileBrowserPanel(SymbolPanel):
         try:
             if place == QUICK:
                 self.show_quick()
+            elif place == BIBLI:
+                self.show_bibli()
             elif place == RECENTS:
                 self.show_recents()
             elif place == FAVORITES:
@@ -676,6 +898,8 @@ class FileBrowserPanel(SymbolPanel):
     def _folder_clicked(self, it) -> None:
         if it.data(0, Qt.ItemDataRole.UserRole) == QUICK:
             self.show_quick()
+        elif it.data(0, Qt.ItemDataRole.UserRole) == BIBLI:
+            self.show_bibli()
         else:
             super()._folder_clicked(it)
 
@@ -707,9 +931,10 @@ class FileBrowserPanel(SymbolPanel):
             self.show_folder(self._folder)
 
     def _initial_roots(self, settings) -> list[pathlib.Path]:
-        added = [pathlib.Path(r) for r in (settings.value(self.ROOTS_KEY, None) or []) if r]
-        import os
-        return [r for r in added if os.path.isdir(r)] + system_roots()     # partage injoignable… : écarté
+        sys_roots = system_roots()
+        self._sys_roots = sys_roots
+        self._sys_keys = {_key(r) for r in sys_roots}
+        return self._local_roots(self.bibli_paths(settings)) + sys_roots   # (la bibli : sous son nœud)
 
     def _parent_in_library(self, path: pathlib.Path) -> pathlib.Path | None:
         return path.parent if path.parent != path else None             # jusqu'à la racine du lecteur
@@ -824,12 +1049,155 @@ class FileBrowserPanel(SymbolPanel):
         self._in_search = True
         try:
             self._search_base = base
+            self._fav_shown = False                      # (plus les résultats d'un dossier, d'un fichier)
             self._search_results = True
             self.show_files(found, {str(f): hits.get(str(f), '') for f in found})
         finally:
             self._in_search = False
         self.where.setText(tr('« {0} » dans {1} : {2} fichier(s)').format(text, base, len(found))
                            + (' — ' + tr('recherche arrêtée') if stopped else ''))
+
+    # --- un dossier, un fichier par son nom, dans les favoris et le dossier affiché (demande du 20/11) ----------
+    def fav_index(self):
+        """L'index des dossiers où chercher (`core.fav_index`), gardé à côté des autres caches."""
+        if getattr(self, '_fav_idx', None) is None:
+            from ..core import fav_index, fonts
+            from .symbols import is_hidden
+            self._fav_idx = fav_index.shared(fonts.cache_file().parent / FAV_INDEX_FILE, hidden=is_hidden)
+        return self._fav_idx
+
+    def fav_scope(self) -> tuple:
+        """(dossiers favoris, dossier affiché ou None) : où cherchent les deux recherches. Le dossier affiché reste
+        celui d'avant tant que leurs résultats sont montrés ; sans dossier affiché, le dossier choisi dans la liste.
+        La racine d'un lecteur n'en est pas (tout le disque indexé), sauf si elle est en favori."""
+        from .symbols import favorite_paths, is_remote
+        favs = favorite_paths(self.settings, self.FAV)
+        folder = getattr(self, '_folder', None)
+        if folder is None and getattr(self, '_fav_shown', False):
+            folder = getattr(self, '_fav_folder', None)
+        if folder is None:                               # Favoris, Récents… : le dossier choisi dans la liste
+            it = self.list.currentItem()
+            if it is not None and it.isSelected() and it.data(ROLE_KIND) == 'dir':
+                folder = pathlib.Path(it.data(Qt.ItemDataRole.UserRole))
+        if folder is not None and (folder.parent == folder or not (is_remote(folder) or folder.is_dir())):
+            folder = None                                # (un partage : vérifié dans le fil de calcul)
+        return favs, folder
+
+    def _fav_keep(self) -> list:
+        """Tous les favoris, même absents en ce moment (clé débranchée, partage injoignable) : leur index reste."""
+        v = self.settings.value(self.FAV, []) or []
+        return [pathlib.Path(x) for x in ([v] if isinstance(v, str) else v) if isinstance(x, str) and x]
+
+    def _fav_others(self, folder, favs) -> list:
+        """Les derniers dossiers non favoris où l'on a cherché (OTHERS_MAX), `folder` en tête s'il n'est pas déjà
+        compris dans un favori : gardés dans l'index."""
+        from ..core import fav_index
+        v = self.settings.value(OTHERS_KEY, []) or []
+        v = [v] if isinstance(v, str) else list(v)       # (INI : une liste d'un seul élément relue en texte)
+        others = []
+        fk = {fav_index.key_of(f) for f in favs}
+        tops = {fav_index.key_of(r) for r in fav_index.top_roots(list(favs) + ([folder] if folder else []))}
+        if folder is not None and fav_index.key_of(folder) not in fk and fav_index.key_of(folder) in tops:
+            others.append(str(folder))                   # (ni un favori, ni compris dans un favori)
+        for o in v:
+            if isinstance(o, str) and o and all(os.path.normcase(o) != os.path.normcase(x) for x in others):
+                others.append(o)
+        others = others[:OTHERS_MAX]
+        self.settings.setValue(OTHERS_KEY, others)
+        return others
+
+    def search_favorites(self, kind: str, text: str) -> list:
+        """Les dossiers (`kind` 'dossier') ou les fichiers ('fichier', du format choisi) dont le nom contient `text`
+        (mots sans casse ni accents, * et ?), parmi les favoris et le dossier affiché, avec tous leurs sous-dossiers.
+        La première fois, chacun est indexé ; ensuite : d'abord ce que l'index connaît (montré tout de suite),
+        vérifié, puis les dossiers changés relus, l'index mis à jour s'il a changé. Annuler garde ce qui est déjà
+        vérifié. Ici, aucun accès aux favoris eux-mêmes (un partage injoignable ne fige pas la fenêtre) : tout se
+        fait dans le fil de calcul. Rend les résultats."""
+        from ..core import fav_index
+        from .progress import Cancelled, run
+        m = matcher(text)
+        if m is None:
+            return []
+        favs, folder = self.fav_scope()
+        roots = fav_index.top_roots(list(favs) + ([folder] if folder is not None else []))
+        idx = self.fav_index()
+        others = self._fav_others(folder, favs)
+        exts = self.EXTS if kind == 'fichier' else None
+        # un favori lui-même : par son nom et son extension (vérifié sur le disque avec les autres, dans le fil)
+        direct = [p for p in favs if m(p.name) and ((p.suffix.lower() in self.EXTS) if kind == 'fichier'
+                                                    else p.suffix.lower() not in BROWSER_EXT)]
+        first = None                                     # (None : la recherche consultera l'index elle-même)
+        if idx.lock.acquire(timeout=1.0):                # une recherche annulée finit encore son dossier en cours
+            try:
+                idx.forget(self._fav_keep() + [pathlib.Path(o) for o in others])
+                first = idx.lookup(roots, kind, m, exts, self.MAX_LISTED)
+            finally:
+                idx.lock.release()
+        if first:                                        # d'abord ce que l'index connaît : tout de suite
+            self.show_fav_results(kind, text, first, folder, checking=True)
+        box: dict = {}
+        stopped = False
+        try:
+            found = run(self, tr('Recherche de « {0} »').format(text), idx.search, roots, kind, m, exts,
+                        self.MAX_LISTED, first, box, direct)
+        except Cancelled:
+            stopped = True
+            found = []
+        ver = list(box.get('verifies', []))              # lu une fois (le fil peut encore l'écrire après Annuler)
+        keys = {os.path.normcase(str(p)) for p in ver}
+        dk = {os.path.normcase(str(p)) for p in direct}
+        rest = [p for p in ver if os.path.normcase(str(p)) not in dk] if stopped else list(found)
+        seen, out = set(), []
+        for p in [p for p in direct if os.path.normcase(str(p)) in keys] + rest:
+            c = os.path.normcase(str(p))
+            if c not in seen:
+                seen.add(c)
+                out.append(p)
+        self.show_fav_results(kind, text, out, folder, stopped=stopped)
+        return out
+
+    def refresh(self) -> None:
+        """F5, un nom changé, un élément supprimé : les résultats cherchés par nom refaits (sinon : le dossier)."""
+        if getattr(self, '_bibli_shown', False):         # F5 sur la Bibli : l'arbre et sa liste relus
+            self._fill_tree()
+            self.show_bibli()
+            return
+        last = getattr(self, '_fav_last', None)
+        if getattr(self, '_fav_shown', False) and last:
+            self._fill_tree()
+            self.search_favorites(last[0], last[1])
+            return
+        super().refresh()
+
+    def show_fav_results(self, kind: str, text: str, paths, folder=None, checking: bool = False,
+                         stopped: bool = False) -> None:
+        if self.search.text():                           # le filtre de la liste cacherait des résultats
+            self.search.blockSignals(True)
+            self.search.clear()
+            self.search.blockSignals(False)
+        self._folder = None
+        self._unreadable = False
+        self._recents_shown = False
+        self._favs_shown = False
+        self._fav_shown, self._fav_folder = True, folder
+        self._bibli_shown = False
+        self._fav_last = (kind, text, list(paths), folder)
+        self._in_search = True
+        try:
+            self._search_base = None
+            self._search_results = True
+            if kind == 'dossier':
+                self.show_files([], {}, folders=list(paths))
+            else:
+                self.show_files(list(paths), {str(f): '' for f in paths})
+        finally:
+            self._in_search = False
+        what = (tr('{0} dossier(s)') if kind == 'dossier' else tr('{0} fichier(s)')).format(len(paths))
+        where = tr('« {0} » dans les favoris : {1}').format(text, what) if folder is None else \
+            tr('« {0} » dans les favoris et {1} : {2}').format(text, folder, what)
+        self.where.setText(where + (' — ' + tr('vérification…') if checking else '')
+                           + (' — ' + tr('recherche arrêtée') if stopped else ''))
+        self.navigated.emit()                            # (boutons de la fenêtre : pas de dossier parent)
 
     def _activated(self, it) -> None:
         if it.data(ROLE_KIND) in ('dir', 'up'):
@@ -840,9 +1208,9 @@ class FileBrowserPanel(SymbolPanel):
     def menu(self, widget, pos, exec_menu: bool = True):
         if widget is self.tree and pos is not None:
             it = self.tree.itemAt(pos)
-            if it is not None and it.data(0, Qt.ItemDataRole.UserRole) == QUICK:
+            if it is not None and it.data(0, Qt.ItemDataRole.UserRole) in (QUICK, BIBLI):
                 self.tree.setCurrentItem(it)
-                self.show_quick()
+                self._folder_clicked(it)
                 return None
         m = super().menu(widget, pos, exec_menu=False)
         if m is None:
@@ -852,6 +1220,7 @@ class FileBrowserPanel(SymbolPanel):
         for a in list(m.actions()):                     # rien à enregistrer d'ici
             if a.text() in drop:
                 m.removeAction(a)
+        self._bibli_action(m, widget)
         files = [p for p in self.selected_paths(widget) if p.is_file()] if widget is self.list else []
         if files:
             first = m.actions()[0] if m.actions() else None
@@ -867,10 +1236,33 @@ class FileBrowserPanel(SymbolPanel):
             m.deleteLater()
         return m
 
+    def _bibli_action(self, m, widget) -> None:
+        """Clic droit sur un ou des dossiers : « Ajouter à la bibli » (ou « Retirer de la bibli »), après les
+        favoris."""
+        from .icons import icon
+        paths = self.selected_paths(widget) if (widget is self.tree or self.list.selectedItems()) else []
+        paths = [p for p in paths if str(p) not in (QUICK, BIBLI) and not str(p).startswith('::')]
+        sys_keys = getattr(self, '_sys_keys', set())
+        if not paths or any(_key(p) in sys_keys for p in paths) or not all(p.is_dir() for p in paths):
+            return                                       # (Bureau, Documents, lecteurs : déjà montrés d'office)
+        inside = all(self.in_bibli(p) for p in paths)
+        a = QAction(icon('library'), tr('Retirer de la bibli') if inside else tr('Ajouter à la bibli'), m)
+        a.triggered.connect(lambda: self.remove_from_bibli(paths) if inside else self.add_to_bibli(paths))
+        acts = m.actions()
+        fav = next((i for i, x in enumerate(acts) if x.text().endswith((tr('Ajouter aux favoris'),
+                                                                        tr('Retirer des favoris')))), None)
+        if fav is not None and fav + 1 < len(acts):
+            m.insertAction(acts[fav + 1], a)
+        else:
+            m.addAction(a)
+
     def set_exts(self, exts) -> None:
         """Filtre par format : dossier (ou récents, favoris) relu."""
         self.EXTS = tuple(exts)
-        if getattr(self, '_recents_shown', False):
+        last = getattr(self, '_fav_last', None)
+        if getattr(self, '_fav_shown', False) and last and last[0] == 'fichier':
+            self.search_favorites(last[0], last[1])      # des fichiers cherchés : dans le nouveau format
+        elif getattr(self, '_recents_shown', False):
             self.show_recents()
         elif getattr(self, '_favs_shown', False):
             self.show_favorites()
