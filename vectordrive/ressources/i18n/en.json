@@ -7809,5 +7809,7 @@
  "TypeEdit 13 n’affiche à l’ouverture que son premier plan : un premier plan vide ou masqué donne une page blanche. Décoché : les calques dans l’ordre du dessin": "TypeEdit 13 only shows its first layer when opening: an empty or hidden first layer gives a blank page. Unticked: the layers in the drawing’s order",
  "Rien à poser": "Nothing to place",
  "Le résultat est vide : rien n’a été posé.": "The result is empty: nothing was placed.",
- "Exclusion : objet {0} sur {1}": "Exclusion: object {0} of {1}"
+ "Exclusion : objet {0} sur {1}": "Exclusion: object {0} of {1}",
+ "Trop de pièces : {0} traits à découper, {1} au plus. Réduisez le nombre de pièces ou agrandissez-les.": "Too many pieces: {0} cut lines, {1} at most. Use fewer pieces or make them larger.",
+ "Trop de repères : {0}, {1} au plus. Moins de parts, ou un pas plus long.": "Too many markers: {0}, {1} at most. Use fewer parts or a longer step."
 }

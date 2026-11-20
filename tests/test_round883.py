@@ -171,7 +171,8 @@ class Parcours(unittest.TestCase):
         t = M.CamTool(name='c', kind='conique', diameter=6.0, tip=0.2, angle=30.0)
         setup = M.CamSetup(tools=[t])
         # un retrait de 2 mm, au-delà du rayon inscrit, aux niveaux hauts du relief
-        op = M.Operation(kind='prismatique', tool_id=t.id, depth=7.5, step_down=7.5, climb=True)
+        op = M.Operation(kind='prismatique', tool_id=t.id, depth=7.5, step_down=7.5, climb=True,
+                         prism_rule=882)                 # (le relief d'avant ; 1113 : test_round1113)
         setup.operations = [op]
         tp = S.compute(doc, setup, op, (0.0, 0.0))
         tan_h = math.tan(math.radians(15))

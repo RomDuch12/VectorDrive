@@ -52,6 +52,17 @@ def contour_length(c: Contour) -> float:
     return sum(s.length() for s in c.segments)
 
 
+#: au plus autant de repères posés par Diviser / Mesurer (10 000 000 parts : des minutes, puis la mémoire épuisée)
+MAX_MARKS = 100_000
+
+
+def marks_count(contours, kind: str, value: float) -> float:
+    """Repères que poseraient Diviser (`value` parts) ou Mesurer (tous les `value` mm) sur ces contours."""
+    if kind == 'divide':
+        return float(max(2, int(value)) * len(contours))
+    return sum(contour_length(c) / value for c in contours) if value > 0 else 0.0
+
+
 def divide(c: Contour, n: int) -> list[tuple[float, float, float]]:
     """n parts égales : n − 1 points sur un contour ouvert (les bouts exclus),
     n points sur un contour fermé (départ compris)."""

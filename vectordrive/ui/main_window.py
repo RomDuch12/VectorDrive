@@ -12102,7 +12102,15 @@ class MainWindow(QMainWindow):
         values = {n: getattr(p, n) for n, _l, _d in fields}
         for n, val in values.items():
             self.settings.setValue(f'decoupe/{kind}/{n}', val)
-        return self.cut_pattern(kind, values, (p.x, p.y))
+        from ..core.cutpatterns import MAX_PIECES, TooMany
+        try:
+            return self.cut_pattern(kind, values, (p.x, p.y))
+        except TooMany as ex:                        # (les valeurs restent dans la fenêtre, à corriger)
+            QMessageBox.warning(self, tr(PATTERNS[kind]),
+                                tr('Trop de pièces : {0} traits à découper, {1} au plus. Réduisez le nombre de '
+                                   'pièces ou agrandissez-les.').format(f'{ex.count:,.0f}'.replace(',', '\u202f'),
+                                                                       f'{MAX_PIECES:,}'.replace(',', '\u202f')))
+            return []
 
     def leds(self, spec) -> list:
         """LED (TypeEdit) : perçages des diodes pour chaque objet sélectionné
@@ -21785,6 +21793,12 @@ class MainWindow(QMainWindow):
                  ('orient', bool, False, tr('Repères tournés selon la courbe'))]
         p = self._ask(kind, tr('Diviser') if kind == 'divide' else tr('Mesurer'), spec, params=params)
         if p is None:
+            return None
+        want = C.marks_count(cs, kind, p['count'] if kind == 'divide' else float(p['step']))
+        if not want <= C.MAX_MARKS:                      # (10 000 000 parts : figé, puis la mémoire épuisée)
+            self.statusBar().showMessage(tr('Trop de repères : {0}, {1} au plus. Moins de parts, ou un pas plus long.')
+                                         .format(f'{want:,.0f}'.replace(',', '\u202f'),
+                                                 f'{C.MAX_MARKS:,}'.replace(',', '\u202f')), 10000)
             return None
         pts = []
         for c in cs:

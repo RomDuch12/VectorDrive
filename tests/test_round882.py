@@ -32,6 +32,7 @@ def path_of(shapes, *, depth=2.0, step=2.0, tool=None, **kw):
     setup = M.setup_of(doc)
     t = tool or M.CamTool(name='c', kind='conique', diameter=8.0, tip=0.2, angle=30.0)
     setup.tools.append(t)
+    kw.setdefault('prism_rule', 882)                 # (le relief d'avant, outil dans les lettres : 1113 le met dehors)
     op = M.Operation(kind='prismatique', tool_id=t.id, depth=depth, step_down=step, climb=kw.pop('climb', True), **kw)
     setup.operations.append(op)
     M.store(doc, setup)
@@ -321,7 +322,7 @@ class Matiere(unittest.TestCase):
 class Ancien(unittest.TestCase):
     def test_une_operation_d_avant_ne_change_pas(self):
         d = M.Operation(kind='prismatique').to_dict()
-        self.assertEqual(M.Operation.from_dict(d).prism_rule, 882)
+        self.assertEqual(M.Operation.from_dict(d).prism_rule, 1113)          # 1113 : le relief hors des formes
         del d['prism_rule']
         self.assertEqual(M.Operation.from_dict(d).prism_rule, 0)
         tp, _s = path_of([square()], step=2.0, prism_rule=0)

@@ -389,6 +389,8 @@ def apply(setup: model.CamSetup, tpl: dict, *, sources: list | None = None,
         o.ref_tool_id = ids.get(o.ref_tool_id, o.ref_tool_id) if o.ref_tool_id else ''
         o.items = list(items) if items else []
         o.body3d_ref = {}                        # volume d'un autre dessin : le numéro seul
+        if o.kind == 'prismatique':              # une opération neuve : la règle du moment (1113 : le relief hors
+            o.prism_rule = max(int(o.prism_rule or 0), model.Operation.prism_rule)    # des formes)
         if old and o.kind == 'reste' and getattr(o, 'gamme_rule', 0) >= 885:   # reprise de gamme d'un modèle d'avant
             o.link_previous = True               # la version 2 : seulement ce que les lignes d'avant ont laissé
         if sources is not None:

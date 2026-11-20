@@ -20,6 +20,25 @@ PATTERNS = {
 }
 
 
+#: au plus autant de traits (cercles, octogones, traits de partage) : au-delà, `TooMany` — 10 000 000 pièces par
+#: côté (les champs le permettent) donnaient 10¹⁴ diagonales, VectorDrive figé puis à court de mémoire
+MAX_PIECES = 100_000
+
+
+class TooMany(ValueError):
+    """Trop de pièces : `count` traits demandés, `MAX_PIECES` au plus."""
+
+    def __init__(self, count: float):
+        count = math.inf if count > 1e300 else float(count)   # (un entier démesuré ne se formate pas en .0f)
+        super().__init__(f'{count:.0f} traits (au plus {MAX_PIECES})')
+        self.count = count
+
+
+def _check(count: float) -> None:
+    if not count <= MAX_PIECES:                      # (nan compris)
+        raise TooMany(count)
+
+
 def _seg(a, b) -> Contour:
     return Contour([Line(a, b)], False)
 
@@ -31,6 +50,9 @@ def staggered_circles(length: float, width: float, radius: float, dx: float = 0.
     plate = Path([rect(dx, dy, length, width)])
     out = []
     if radius > 0:
+        rows = max(0.0, (width + 1e-9 - 2 * radius) / (radius * math.sqrt(3)) + 1)     # (la tolérance de la
+        per = max(0.0, (length + 1e-9) / (2 * radius))                                 # boucle comprise)
+        _check((math.floor(rows) if rows < 1e18 else rows) * per)
         row, y = 0, dy + radius
         while y + radius <= dy + width + 1e-9:
             x = dx + radius + (radius if row % 2 else 0.0)
@@ -51,7 +73,8 @@ def octagons(length: float, width: float, per_row: int, dx: float = 0.0, dy: flo
     a = w / (1 + math.sqrt(2))                         # côté
     c = (w - a) / 2                                    # coin coupé
     out = []
-    rows = int((width + 1e-9) // w)
+    rows = int((width + 1e-9) // w) if w > 0 else 0
+    _check(rows * n)
     for j in range(rows):
         for i in range(n):
             x0, y0 = dx + i * w, dy + j * w
@@ -66,6 +89,7 @@ def pie(radius: float, parts: int, dx: float = 0.0, dy: float = 0.0, cut_outer: 
     le cercle extérieur à part (découpé ou non). Centre en (dx + r, dy + r)."""
     cx, cy = dx + radius, dy + radius
     n = max(1, int(parts))
+    _check(n)
     spokes = [_seg((cx, cy), (cx + radius * math.cos(2 * math.pi * k / n), cy + radius * math.sin(2 * math.pi * k / n)))
               for k in range(n)] if n > 1 else []
     outer = Path([circle((cx, cy), radius)]) if cut_outer else Path()
@@ -76,6 +100,7 @@ def rectangles(length: float, width: float, nx: int, ny: int, dx: float = 0.0, d
     """Plaque partagée en nx × ny rectangles : traits de partage (lignes communes)."""
     plate = Path([rect(dx, dy, length, width)])
     nx, ny = max(1, int(nx)), max(1, int(ny))
+    _check(nx + ny)
     lines = [_seg((dx + length * i / nx, dy), (dx + length * i / nx, dy + width)) for i in range(1, nx)]
     lines += [_seg((dx, dy + width * j / ny), (dx + length, dy + width * j / ny)) for j in range(1, ny)]
     return plate, Path(lines)
@@ -85,6 +110,7 @@ def triangles(length: float, width: float, nx: int, ny: int, dx: float = 0.0, dy
               rising: bool = True) -> tuple:
     """Plaque partagée en nx × ny rectangles coupés chacun par sa diagonale
     (montante ou descendante) : 2 × nx × ny triangles."""
+    _check(max(1, int(nx)) * max(1, int(ny)) + max(1, int(nx)) + max(1, int(ny)))
     plate, grid = rectangles(length, width, nx, ny, dx, dy)
     nx, ny = max(1, int(nx)), max(1, int(ny))
     w, h = length / nx, width / ny

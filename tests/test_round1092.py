@@ -64,7 +64,7 @@ def prism(rest=True, previous=None, offsets=(3.0,), lateral=False, far=False, mo
     cone = M.CamTool(name='c', kind='conique', diameter=8.0, tip=0.2, angle=30.0)
     setup.tools.append(cone)
     op = M.Operation(kind='prismatique', tool_id=cone.id, depth=H, step_down=1.0, prism_rest=rest,
-                     prism_lateral=lateral, prism_hollow=hollow)
+                     prism_lateral=lateral, prism_hollow=hollow, prism_rule=882)     # (le relief d'avant ; 1113 : test_round1113)
     setup.operations.append(op)
     M.store(doc, setup)
     prev = [previous_path(setup, offsets)] if previous is None else previous
@@ -208,7 +208,7 @@ class Panel(unittest.TestCase):
         s.tools = [f6, cone]
         s.operations = [M.Operation(name='poche', kind='poche', tool_id=f6.id, items=[frame.id, a.id, b.id], depth=H),
                         M.Operation(name='lettres', kind='prismatique', tool_id=cone.id, items=[a.id, b.id],
-                                    depth=H, step_down=1.0, prism_rest=True)]
+                                    depth=H, step_down=1.0, prism_rest=True, prism_rule=882)]
         self.cp.save(s)
 
     def tearDown(self):

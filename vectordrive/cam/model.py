@@ -273,7 +273,8 @@ class Operation:
     #: leur outil (XY), enlevée à chaque niveau (demande du 19/11)
     prism_rest: bool = False
     gamme_rule: int = 0              # gamme : 885, le trajet relevé dans TE13 (voir `gamme.cone_step`) ; 0, celui d'avant
-    prism_rule: int = 882            # lettres prismatiques : 882, le trajet relevé dans TE13 ; avant, le contour décalé de la pointe à chaque niveau
+    prism_rule: int = 1113           # lettres prismatiques : 1113, le relief garde l'outil hors des formes ; 882, le trajet relevé dans TE13
+    #                                  (le toit taillé dans la lettre) ; avant, le contour décalé de la pointe à chaque niveau
     vcarve_edges_only: bool = False  # gravure 2,5D : bords et tirés d'angle seulement (finition TypeEdit)
     vcarve_max_steps: int = 0       # gravure 2,5D : seules les n passes les plus proches du bord (0 : toutes)
     vcarve_mode: str = 'passes'     # gravure 2,5D : 'passes' (décalages), 'axe' (ligne médiane, intaille optimisée), 'axe_ar' (intaille standard : un flanc à l'aller, l'autre au retour)

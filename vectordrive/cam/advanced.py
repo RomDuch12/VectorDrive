@@ -929,6 +929,9 @@ def _prism_parts(reg, geoms, tol) -> tuple:
     return parts[order], firsts
 
 
+#: règle des lettres prismatiques à partir de laquelle le relief garde l'outil hors des formes (demande du 20/11) ;
+#: avant (882, relevé dans TE13), l'outil taillait le toit dans la lettre
+PRISM_OUTSIDE = 1113
 PRISM_MIN_TURN = 22.5                                     # relevé dans TE13 : pas d'arête pour un tournant de 20°, une pour 25°, saillant ou rentrant
 
 
@@ -942,11 +945,20 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
     import shapely
     from shapely.geometry import Point
     from . import skeleton as SK
+    outside = not op.prism_hollow and getattr(op, 'prism_rule', 0) >= PRISM_OUTSIDE
     h_max, h_min = prismatic_heights(reg, tool, te=True)
     H = abs(op.depth) if op.depth else h_max
-    tp.warnings.append(f'lettres prismatiques : arêtes à Z = 0 pour {h_max:.3f} mm de profondeur '
-                       f'(lettre la plus étroite : {h_min:.3f} mm) ; ici {H:.3f} mm'
-                       + (' — sommets plats là où la lettre est plus large' if H < h_max - 1e-6 else ''))
+    if outside:
+        if not op.depth:                              # rien ne la donne (l'arête du toit n'existe plus) : pas de défaut risqué
+            tp.warnings.append('lettres prismatiques en relief : donnez la profondeur — l\'outil restant hors des formes, '
+                               'elle ne se déduit pas des lettres')
+            return
+        tp.warnings.append(f'lettres prismatiques en relief : l\'outil reste hors des formes, flancs à la pente de '
+                           f'l\'outil sur {H:.3f} mm')
+    else:
+        tp.warnings.append(f'lettres prismatiques : arêtes à Z = 0 pour {h_max:.3f} mm de profondeur '
+                           f'(lettre la plus étroite : {h_min:.3f} mm) ; ici {H:.3f} mm'
+                           + (' — sommets plats là où la lettre est plus large' if H < h_max - 1e-6 else ''))
     if H <= 0:
         return
     h_tool = (_body(tool) / 2 - tool.tip / 2) / tan_h
@@ -961,6 +973,9 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
         step = H
     hollow = bool(op.prism_hollow)
     lateral = bool(op.prism_lateral)
+    if outside:                                       # relief : l'outil hors des formes (règle 1113) ; en avalant,
+        _prism_outside(setup, op, tool, tp, em, here, reg, H, step, tan_h, lateral, bool(op.climb))   # les lettres à droite
+        return
     parts, firsts = _prism_parts(reg, geoms, setup.tolerance)
     if not len(parts):
         return
@@ -1063,6 +1078,45 @@ def _prismatic_te(setup, op, tool, tp, em, here, geoms, reg, tan_h) -> None:
         tp.warnings.append(f'lettres prismatiques : arêtes non reprises sur {failed} forme(s) (squelette impossible à calculer)')
 
 
+def _prism_outside(setup, op, tool, tp, em, here, reg, H: float, step: float, tan_h: float, lateral: bool,
+                   region_right: bool) -> None:
+    """Lettres prismatiques en relief, outil hors des formes (demande du 20/11 ; règle `PRISM_OUTSIDE`) : à chaque niveau
+    z, de la surface vers le fond, le centre de l'outil suit le contour décalé vers l'extérieur de troncature/2 + |z|·tan
+    (en onglet) — le cône taille des flancs qui s'élargissent vers le fond et frôle le bord du dessus sans l'entamer. En
+    avalant, les lettres à droite (sens horaire autour d'un extérieur), comme l'ancien relief à outil dehors. Pair-impair : le trou d'un O est hors de la forme, l'îlot dans ce trou n'en est pas. Passes
+    latérales : à chaque niveau, aussi les décalages jusqu'à celui du fond, de l'extérieur vers la lettre. « Débordement »
+    : au pas du fond, au-delà du flanc du fond, de l'extérieur vers les lettres. Reste jusqu'à l'outil d'avant : à chaque
+    niveau, avant les flancs."""
+    tol = setup.tolerance
+    qs = S._quad_segs(max(tol, 1e-3), tol)
+    zs = [-k * step for k in range(1, int(H / step + 1e-9) + 1) if k * step < H - 1e-9] + [-H]
+    ext = max(0.0, getattr(op, 'extension', 0.0) or 0.0)
+    pitch = max(0.02, 2 * (tool.tip / 2 + FLAT_RIDGE * tan_h))
+    rt = tool.tip / 2                                  # la troncature hors de la lettre : le dessus gardé entier
+    far = [rt + H * tan_h + k * pitch for k in range(int(ext / pitch + 1e-9), 0, -1)]
+    rest = (_PrismRest.of(setup, tool, tp, reg, H, tan_h, region_right, outside=True)
+            if getattr(op, 'prism_rest', False) else None)
+    cache: dict = {}
+
+    def chains(d: float, flank: bool) -> list:
+        key = (round(d, 6), flank)
+        if key not in cache:                           # les flancs en onglet ; le Débordement arrondi (un coin aigu
+            kw = {'join_style': 'mitre', 'mitre_limit': 20.0} if flank else {}   # en onglet partirait à 20·d)
+            g = reg if d <= 1e-9 else S.buffer_checked(reg, d, qs, **kw)
+            cache[key] = [(pts, True) for pts in S.rings_of(g, region_right)]
+        return cache[key]
+
+    for i, z in enumerate(zs):
+        if rest is not None:
+            rest.cut(em, here, z)
+        deeper = zs[i:] if lateral else [z]
+        ds = (([(d, False) for d in far] if deeper[-1] == zs[-1] else [])
+              + [(rt - z2 * tan_h, True) for z2 in reversed(deeper)])
+        for d, flank in ds:
+            for pts, closed in S.order_chains(chains(d, flank), em.pos or here):
+                S.cut_chain(em, pts, closed, [z])
+
+
 class _PrismRest:
     """Lettres prismatiques en relief, « reste jusqu'à l'outil d'avant » (demande du 19/11) : la matière que les
     parcours d'avant ont laissée entre les lettres et leur passage — la bande le long des lettres, les écarts trop
@@ -1076,7 +1130,7 @@ class _PrismRest:
     rétrécissent."""
 
     @classmethod
-    def of(cls, setup, tool, tp, reg, H: float, tan_h: float, region_right: bool):
+    def of(cls, setup, tool, tp, reg, H: float, tan_h: float, region_right: bool, outside: bool = False):
         """None : rien à reprendre (dit dans les avis)."""
         from shapely.geometry import LineString
         from shapely.ops import unary_union
@@ -1109,12 +1163,13 @@ class _PrismRest:
                                'lettres')
             return None
         self.band, self.reg, self.H, self.region_right, self.tol = band, reg, H, region_right, setup.tolerance
+        self.outside = outside                       # relief hors des formes : la lettre s'élargit vers le fond
         self.rings = []                                   # les anneaux autour des lettres, du plus loin au plus près
         for k in range(int(w / self.pitch + 1e-9) + 1, 0, -1):
             ring = S.buffer_checked(reg, k * self.pitch, self.qs)
             if ring.intersects(band):
                 self.rings.append(S.rings_of(ring, region_right))
-        near = band.buffer(self.pitch)                    # le bord des lettres voisines : balayé par le flanc
+        near = self.near = band.buffer(self.pitch)        # le bord des lettres voisines : balayé par le flanc
         self.edge = [(pts, True) for pts in S.rings_of(reg, region_right)
                      if near.intersects(LineString([p[:2] for p in pts]))]
         return self
@@ -1124,6 +1179,9 @@ class _PrismRest:
         de ce qu'ils ont laissé (`spiral_leftover`), jamais plus près d'une lettre que le cône ne le permet."""
         from shapely.geometry import LineString
         free = self.band.intersection(self.closed.buffer(-(self.tip / 2 - z * self.tan_h), quad_segs=self.qs))
+        flank = self.tip / 2 - z * self.tan_h        # hors des formes : le centre jamais plus près de la lettre
+        if self.outside and flank > 1e-9:            # que le flanc à cette cote
+            free = free.difference(self.reg.buffer(flank - 1e-4, quad_segs=self.qs))
         if free.is_empty:
             return
         done = []
@@ -1137,11 +1195,16 @@ class _PrismRest:
             for pts, closed in S.order_chains(chains, em.pos or here):
                 S.cut_chain(em, pts, closed, [z])
                 done.append((pts, closed))
-        safe = max(0.0, self.tip / 2 - (self.H + z) * self.tan_h) + 1e-3
+        safe = (flank if self.outside else max(0.0, self.tip / 2 - (self.H + z) * self.tan_h)) + 1e-3
+        edge = self.edge
+        if self.outside and flank > 1e-9:            # ce que le flanc balaie à cette cote
+            grown = S.buffer_checked(self.reg, flank, self.qs, join_style='mitre', mitre_limit=20.0)
+            edge = [(pts, True) for pts in S.rings_of(grown, self.region_right)
+                    if self.near.intersects(LineString([p[:2] for p in pts]))]
         centers = free.difference(self.reg.buffer(safe, quad_segs=self.qs))
         if centers.is_empty:
             return
-        for pts in S.spiral_leftover([done + self.edge], centers, self.pitch / 2, self.region_right, self.qs,
+        for pts in S.spiral_leftover([done + edge], centers, self.pitch / 2, self.region_right, self.qs,
                                      self.tol)[0]:
             S.cut_chain(em, pts, True, [z])
 

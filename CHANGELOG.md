@@ -7249,3 +7249,16 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 ### v0.968.0 — Reste de matière sur beaucoup de formes : 23 s → 5 s
 
 - **Reste de matière** (aperçu et pose sur le dessin) : la fenêtre mettait 23 s à s’ouvrir pour 1 500 formes choisies (fraise Ø2) ; maintenant moins de 5 s. Changer d’outil, de surépaisseur ou de « zone plus mince » est aussi rapide. Le résultat est le même.
+### v0.969.0 — Découpe et repères démesurés : un message au lieu d’un plantage
+
+- **Découpe › Triangles, Rectangles, Cercles en quinconce, Octogones, Parts de gâteau** : un nombre de pièces démesuré (les champs vont jusqu’à 10 millions) figeait VectorDrive de longues minutes, puis il plantait faute de mémoire. Au-delà de 100 000 traits à découper, un message le dit et rien n’est calculé ; les valeurs restent dans la fenêtre, à corriger.
+- **Diviser / Mesurer (repères)** : de même au-delà de 100 000 repères (10 millions de parts : 35 minutes, puis le plantage). Le message est dans la barre d’état.
+- **Octogones** sur une plaque de longueur nulle : plus d’erreur.
+### v0.970.0 — Lettres prismatiques en relief : l’outil hors des lettres
+
+- **Lettres prismatiques en relief** : l’outil reste désormais hors des formes, et le dessus des lettres est gardé. Les flancs suivent la pente de l’outil et s’élargissent vers le fond ; la troncature de la pointe reste hors du dessus. En avalant, les lettres sont à droite de l’outil. Jusqu’ici, l’outil passait dans les lettres, que la case « En creux » soit cochée ou non.
+- La parité est respectée : le trou d’un O est hors de la lettre, donc usiné ; un îlot dans ce trou est une forme, donc gardé.
+- **En creux** : rien ne change, l’outil reste dans les formes.
+- **Passes latérales**, **Débordement** et **Reste jusqu’à l’outil d’avant (XY)** suivent : le reste enlève ce que l’outil d’avant a laissé entre les lettres, sans jamais entamer leurs flancs.
+- La **profondeur** doit être donnée : en relief hors des lettres, elle ne se déduit plus des lettres. Sans elle, rien n’est usiné et un avis le dit.
+- Une opération enregistrée avant garde son ancien parcours. Pour passer au nouveau, ouvrez-la et validez-la par OK. Une opération tirée d’un modèle d’usinage prend le nouveau.

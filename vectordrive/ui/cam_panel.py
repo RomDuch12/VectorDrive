@@ -2010,6 +2010,9 @@ class FieldsDialog(QDialog):
         before = {k: float(getattr(self.obj, k, 0.0) or 0.0) for k in model.FEED_KEYS} \
             if isinstance(self.obj, model.CamTool) else None
         self._apply_fields()
+        o = self.obj                                     # opération prismatique revalidée : la règle du moment
+        if isinstance(o, model.Operation) and o.kind == 'prismatique':   # (1113 : le relief hors des formes)
+            o.prism_rule = max(int(getattr(o, 'prism_rule', 0) or 0), model.Operation.prism_rule)
         for k, old in (before or {}).items():            # formulaire d'un outil : l'historique de ses vitesses
             new = float(getattr(self.obj, k, 0.0) or 0.0)
             if abs(new - old) > 5e-4:
@@ -4627,6 +4630,8 @@ class CamPanel(QWidget):
         for f in dataclasses.fields(model.Operation):
             if f.name not in keep:
                 setattr(o, f.name, copy.deepcopy(getattr(t_op, f.name)))
+        if o.kind == 'prismatique':                    # modèle d'avant : la règle du moment (1113)
+            o.prism_rule = max(int(o.prism_rule or 0), model.Operation.prism_rule)
         tools = tpl.get('tools') or []
 
         def place(d):

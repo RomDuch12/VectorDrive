@@ -115,7 +115,7 @@ class Sources(unittest.TestCase):
         for old in ('fin = reg.buffer(', 'g = comp.buffer(', 'g = p.buffer(d', "g = reg.buffer(rt if side"):
             self.assertNotIn(old, src)
         adv = (ROOT / 'vectordrive' / 'cam' / 'advanced.py').read_text(encoding='utf-8')
-        self.assertEqual(adv.count('S.buffer_checked(reg,'), 4)                # 1092 : les anneaux du reste
+        self.assertEqual(adv.count('S.buffer_checked(reg,'), 5)                # 1092 : les anneaux du reste ; 1113 : les flancs hors des formes
 
 
 if __name__ == '__main__':
