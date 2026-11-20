@@ -29,6 +29,8 @@ class FixtureDialog(QDialog):
 
     def __init__(self, parent, doc, spec: FX.Spec, selection=(), placer=None, settings=None, thickness=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Plaque de reprise : trous de fixation des bruts'))
         self.doc = doc
         self.placer, self.settings = placer, settings    # placer(chemin) → calque de la plaque posée, ou None

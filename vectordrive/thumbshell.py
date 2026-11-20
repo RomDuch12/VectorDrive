@@ -229,6 +229,7 @@ def _start_render_process() -> None:
     """Processus de tracé : application Qt sans fenêtre, lecteurs des plugins ;
     s'arrête avec le serveur."""
     global _APP
+    from . import winpaths  # noqa: F401 — lecteur verrouillé : « absent » comme dans l'application
     from .core import workers
     workers.exit_with_parent()
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')

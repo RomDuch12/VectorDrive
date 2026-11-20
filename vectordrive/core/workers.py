@@ -123,6 +123,7 @@ def terminate_pool(pool) -> None:
 
 def _start_process(plugins: bool) -> None:
     """Processus de calcul : formats et lecteurs des plugins comme dans l'application."""
+    from .. import winpaths  # noqa: F401 — lecteur verrouillé : « absent » comme dans l'application
     exit_with_parent()
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     if plugins:

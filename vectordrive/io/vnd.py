@@ -1339,6 +1339,7 @@ def _to_items(obj: MfcObject, report: list[str], ctx: dict | None = None) -> lis
         im = Image(data=heightmap_dib(m['w'], m['h'], m['data']), fmt='dib',
                    matrix=Affine(W, 0, 0, -H, ox, oy + H), name='Relief')
         im.extra['vnd'] = {'guid': obj.fields.get('guid'), 'wraps': 0}
+        im.extra['vnd_obj'] = obj                      # réécrit tel quel dans le VND (round 1100)
         report.append('relief (carte de hauteurs) affiché en niveaux de gris, non modifiable')
         return [im]
     if name == 'CMetaObj':
@@ -1646,6 +1647,18 @@ def read(path: str | pathlib.Path) -> Document:
         if bb:
             doc.extra['page_mm'] = tuple(v * M_TO_MM for v in bb)
     doc.report = summarize_report(doc.report)
+    def _reliefs(items):
+        for it in items:
+            obj = it.extra.get('vnd_obj') if isinstance(it.extra, dict) else None
+            if isinstance(it, Image) and obj is not None and obj.cls.name == 'CVbitmap':
+                yield it
+            yield from _reliefs(getattr(it, 'children', ()) or ())
+    reliefs = sum(1 for L in doc.layers for _ in _reliefs(L.items))
+    if reliefs and (gvt or partial):
+        doc.report.append(f'{reliefs} relief(s) : réenregistré(s) en VND comme image (le relief TypeEdit '
+                          'ne peut être gardé que d\'un VND lu en entier)')
+    elif reliefs:
+        doc.report.append(f'{reliefs} relief(s) gardé(s) tel(s) quel(s) pour un réenregistrement en VND')
     if gvt or partial:
         # un GVT ne sert pas de base binaire à un VND (en-tête et versions
         # d'objets différents) : textes et cotes seront écrits comme dessin
@@ -1702,6 +1715,8 @@ def _source_kind_ok(item, obj: MfcObject) -> bool:
         return name == 'CTrou'
     if isinstance(item, Group):
         return name not in _NOT_GROUP_SOURCES
+    if isinstance(item, Image):
+        return name == 'CVbitmap'                        # relief (round 1100)
     return False
 
 

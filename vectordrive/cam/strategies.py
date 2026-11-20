@@ -239,6 +239,30 @@ def erode(geom, d: float, quad_segs: int = 8):
     return drop_splinters(_erode_parts(parts, d, quad_segs), geom, -d, quad_segs)
 
 
+def opening(geom, d: float, quad_segs: int = 16):
+    """Ouverture : `geom.buffer(-d).buffer(d)` (ôte ce qui est plus mince que 2·d). Sur de nombreuses parties, partie
+    par partie (shapely vectorisé) : le buffer d'une multi-surface réunit tout à chaque pas (reste de matière de 1 500
+    formes, 27 000 parties : 19 s → 0,6 s). Les parties d'une surface valide ne se touchent qu'en des points : le
+    retrait de l'ensemble est la réunion des retraits, et l'ouverture d'une partie reste dans la partie — les morceaux
+    sont mis ensemble sans réunion (réunis si l'ensemble n'est pas valide : le bruit d'un arc dans un coin rentrant)."""
+    import shapely
+    if d <= 0 or geom.is_empty:
+        return geom
+    parts = shapely.get_parts(geom)
+    if len(parts) <= MANY_PARTS or geom.geom_type not in ('Polygon', 'MultiPolygon') or not geom.is_valid:
+        return geom.buffer(-d, quad_segs=quad_segs).buffer(d, quad_segs=quad_segs)   # (des parties qui se chevauchent :
+    #                                                     une zone épaisse seulement une fois réunies)
+    thin = shapely.buffer(parts, -d, quad_segs=quad_segs)        # (16 : le défaut de `.buffer`, la fonction en a 8)
+    thin = thin[~shapely.is_empty(thin)]
+    back = shapely.buffer(thin, d, quad_segs=quad_segs)
+    polys = shapely.get_parts(back)
+    polys = polys[(shapely.get_type_id(polys) == 3) & ~shapely.is_empty(polys)]
+    if not len(polys):
+        return shapely.Polygon()
+    out = shapely.multipolygons(polys)
+    return out if out.is_valid else shapely.union_all(back)
+
+
 #: une pièce d'au moins autant de trous est retirée par décomposition au-delà de HOLES_SPLIT_D mm
 HOLES_SPLIT = 16
 HOLES_SPLIT_D = 1.0
@@ -949,6 +973,8 @@ def order_chains(chains: list[tuple[list, bool]], here=(0.0, 0.0)) -> list[tuple
     du dessin ») : les chaînes restent dans l'ordre et le sens du dessin."""
     if _DRAWING_ORDER.get():
         return list(chains)
+    if here is None:                                     # (rien d'émis encore : depuis l'origine)
+        here = (0.0, 0.0)
     if len(chains) > 48:
         return _order_grid(chains, here)
     rest = list(chains)
@@ -3120,6 +3146,7 @@ def _laser_fill(doc, setup, op, tool, tp, em, here) -> None:
         angle = op.hatch_angle + k * step
         layers.append([angle] + ([angle + 90.0] if getattr(op, 'hatch_cross', False) else []))
     auto = bool(getattr(op, 'hatch_auto', False))
+    lines = 0
     for angles in layers:
         for angle in angles:
             from shapely import affinity
@@ -3136,9 +3163,13 @@ def _laser_fill(doc, setup, op, tool, tp, em, here) -> None:
                 for segs in rows:
                     for c in segs:
                         cut_chain(em, c, False, [0.0])
+                        lines += 1
         if op.finish:
-            for pts, _c in order_chains([(p, True) for p in rings_of(reg, op.climb)], em.pos):
+            for pts, _c in order_chains([(p, True) for p in rings_of(reg, op.climb)], em.pos or here):
                 cut_chain(em, pts, True, [0.0])
+    if not lines:                                        # forme plus petite que le pas : rien de rempli
+        tp.warnings.append('gravure laser : surface plus petite que le pas des lignes, rien de rempli'
+                           + (' (contour seul)' if op.finish else ''))
 
 
 def long_axis_angle(g) -> float:
@@ -5091,4 +5122,4 @@ def rest_zones(reg, tool, depth: float = 0.0, stock: float = 0.0, tol: float = 0
     qs = _quad_segs(max(r, tol), tol)
     reach = erode(reg, r, qs).buffer(r, quad_segs=qs)
     rest = reg.difference(reach)
-    return rest.buffer(-tol / 4).buffer(tol / 4), r                 # liserés numériques ôtés
+    return opening(rest, tol / 4), r                                # liserés numériques ôtés

@@ -37,6 +37,8 @@ def remember(settings, entries) -> list:
 class CatalogDialog(QDialog):
     def __init__(self, parent=None, catalogs=None, settings=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.settings = settings if settings is not None else getattr(getattr(parent, 'win', None), 'settings', None)
         from ..cam import catalog as C
         self.setWindowTitle(tr('Ajouter depuis un catalogue'))
@@ -203,8 +205,23 @@ class CatalogDialog(QDialog):
             return None
         win = getattr(self, '_doc_window', None)
         if win is None:
-            win = self._doc_window = DocWindow(self)
+            win = self._doc_window = self._take_doc_window()
         win.show_page(e.doc, e.page)
+        return win
+
+    def _take_doc_window(self):
+        """La fenêtre du document : celle laissée par un catalogue précédent (gardée par la fenêtre principale), sinon
+        une nouvelle ; enfant de ce catalogue tant qu'il est ouvert, rendue à la fenêtre principale à sa fermeture."""
+        from shiboken6 import isValid
+        host = self.parentWidget().window() if self.parentWidget() is not None else None
+        win = getattr(host, '_vd_doc_window', None)
+        if win is not None and isValid(win):
+            _reparent(win, self)
+        else:
+            win = DocWindow(self)
+        if host is not None:
+            host._vd_doc_window = win
+            self.finished.connect(lambda _r=0, w=win, h=host: _reparent(w, h))
         return win
 
     # --- choix ----------------------------------------------------------------------------
@@ -237,6 +254,18 @@ class CatalogDialog(QDialog):
         if self.chosen:
             remember(self.settings, self.chosen)
             super().accept()
+
+
+def _reparent(win, parent) -> None:
+    """`win` (fenêtre de document) confiée à `parent`, sans bouger ni se fermer si elle était ouverte."""
+    from shiboken6 import isValid
+    if not (isValid(win) and isValid(parent)) or win.parentWidget() is parent:
+        return
+    shown, geo = win.isVisible(), win.geometry()
+    win.setParent(parent, win.windowFlags())
+    win.setGeometry(geo)
+    if shown:
+        win.show()
 
 
 class DocWindow(QDialog):

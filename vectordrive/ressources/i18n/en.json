@@ -7806,5 +7806,8 @@
  "Mes réglages": "My settings",
  "Raccourcis": "Shortcuts",
  "Enregistrement en VND : le premier calque qui a quelque chose à montrer écrit en tête": "Saving as VND: the first layer that has something to show written first",
- "TypeEdit 13 n’affiche à l’ouverture que son premier plan : un premier plan vide ou masqué donne une page blanche. Décoché : les calques dans l’ordre du dessin": "TypeEdit 13 only shows its first layer when opening: an empty or hidden first layer gives a blank page. Unticked: the layers in the drawing’s order"
+ "TypeEdit 13 n’affiche à l’ouverture que son premier plan : un premier plan vide ou masqué donne une page blanche. Décoché : les calques dans l’ordre du dessin": "TypeEdit 13 only shows its first layer when opening: an empty or hidden first layer gives a blank page. Unticked: the layers in the drawing’s order",
+ "Rien à poser": "Nothing to place",
+ "Le résultat est vide : rien n’a été posé.": "The result is empty: nothing was placed.",
+ "Exclusion : objet {0} sur {1}": "Exclusion: object {0} of {1}"
 }

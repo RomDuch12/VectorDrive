@@ -5473,6 +5473,8 @@ class CamPanel(QWidget):
         """Outils de la gamme ; rend (ébauches, finition, surépaisseur, profondeur) ou None."""
         from PySide6.QtWidgets import QListWidget, QListWidgetItem
         dlg = QDialog(self)
+        from .fit import release
+        release(dlg)                                     # fermée : détruite, pas gardée
         dlg.setWindowTitle(tr('Gamme relief'))
         f = QFormLayout(dlg)
         from ..cam import toollib
@@ -5681,6 +5683,8 @@ class CamPanel(QWidget):
         tpl = found[1]
         if exec_dialog:
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Modèle d\'usinage'))
             f = QFormLayout(dlg)
             f.addRow(QLabel(f'<b>{name}</b>'))
@@ -6059,6 +6063,8 @@ class CamPanel(QWidget):
         ref = info.get('ref') or (f'T{info["number"]}' if info.get('number') else '')
         names = ', '.join(tr(n) for n, _t in ncread.libraries())
         box = QMessageBox(self)
+        from .fit import release
+        release(box)                                     # fermée : détruite
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle(tr('Outil du programme'))
         box.setText(tr('L’outil « {0} »{1} n’est dans aucune bibliothèque ({2}).').format(

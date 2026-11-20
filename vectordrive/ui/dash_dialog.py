@@ -29,6 +29,8 @@ def _bool(v, default: bool) -> bool:
 class DashDialog(QDialog):
     def __init__(self, parent, settings):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.settings = settings
         self.setWindowTitle(tr('Pointillés'))
         self.types = LT.standard() + self._imported()

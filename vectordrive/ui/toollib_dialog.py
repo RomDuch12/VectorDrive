@@ -905,6 +905,8 @@ class ToolLibraryDialog(QDialog):
             from PySide6.QtWidgets import QDialogButtonBox, QListWidget, QListWidgetItem
             labels = self._mlabels()
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Machines des outils'))
             v = QVBoxLayout(dlg)
             v.addWidget(QLabel(tr('{0} outil(s) : machines où ils sont montés (aucune : toutes)').format(len(tools))))

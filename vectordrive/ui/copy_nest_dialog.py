@@ -26,6 +26,8 @@ def _name_of(item, index: int) -> str:
 class CopyNestDialog(QDialog):
     def __init__(self, parent, items: list, spec: N.NestSpec, per_plane: bool = True, count: int = 1):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Copie imbriquée'))
         self.items = list(items)
         self.spec = spec

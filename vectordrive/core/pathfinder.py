@@ -91,13 +91,13 @@ def trim(items) -> list[tuple[Path, int]]:
     """Chaque forme moins ce que couvrent les formes posées au-dessus."""
     import shapely
     regs = _regions(items)
-    out = []
-    above = None
-    for g, t in reversed(regs):
-        vis = g if above is None else shapely.difference(g, above)
-        out.append((vis, t))
-        above = g if above is None else shapely.union(above, g)
-    return _out(reversed(out))
+    geoms = [g for g, _t in regs]
+    tree = shapely.STRtree(geoms)                    # seules les formes du dessus qui la touchent comptent : la
+    out = []                                         # réunion de tout le dessus coûtait le carré (1 500 : 20 s)
+    for i, (g, t) in enumerate(regs):
+        over = [geoms[j] for j in sorted(int(j) for j in tree.query(g)) if j > i]
+        out.append((shapely.difference(g, shapely.union_all(over)) if over else g, t))
+    return _out(out)
 
 
 def merge(items) -> list[tuple[Path, int]]:

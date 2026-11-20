@@ -207,11 +207,22 @@ def union_all(paths: list[Path]) -> Path:
     contours sont mis bout à bout), chaque groupe deux à deux en arbre —
     l'accumulation dans un seul tracé de plus en plus gros coûtait le carré
     du nombre d'objets (1 900 objets : plusieurs minutes)."""
+    return _combine_all(paths, 'union', 'Union : objet {0} sur {1}')
+
+
+def xor_all(paths: list[Path]) -> Path:
+    """Exclusion de tous les tracés (elle est associative) : comme `union_all` — deux groupes disjoints n'ont
+    rien à exclure entre eux (contours mis bout à bout), chaque groupe deux à deux en arbre. Le pli dans un seul
+    tracé de plus en plus gros coûtait le carré du nombre d'objets (1 500 objets : plusieurs minutes)."""
+    return _combine_all(paths, 'xor', 'Exclusion : objet {0} sur {1}')
+
+
+def _combine_all(paths: list[Path], op: str, label: str) -> Path:
     paths = [p for p in paths if p.contours]
     if not paths:
         return Path()
-    if len(paths) == 1:
-        return paths[0]
+    if len(paths) == 1:                              # (l'exclusion d'un seul tracé le rend normalisé, fermé)
+        return paths[0] if op == 'union' else boolean(paths[0], Path(), 'union')
     from . import progress
     boxes = [p.bbox() for p in paths]
     parent = list(range(len(paths)))
@@ -235,16 +246,21 @@ def union_all(paths: list[Path]) -> Path:
     groups: dict = {}
     for i in range(len(paths)):
         groups.setdefault(find(i), []).append(paths[i])
-    total = sum(len(g) - 1 for g in groups.values()) or 1
+    total = sum(max(len(g) - 1, 1) for g in groups.values()) or 1
     done = 0
     out = []
     for g in groups.values():
-        level = g if len(g) > 1 else [boolean(g[0], Path(), 'union')]
+        if len(g) == 1:                              # une forme seule (les trous d'une plaque) : avancement et
+            progress.step(done, total, label)        # annulation aussi
+            level = [boolean(g[0], Path(), 'union')]
+            done += 1
+        else:
+            level = g
         while len(level) > 1:
             nxt = []
             for k in range(0, len(level) - 1, 2):
-                progress.step(done, total, 'Union : objet {0} sur {1}')
-                nxt.append(boolean(level[k], level[k + 1], 'union'))
+                progress.step(done, total, label)
+                nxt.append(boolean(level[k], level[k + 1], op))
                 done += 1
             if len(level) % 2:
                 nxt.append(level[-1])
@@ -459,10 +475,32 @@ def normalize(path: Path, evenodd: bool = True) -> Path:
     return _from_shapely(_to_shapely(path))
 
 
-def area(path: Path) -> float:
+def area(path: Path, evenodd: bool = True) -> float:
+    """Aire de la surface remplie (règle pair-impair ; `evenodd=False` : non nulle), recouvrements comptés une fois."""
     if _native is not None:
         try:
-            return _call('area', to_ops(path, close_open=True))
+            return _call('area', to_ops(path, close_open=True), evenodd)
         except _NativeFailed:
             pass
-    return _to_shapely(path).area
+    return (_to_shapely(path) if evenodd else _shapely_nonzero(path)).area
+
+
+def _shapely_nonzero(path: Path):
+    """Surface non nulle en shapely (repli de `area` / `fill_areas` : sans retenter le moteur natif, qui vient
+    d'échouer ou de dépasser son délai) ; même calcul que le repli de `normalize`."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    polys = [Polygon(pts).buffer(0) for pts in path.flatten(FLATTEN) if len(pts) >= 4]
+    return unary_union(polys) if polys else Polygon()
+
+
+def fill_areas(path: Path) -> tuple[float, float]:
+    """(aire pair-impair, aire non nulle) de la surface remplie : différentes si le tracé se recouvre dans le même
+    sens. Le tracé n'est converti qu'une fois ; `area` normalise lui-même (pas besoin de `normalize` avant)."""
+    if _native is not None:
+        try:
+            ops = to_ops(path, close_open=True)
+            return _call('area', ops, True), _call('area', ops, False)
+        except _NativeFailed:
+            pass
+    return _to_shapely(path).area, _shapely_nonzero(path).area

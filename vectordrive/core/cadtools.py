@@ -247,9 +247,11 @@ def mass_properties(path: Path, tol: float = 0.005) -> dict:
             polys.append(Polygon(P))
     if not polys:
         return {'area': 0.0, 'perimeter': per}
-    region = polys[0]
-    for p in polys[1:]:
-        region = shapely.symmetric_difference(region, p)        # pair-impair : trous retranchés
+    level = polys                                    # pair-impair : trous retranchés ; deux à deux en arbre (le
+    while len(level) > 1:                            # pli coûtait le carré : 1 500 formes, 13 s)
+        nxt = [shapely.symmetric_difference(level[k], level[k + 1]) for k in range(0, len(level) - 1, 2)]
+        level = nxt + ([level[-1]] if len(level) % 2 else [])
+    region = level[0]
     A = cx = cy = Ixx = Iyy = Ixy = 0.0
     geoms = getattr(region, 'geoms', [region])
     for g in geoms:

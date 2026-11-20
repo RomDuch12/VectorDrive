@@ -13,6 +13,8 @@ class FindReplaceDialog(QDialog):
     def __init__(self, parent, texts_of, has_selection: bool, last_find: str = ''):
         """`texts_of(portée)` : les textes de 'selection', 'layer' ou 'all'."""
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Rechercher / remplacer'))
         self.texts_of = texts_of
         col = QVBoxLayout(self)

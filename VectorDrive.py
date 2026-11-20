@@ -1625,6 +1625,7 @@ def make_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    from vectordrive import winpaths  # noqa: F401 — lecteur verrouillé, réseau perdu : « absent » plutôt qu'une erreur
     args = make_parser().parse_args(argv)
     if args.script:
         args.new_window = True                          # comme TypeEdit : le script dessine dans une fenêtre à lui

@@ -39,7 +39,7 @@ def thick_only(rest, thickness: float):
     """Sans les zones plus minces que `thickness` : elles comptent pour usinées (TE)."""
     if thickness <= 0 or rest.is_empty:
         return rest
-    return rest.buffer(-thickness / 2).buffer(thickness / 2)
+    return S.opening(rest, thickness / 2)
 
 
 class RestView(QWidget):
@@ -163,6 +163,8 @@ class RestPreviewDialog(QDialog):
 
     def __init__(self, parent, region, tools, *, tool=None, depth: float = 0.2, stock: float = 0.0, source: str = '', on_lay=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Aperçu du reste de matière'))
         self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
         self.region = region

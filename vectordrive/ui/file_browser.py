@@ -215,10 +215,11 @@ def system_roots() -> list[pathlib.Path]:
         if p:
             out.append(pathlib.Path(p))
     out += [pathlib.Path(d.absoluteFilePath()) for d in QDir.drives()]
+    import os
     seen, uniq = set(), []
     for p in out:
         k = str(p).lower()
-        if k not in seen and p.is_dir():
+        if k not in seen and os.path.isdir(p):        # lecteur verrouillé, absent… : écarté sans erreur
             seen.add(k)
             uniq.append(p)
     return uniq
@@ -634,7 +635,7 @@ class FileBrowserPanel(SymbolPanel):
                 self.show_recents()
             elif place == FAVORITES:
                 self.show_favorites()
-            elif pathlib.Path(place).is_dir():
+            elif os.path.isdir(place):                     # dossier qui ne répond pas : rien, sans erreur
                 self.show_folder(pathlib.Path(place))
         finally:
             self._walking = False
@@ -663,7 +664,7 @@ class FileBrowserPanel(SymbolPanel):
     def show_folder(self, path: pathlib.Path) -> None:
         self._clear_search()                             # comme l'explorateur : la recherche ne suit pas
         super().show_folder(path)
-        if path.is_dir():
+        if os.path.isdir(path):
             self._visit(path)
 
     def show_favorites(self) -> None:
@@ -706,7 +707,8 @@ class FileBrowserPanel(SymbolPanel):
 
     def _initial_roots(self, settings) -> list[pathlib.Path]:
         added = [pathlib.Path(r) for r in (settings.value(self.ROOTS_KEY, None) or []) if r]
-        return [r for r in added if r.is_dir()] + system_roots()
+        import os
+        return [r for r in added if os.path.isdir(r)] + system_roots()     # partage injoignable… : écarté
 
     def _parent_in_library(self, path: pathlib.Path) -> pathlib.Path | None:
         return path.parent if path.parent != path else None             # jusqu'à la racine du lecteur
@@ -770,7 +772,7 @@ class FileBrowserPanel(SymbolPanel):
         files = [pathlib.Path(p) for p in ([v] if isinstance(v, str) else v)]
         from .symbols import is_remote
         # un fichier d'un partage hors d'atteinte : gardé sans le vérifier (pas d'attente du réseau)
-        files = [p for p in files if p.suffix.lower() in self.EXTS and (is_remote(p) or p.is_file())]
+        files = [p for p in files if p.suffix.lower() in self.EXTS and (is_remote(p) or os.path.isfile(p))]
         self.show_files(files, {str(f): '' for f in files})
         self.where.setText(tr('Récents') + f' ({len(files)})')
         self._visit(RECENTS)
@@ -990,9 +992,9 @@ class FileBrowser(QDialog):
             full = self.settings.value(FULL_KEY, False) in (True, 'true')
             self.setWindowState(Qt.WindowState.WindowFullScreen if full else Qt.WindowState.WindowMaximized)
         start = pathlib.Path(folder) if folder else None
-        if start is not None and start.is_file():
+        if start is not None and os.path.isfile(start):
             start = start.parent
-        if start is not None and start.is_dir():
+        if start is not None and os.path.isdir(start):
             self.panel.show_folder(start)
         else:
             self.panel.show_recents()
@@ -1016,7 +1018,7 @@ class FileBrowser(QDialog):
         out = []
         for f in recent_folders(self.settings):
             p = pathlib.Path(f)
-            if os.path.normcase(str(p)) != now and (is_remote(p) or p.is_dir()):
+            if os.path.normcase(str(p)) != now and (is_remote(p) or os.path.isdir(p)):
                 out.append(p)
         return out
 

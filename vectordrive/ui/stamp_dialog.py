@@ -21,6 +21,8 @@ def _number(value: float, lo: float = 0.0, hi: float = 10000.0) -> QDoubleSpinBo
 class StampDialog(QDialog):
     def __init__(self, parent, spec: SP.StampSpec, saved: list | None = None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Tampon'))
         self.spec = spec
         self.saved = [tuple(f) for f in (saved or [])]

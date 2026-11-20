@@ -26,6 +26,8 @@ class LettersDialog(QDialog):
 
     def __init__(self, parent, item, apply):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.item = item
         self.apply = apply
         self.initial = TX.char_fx(item)

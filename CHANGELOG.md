@@ -7204,3 +7204,48 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Police absente du poste** : à l’ouverture, VectorDrive copie le calque et passe ses textes en VD Géo dans la copie, l’original caché et intact. Jusqu’ici, l’enregistrement en VND écrivait les deux calques (l’original devant, la copie cachée) : TypeEdit montrait un calque « … — VD Géo » en double. Désormais **la copie est écrite à la place de son calque, sous son nom** : chaque objet resté tel que copié redevient l’objet TypeEdit d’origine (le texte dans sa police, que TypeEdit redessine sur un poste qui l’a) ; ce qui a été modifié ou ajouté dans la copie est écrit tel que VectorDrive le montre ; un objet retiré de la copie n’est pas écrit. Le compte rendu de l’enregistrement le dit. Le compagnon .vdz garde les deux calques : VND inchangé, ils reviennent tels quels à l’ouverture, objets TypeEdit compris ; VND retouché dans TypeEdit, il fait foi et la copie est refaite si la police manque encore.
 - Copie cachée (la police est maintenant là) : pas écrite, le compagnon la garde. Les deux calques montrés : les deux écrits. Une copie faite avant cette version (sans la correspondance de ses objets) : comme avant, derrière son original, cachée.
 - **Ordre des calques** : le VND garde l’ordre du dessin. Le premier calque qui a quelque chose à montrer n’est plus mis en tête d’office ; c’est un réglage, **Options › Enregistrement en VND : le premier calque qui a quelque chose à montrer écrit en tête** (décoché d’office ; TypeEdit 13 n’affiche à l’ouverture que son premier plan : masqué, le compte rendu le dit). Export et conversion par lot le suivent aussi.
+### v0.957.0 — VND : le relief gardé au réenregistrement
+
+- **Relief (carte de hauteurs) d’un VND** : VectorDrive le montre en niveaux de gris ; réenregistré en VND, il devenait une image plate et TypeEdit perdait le relief. Il est maintenant réécrit tel qu’il a été lu ; déplacé, sa carte suit. Il le reste après un passage par un .vdz, la session ou la récupération, et copié dans un autre dessin enregistré en VND (des reliefs de versions de TypeEdit différentes ne peuvent pas tous aller dans un même VND : les autres sont écrits comme image, le compte rendu le dit). Agrandi ou tourné, il est écrit comme image (le compte rendu le dit) ; retouché dans un éditeur d’images, aussi.
+- **Deux images ou deux reliefs intervertis** (avant / arrière) dans un VND réenregistré : chacun garde maintenant ses pixels ou ses hauteurs (ils s’échangeaient).
+### v0.958.0 — VND : compte rendu juste pour un relief avec historique
+
+- **Relief TypeEdit avec historique d’édition** : VectorDrive ne sait pas encore lire cet historique ; la lecture du VND s’arrête là (le compte rendu le disait déjà) et le relief est réenregistré comme image. Le compte rendu affirmait pourtant le relief « gardé tel quel » : il ne le dit plus que quand c’est vrai, et dit sinon qu’il sera réenregistré comme image.
+### v0.959.0 — Lecteur verrouillé : « Ouvrir » ne plante plus
+
+- **Un lecteur verrouillé par BitLocker** (ou un lecteur sans support, illisible) faisait échouer le navigateur de fichiers : « Ouvrir » et « Parcourir le dépôt » ne s’ouvraient plus. Un tel lecteur est maintenant pris pour absent : il n’apparaît pas dans la liste des lecteurs, et un dossier ou un fichier récent qui s’y trouve est traité comme introuvable. Un dossier ajouté au navigateur qui ne répond pas (partage injoignable…) est écarté au lieu de l’empêcher de s’ouvrir. Une coupure réseau passagère reste, ailleurs, une erreur : un fichier partagé n’est jamais pris pour absent et recréé à sa place.
+### v0.960.0 — Mémoire : les fenêtres fermées ne s’accumulent plus
+
+- **Fenêtres gardées en mémoire après leur fermeture** : l’espace de travail, le gabarit de bridage, les préférences d’outils, le brut (3D et 2D), les lettres, les scripts, les pointillés, le poinçon, la copie multiple, l’imbrication, les arêtes 3D, les repères, le catalogue d’instructions, la copie de glyphe, le texte en rangées et colonnes, l’aperçu du reste de matière et quelques boîtes de message (mesure, propriétés de masse, programme machine, outil du programme) restaient en mémoire après chaque ouverture, avec tous leurs éléments ; VectorDrive s’alourdissait au fil d’une journée. Une fenêtre fermée est maintenant libérée, comme l’étaient déjà les Options et les formulaires. Le document PDF ouvert depuis le catalogue d’instructions reste ouvert après la fermeture du catalogue.
+### v0.961.0 — PDF : ouverture deux fois plus rapide des fichiers très chargés
+
+- **Ouvrir un PDF chargé de surfaces** (devis, plaquette aux textes vectorisés, aplats blancs posés sur le dessin) était lent : jusqu’à une minute pour un devis de 400 formes. Le calcul de chaque surface remplie est fait deux fois moins souvent ; le même dessin s’ouvre en deux fois moins de temps, à l’identique.
+### v0.962.0 — PDF avec du texte : ouverture plus rapide
+
+- **Ouvrir un PDF dont les pages contiennent du texte** (manuel, notice, devis, plan annoté) est plus rapide : ces pages étaient lues par une méthode générale vingt fois plus lente que celle des pages de dessin seul. Elles sont lues comme elles, à l’identique.
+### v0.963.0 — Mémoire : d’autres fenêtres fermées libérées
+
+- **Encore quelques fenêtres gardées en mémoire après leur fermeture** : plaque codée depuis un préréglage, informations du document, doublons, chaînage, origine, point par coordonnées, point de l’outil de dessin, police à remplacer, cadre de texte chiffré, choix des paramètres, machines d’une bibliothèque d’outils, modèle d’opérations, gamme de relief et mémoire de l’assistant. Elles sont libérées à leur fermeture, comme les autres. Après un passage sur toutes les commandes, VectorDrive garde moitié moins d’éléments en mémoire qu’en 0.959 et change de thème deux fois plus vite.
+### v0.964.0 — « En colonnes » remarche
+
+- **Texte › En colonnes** (un texte de plusieurs lignes réparti en colonnes) échouait à chaque fois sans rien faire. Il ouvre de nouveau sa fenêtre (nombre de colonnes, écart) et pose les colonnes.
+- **Rechercher / remplacer et Orthographe** ne restent plus en mémoire après leur fermeture.
+### v0.965.0 — Photo en points toute blanche : plus d’erreur
+
+- **Photo en points** d’une image toute blanche (aucun point) : VectorDrive affichait une erreur. Il dit maintenant « Le résultat est vide : rien n’a été posé. » Reprise de la même façon, elle laisse l’objet tel qu’il était au lieu de l’effacer.
+- Même garde pour une courbe d’équation qui ne donnerait aucun point, et pour une esquisse vide donnée à l’historique d’un volume.
+### v0.966.0 — Gravure laser d’une toute petite forme
+
+- **Gravure laser (remplissage)** d’une forme plus petite que l’écart entre deux lignes, avec le contour en finition : le calcul du parcours échouait. Le contour est maintenant gravé seul, et le parcours dit « surface plus petite que le pas des lignes, rien de rempli (contour seul) ». Sans finition, le même avertissement explique le parcours vide.
+### v0.967.0 — Booléens et Détourer sur beaucoup de formes : en une seconde
+
+- **Exclusion** sur 1 500 formes : plusieurs minutes (VectorDrive semblait figé) → une demi-seconde.
+- **Différence** d’une plaque moins ses trous ou ses lettres : 1 000 trous, 76 s → une demi-seconde. Le résultat est le même.
+- **Détourer, Recadrer, Fusionner** (pathfinder) sur 1 500 formes : 19 s → 1 s.
+- **Intersection** s’arrête dès que le résultat est vide.
+- **Propriétés de masse** de 1 500 formes : 13 s → une demi-seconde.
+- **Habillage du texte** autour de nombreuses formes et **outil booléen de l’assistant** : même traitement.
+- Une barre d’avancement (et Annuler) aussi quand les formes ne se touchent pas.
+### v0.968.0 — Reste de matière sur beaucoup de formes : 23 s → 5 s
+
+- **Reste de matière** (aperçu et pose sur le dessin) : la fenêtre mettait 23 s à s’ouvrir pour 1 500 formes choisies (fraise Ø2) ; maintenant moins de 5 s. Changer d’outil, de surépaisseur ou de « zone plus mince » est aussi rapide. Le résultat est le même.

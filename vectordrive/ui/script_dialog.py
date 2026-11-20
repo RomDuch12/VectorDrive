@@ -93,6 +93,8 @@ class ScriptDialog(QDialog):
 
     def __init__(self, win, te_folder: pathlib.Path | None = None):
         super().__init__(win)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.win = win
         self.te_folder = te_folder
         self.path: pathlib.Path | None = None

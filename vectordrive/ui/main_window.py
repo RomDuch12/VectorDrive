@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QDockWidget, QDoubleSpinBox, QFileDial
                                QMenu, QMessageBox, QVBoxLayout, QWidget, QDialog, QDialogButtonBox)
 
 from .. import __version__
+from .. import winpaths  # noqa: F401 — lecteur verrouillé, réseau perdu : « absent » plutôt qu'une erreur
 from ..core import geom
 from ..core.document import Document, Group, Layer, Plate, Shape, Text, new_id
 from ..core.geom import Affine
@@ -3307,6 +3308,8 @@ class MainWindow(QMainWindow):
                                        QPlainTextEdit)
         info = dict(self.canvas.doc.extra.get('info') or {})
         d = QDialog(self)
+        from .fit import release
+        release(d)                                     # fermée : détruite, pas gardée
         d.setWindowTitle(tr('Informations'))
         f = QFormLayout(d)
         edits = {}
@@ -4519,6 +4522,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(lines[-1] if lines else '', 8000)
         if exec_dialog and self.isVisible():
             box = QMessageBox(self)
+            from .fit import release
+            release(box)                                     # fermée : détruite
             box.setWindowTitle(tr('Mesurer la sélection'))
             box.setText('\n'.join(lines))
             box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -5670,6 +5675,8 @@ class MainWindow(QMainWindow):
         from ..io import params
         from .dialogs import _buttons
         dlg = QDialog(self)
+        from .fit import release
+        release(dlg)                                     # fermée : détruite, pas gardée
         dlg.setWindowTitle(title)
         form = QFormLayout(dlg)
         form.addRow(QLabel(intro))
@@ -5797,6 +5804,8 @@ class MainWindow(QMainWindow):
         last = getattr(self, '_last_xy', (0.0, 0.0))
         if values is None:
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Point par coordonnées'))
             form = QFormLayout(dlg)
             spins = {}
@@ -8596,6 +8605,9 @@ class MainWindow(QMainWindow):
         hist = self._hist_copy(item)
         if hist is None:
             return None
+        if sketch.to_path().bbox() is None:                  # (vide : le volume reste tel qu'il était)
+            self._nothing_placed()
+            return None
         entry = HI.at(hist, ref)
         old = native._item_in(copy.deepcopy(entry['item']))
         entry['item'] = native._item_out(self._sketch_shape(old, sketch))
@@ -9699,6 +9711,8 @@ class MainWindow(QMainWindow):
         if not issues:
             return True
         box = QMessageBox(self)
+        from .fit import release
+        release(box)                                     # fermée : détruite
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle(tr('Programme machine'))
         box.setText(tr('Le dessin présente des problèmes :') + '\n\n'
@@ -12699,6 +12713,8 @@ class MainWindow(QMainWindow):
         c = self.canvas
         if values is None:
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Origine du dessin'))
             form = QFormLayout(dlg)
             form.addRow(QLabel(tr('Position de l\'origine depuis le zéro du dessin (les fichiers écrits '
@@ -13563,12 +13579,19 @@ class MainWindow(QMainWindow):
         from .progress import Cancelled, run
 
         def work():
+            paths = [s.path for s in shapes]
             if op == 'union':
-                return pathops.union_all([s.path for s in shapes])
-            out = shapes[0].path
-            for i, s in enumerate(shapes[1:]):
-                P.step(i, len(shapes) - 1, 'Objet {0} sur {1}')
-                out = pathops.boolean(out, s.path, op)
+                return pathops.union_all(paths)
+            if op == 'xor':                              # en arbre, pas pliée (1 500 objets : des minutes)
+                return pathops.xor_all(paths)
+            if op == 'difference':                       # a − b − c … = a − (b ∪ c …) : une seule soustraction
+                return pathops.boolean(paths[0], pathops.union_all(paths[1:]), 'difference')
+            out = paths[0]
+            for i, p in enumerate(paths[1:]):
+                P.step(i, len(paths) - 1, 'Objet {0} sur {1}')
+                out = pathops.boolean(out, p, op)
+                if not out.contours:                     # intersection déjà vide : elle le reste
+                    break
             return out
         try:
             res = run(self, tr('Booléens'), work)
@@ -14254,6 +14277,8 @@ class MainWindow(QMainWindow):
             pt, seg = N.handle_point(c, hit[2], hit[3]), c.segments[hit[2]]
         ox, oy = self.canvas.origin
         dlg = QDialog(self)
+        from .fit import release
+        release(dlg)                                     # fermée : détruite, pas gardée
         dlg.setWindowTitle(tr('Attributs du point'))
         form = QFormLayout(dlg)
         spins = []
@@ -14591,8 +14616,11 @@ class MainWindow(QMainWindow):
         return self.sketch_done(dlg.sketch, sel)
 
     def sketch_done(self, sk, replaced=()):
-        """L'objet d'une esquisse validée, à la place de ce dont elle est partie."""
+        """L'objet d'une esquisse validée, à la place de ce dont elle est partie ; None si elle est vide."""
         path = sk.to_path()
+        if path.bbox() is None:                              # (vide, ou seulement de construction : rien ne change)
+            self._nothing_placed()
+            return None
         shape = Shape(path=path, name=tr('Esquisse'), tool=replaced[0].tool if replaced else self.canvas.current_tool_index)
         shape.extra['sketch'] = sk.to_dict()
         shape.extra['sketch_box'] = list(path.bbox())
@@ -14625,6 +14653,9 @@ class MainWindow(QMainWindow):
             dlg.refresh(keep_message=True)
         self.sketch_box = dlg
         if not dlg.exec():
+            return None
+        if dlg.sketch.to_path().bbox() is None:               # (vidée : l'objet reste tel qu'il était)
+            self._nothing_placed()
             return None
         new = self._sketch_shape(item, dlg.sketch)
         self._replace_item(item, new, tr('Esquisse contrainte'))
@@ -14952,6 +14983,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, tr('Changer la police'), tr('Aucun texte.'))
             return
         dlg = QDialog(self)
+        from .fit import release
+        release(dlg)                                     # fermée : détruite, pas gardée
         dlg.setWindowTitle(tr('Changer la police'))
         form = QFormLayout(dlg)
         form.addRow(QLabel(tr('{0} texte(s)').format(len(texts))))
@@ -15138,6 +15171,8 @@ class MainWindow(QMainWindow):
         s = self.settings
         cx, cy = self._view_center()
         dlg = QDialog(self)
+        from .fit import release
+        release(dlg)                                     # fermée : détruite, pas gardée
         dlg.setWindowTitle(tr('Rectangle'))
         form = QFormLayout(dlg)
         w = _spin(float(s.value('texte/cadre_l', 60.0)), 0.01, 100000)
@@ -15270,14 +15305,14 @@ class MainWindow(QMainWindow):
         self._flow_report(got)
         return new
 
-    def _columns_dialog(self, n: int, gutter: float):
+    def _columns_dialog(self, n: int, gap: float):
         from dataclasses import dataclass
         from .dialogs import ParamsDialog
 
         @dataclass
-        class Spec:
+        class Spec:                                      # (un champ ne lit pas un paramètre du même nom)
             columns: int = n
-            gutter: float = gutter
+            gutter: float = gap
         dlg = ParamsDialog(self, tr('En colonnes'), Spec(), {'columns': tr('Nombre de colonnes'),
                                                              'gutter': tr('Écart entre colonnes (mm)')})
         if not dlg.exec():
@@ -15541,9 +15576,16 @@ class MainWindow(QMainWindow):
         self._on_doc_changed()
 
     # --- braille, photo -------------------------------------------------------------
+    def _nothing_placed(self) -> None:
+        """Le résultat validé est vide (Braille sans texte, trame toute blanche, esquisse vide) : on le dit."""
+        QMessageBox.information(self, tr('Rien à poser'), tr('Le résultat est vide : rien n’a été posé.'))
+
     def _replace_keep_corner(self, old: Group, new: Group) -> None:
         """Remplace un objet par sa version recalculée, coin haut gauche gardé."""
         ob, nb = old.bbox(), new.bbox()
+        if nb is None or ob is None:                         # (vide : l'objet reste tel qu'il était)
+            self._nothing_placed()
+            return
         new = new.transformed(Affine.translation(ob[0] - nb[0], ob[3] - nb[3]))
         self.push_undo()
         out = self._replace_in_layers([old], {id(old): [new]})
@@ -15551,15 +15593,21 @@ class MainWindow(QMainWindow):
         self.canvas.select(out)
         self._on_doc_changed()
 
-    def _place_centered(self, g: Group) -> None:
+    def _place_centered(self, g: Group) -> bool:
+        """Posé au centre de la vue ; faux (et dit) s'il n'y a rien à poser."""
         bb = g.bbox()
+        if bb is None:
+            self._nothing_placed()
+            return False
         cx, cy = self._view_center()
         self._add_items([g.transformed(Affine.translation(cx - (bb[0] + bb[2]) / 2, cy - (bb[1] + bb[3]) / 2))])
+        return True
 
-    def _place_curve(self, path) -> Shape:
+    def _place_curve(self, path) -> Shape | None:
         """Le tracé sur l'outil courant, au centre de la vue."""
         s = Shape(path=path, tool=self.canvas.current_tool_index)
-        self._place_centered(s)
+        if not self._place_centered(s):
+            return None
         return self.canvas.selection[0]
 
     def equation_curve(self, params: dict | None = None, exec_dialog: bool = True):
@@ -21141,6 +21189,8 @@ class MainWindow(QMainWindow):
                     import copy as _copy
                     new = _copy.copy(it)
                     new.data, new.fmt = data, 'png'
+                    from ..core.document import drop_source_object
+                    drop_source_object(new)               # retouchée : plus le relief du VND d'origine (round 1100)
                     L.items[i] = new
                     self.canvas.selection = [new if s is it else s for s in self.canvas.selection]
                     self.canvas.invalidate()
@@ -21876,6 +21926,8 @@ class MainWindow(QMainWindow):
             else:
                 lines = [tr('Aucune forme fermée : périmètre {0:.3f} mm').format(m['perimeter'])]
             box = QMessageBox(self)
+            from .fit import release
+            release(box)                                     # fermée : détruite
             box.setWindowTitle(tr('Propriétés de masse'))
             box.setText('\n'.join(lines))
             box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -22120,6 +22172,8 @@ class MainWindow(QMainWindow):
         presets = self.plate_presets()
         if exec_dialog:
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Plaque codée depuis un préréglage'))
             form = QFormLayout(dlg)
             box = QComboBox()
@@ -22229,6 +22283,8 @@ class MainWindow(QMainWindow):
         across = self.settings.value('nettoyage/entre_calques', False) in (True, 'true')
         if self._ctrl_held() or not self.settings.contains('nettoyage/entre_calques'):
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Supprimer les superposés'))
             form = QFormLayout(dlg)
             sel = self.canvas.selection
@@ -22260,6 +22316,8 @@ class MainWindow(QMainWindow):
         apart = self.settings.value('raccord/separement', False) in (True, 'true')
         if self._ctrl_held() or not self.settings.contains('raccord/liaison'):
             dlg = QDialog(self)
+            from .fit import release
+            release(dlg)                                     # fermée : détruite, pas gardée
             dlg.setWindowTitle(tr('Raccorder'))
             form = QFormLayout(dlg)
             form.addRow(QLabel(tr('Sur la sélection.') if self.canvas.selection

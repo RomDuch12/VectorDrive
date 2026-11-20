@@ -540,9 +540,14 @@ class ToolSet:
         if op == 'union':
             res = pathops.union_all([s.path for s in shapes])
         else:
-            res = shapes[0].path
-            for s in shapes[1:]:
-                res = pathops.boolean(res, s.path, op)
+            res = shapes[0].path                         # différence : moins la réunion des autres, en une fois
+            if op == 'difference':
+                res = pathops.boolean(res, pathops.union_all([s.path for s in shapes[1:]]), 'difference')
+            else:
+                for s in shapes[1:]:
+                    res = pathops.boolean(res, s.path, op)
+                    if not res.contours:                 # intersection vide : elle le reste
+                        break
         layer = pairs[0][0]
         new = Shape(path=res, tool=shapes[0].tool) if res else None
         gone = {id(it) for _l, it in pairs}              # la place de la première forme, les autres retirées

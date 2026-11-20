@@ -29,6 +29,8 @@ class StockDialog(QDialog):
 
     def __init__(self, parent, stock: stock3d.Stock3D, model=None, plate=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Brut de la pièce 3D'))
         self.model, self.plate = model, plate
         self.bounds = tuple(model.bounds()) if model is not None and len(getattr(model, 'triangles', ())) else None

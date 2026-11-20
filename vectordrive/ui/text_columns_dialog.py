@@ -26,6 +26,8 @@ class TextColumnsDialog(QDialog):
 
     def __init__(self, parent, spec: TC.TextColumns, tools: list, grid_class):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Texte en colonnes'))
         spec = TC.clean(spec)
         col = QVBoxLayout(self)

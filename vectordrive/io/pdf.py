@@ -170,10 +170,97 @@ def _num(v) -> float:
 import re as _re
 
 #: jetons d'un flux de contenu sans chaînes, tableaux ni dictionnaires : nombres, noms, opérateurs, commentaires
-_TOKEN = _re.compile(rb'%[^\r\n]*|/[^\s/\[\]<>(){}%]*|[^\s/\[\]<>(){}%]+')
-#: un flux qui en contient est laissé à pypdf (chaînes, tableaux, dictionnaires, images en ligne)
+_TOKEN = _re.compile(rb'%[^\r\n]*|/[^\s\x00/\[\]<>(){}%]*|[^\s\x00/\[\]<>(){}%]+')
+#: un flux qui en contient passe par `_scan_operations` (chaînes, tableaux) ou pypdf (dictionnaires, images en ligne)
 _COMPLEX = _re.compile(rb'[\[\]<>()]|(?<![A-Za-z])BI(?![A-Za-z])')
 _NUMBER = _re.compile(rb'[+-]?(?:\d+\.?\d*|\.\d+)$')
+#: image en ligne (`BI … ID … EI`) : ses données binaires ne se découpent pas en jetons
+_INLINE_IMAGE = _re.compile(rb'(?<![A-Za-z])BI(?![A-Za-z])')
+#: un jeton d'un flux avec chaînes et tableaux : commentaire, début de chaîne, chaîne hexadécimale, crochets, nom, autre
+_SCAN = _re.compile(rb'[\s\x00]*(?:(%[^\r\n]*)|(\()|(<[0-9A-Fa-f\s\x00]*>)|(\[)|(\])|(/[^\s\x00/\[\]<>(){}%]*)|'
+                   rb'([^\s\x00/\[\]<>(){}%]+))')
+#: blancs d'un flux PDF (l'octet nul en est un)
+_BLANKS = b' \t\r\n\f\x00'
+#: caractère écrit « #xx » dans un nom
+_NAME_ESCAPE = _re.compile(rb'#([0-9A-Fa-f]{2})')
+
+
+def _name(tok: bytes) -> str:
+    """Nom PDF (« /MC#30 » → « /MC0 », comme pypdf)."""
+    if b'#' not in tok:
+        return tok.decode('latin-1')
+    raw = _NAME_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), tok)
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('latin-1')
+#: dans une chaîne littérale : échappement, parenthèses (équilibrées, imbriquées)
+_STRING_STOP = _re.compile(rb'[\\()]')
+
+
+def _string_end(data: bytes, i: int) -> int:
+    """Fin (après la « ) » fermante) de la chaîne littérale qui commence à `data[i]` (« ( ») ; -1 si elle ne se ferme
+    pas."""
+    depth, i = 1, i + 1
+    while True:
+        m = _STRING_STOP.search(data, i)
+        if m is None:
+            return -1
+        c, i = data[m.start()], m.end()
+        if c == 0x5C:                                    # « \ » : le caractère suivant est pris tel quel
+            i += 1
+        elif c == 0x28:
+            depth += 1
+        else:
+            depth -= 1
+            if depth == 0:
+                return i
+
+
+def _scan_operations(data: bytes) -> list | None:
+    """`fast_operations` d'un flux avec chaînes et tableaux : une chaîne est rendue en octets bruts (le texte est lu
+    par pypdf, `_texts`), un tableau en liste ; None pour ce qui ne se découpe pas ici (laissé à pypdf)."""
+    ops: list = []
+    operands: list = []
+    outer: list = []                                     # opérandes en attente autour des tableaux ouverts
+    match, i = _SCAN.match, 0
+    while True:
+        m = match(data, i)
+        if m is None:
+            if data[i:].strip(_BLANKS):
+                return None                              # « ) », « > », « { »… seuls : pypdf
+            break
+        i, g = m.end(), m.lastindex
+        if g == 1:
+            continue
+        if g == 2:
+            j = _string_end(data, i - 1)
+            if j < 0:
+                return None
+            operands.append(data[i:j - 1])
+            i = j
+        elif g == 3:
+            operands.append(m.group(3)[1:-1])
+        elif g == 4:
+            outer.append(operands)
+            operands = []
+        elif g == 5:
+            if not outer:
+                return None
+            arr, operands = operands, outer.pop()
+            operands.append(arr)
+        elif g == 6:
+            operands.append(_name(m.group(6)))
+        else:
+            tok = m.group(7)
+            if _NUMBER.match(tok):
+                operands.append(float(tok))
+            elif tok in (b'true', b'false', b'null') or outer:
+                return None                              # opérande inattendu, opérateur dans un tableau
+            else:
+                ops.append((operands, tok.decode('latin-1')))
+                operands = []
+    return None if outer else ops
 
 
 def stream_bytes(obj) -> bytes | None:
@@ -194,10 +281,15 @@ def stream_bytes(obj) -> bytes | None:
 def fast_operations(data: bytes) -> list | None:
     """[(opérandes, opérateur)] d'un flux de tracés simple, comme
     pypdf.ContentStream.operations mais 20 fois plus vite (un BAT de 10 000
-    gravures : 2,5 millions d'objets pypdf) ; None : flux à laisser à pypdf
-    (chaînes de texte, tableaux, dictionnaires, images en ligne)."""
-    if data is None or _COMPLEX.search(data):
+    gravures : 2,5 millions d'objets pypdf) ; chaînes et tableaux compris
+    (`_scan_operations`) ; None : flux à laisser à pypdf (dictionnaires,
+    images en ligne)."""
+    if data is None:
         return None
+    if _COMPLEX.search(data):
+        if b'<<' in data or _INLINE_IMAGE.search(data):
+            return None                                  # dictionnaires, images en ligne : pypdf
+        return _scan_operations(data)                    # chaînes et tableaux (pages avec du texte)
     ops: list = []
     operands: list = []
     for tok in _TOKEN.findall(data):
@@ -205,7 +297,7 @@ def fast_operations(data: bytes) -> list | None:
         if c == b'%':
             continue
         if c == b'/':
-            operands.append(tok.decode('latin-1'))
+            operands.append(_name(tok))
         elif _NUMBER.match(tok):
             operands.append(float(tok))
         elif tok in (b'true', b'false', b'null'):
@@ -358,10 +450,9 @@ def _nonzero(p: Path, budget: list) -> Path:
         return p
     budget[0] -= 1
     try:
-        nz = pathops.normalize(p, evenodd=False)
-        a_nz = pathops.area(nz)
-        if a_nz > 0 and abs(a_nz - pathops.area(pathops.normalize(p, evenodd=True))) > a_nz * 1e-5:
-            return nz
+        a_eo, a_nz = pathops.fill_areas(p)             # (`area` normalise : deux passes au lieu de quatre)
+        if a_nz > 0 and abs(a_nz - a_eo) > a_nz * 1e-5:
+            return pathops.normalize(p, evenodd=False)
     except Exception:                                    # noqa: BLE001 — moteur en défaut : tracé d'origine
         pass
     return p
@@ -519,6 +610,7 @@ def _knock_out(items: list, report: list) -> list:
     peintes avant lui ; rend les aplats blancs sans contour (ni encre ni contour à graver)."""
     from ..core import pathops
     masks, painted, cut = [], [], 0
+    areas: dict = {}                                     # id(forme) -> (tracé, aire) : pas recalculée à chaque aplat
     for it in list(items):
         kind = it.extra.get('pdf_blanc')
         if kind and it.path.contours and all(c.closed for c in it.path.contours):
@@ -529,15 +621,19 @@ def _knock_out(items: list, report: list) -> list:
                     continue
                 try:
                     left = pathops.boolean(prev.path, it.path, 'difference')
-                    before = pathops.area(prev.path)
+                    known = areas.get(id(prev))
+                    if known is None or known[0] is not prev.path:
+                        known = areas[id(prev)] = (prev.path, pathops.area(prev.path))
+                    before = known[1]
                 except Exception:                        # noqa: BLE001 — moteur en défaut : forme gardée
                     continue
                 if not left or not left.contours:
                     items.remove(prev)
                     painted.remove(prev)
                     cut += 1
-                elif pathops.area(left) < before * (1 - 1e-6):
+                elif (a_left := pathops.area(left)) < before * (1 - 1e-6):
                     prev.path = left
+                    areas[id(prev)] = (left, a_left)
                     cut += 1
         if kind == 'aplat':
             items.remove(it)

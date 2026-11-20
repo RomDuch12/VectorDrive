@@ -74,6 +74,8 @@ class _Preview(QWidget):
 class MulticopyDialog(QDialog):
     def __init__(self, parent, bb, box, spec: MC.MultiSpec, tools: list, rows_count: int = 0):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Multicopie'))
         self.bb, self.box, self.spec0, self.rows_count = bb, box, spec, rows_count
         outer = QHBoxLayout(self)
@@ -97,6 +99,9 @@ class MulticopyDialog(QDialog):
         form.addRow(tr('Nombre de plans (0 : une plaque remplie)'), self.planes)
         if rows_count:
             form.addRow(tr('Limiter aux données de la variable ({0} lignes)').format(rows_count), self.limit)
+        else:                                            # pas posée : cachée, détruite avec la fenêtre
+            self.limit.setParent(self)
+            self.limit.hide()
         form.addRow(tr('Ignorer le premier objet sélectionné (il donne la taille, sans être copié)'), self.ignore)
         form.addRow(tr('Conserver la sélection originale (exemplaires sur de nouveaux plans)'), self.keep)
         col.addWidget(size)

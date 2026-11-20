@@ -518,6 +518,8 @@ class AssistantPanel(QWidget):
         from PySide6.QtWidgets import QDialog, QDialogButtonBox
         from ..agent import tools as AT
         d = QDialog(self)
+        from .fit import release
+        release(d)                                     # fermée : détruite, pas gardée
         d.setWindowTitle(tr('Mémoire de l’assistant'))
         lay = QVBoxLayout(d)
         lbl = QLabel(tr('Ce que l’assistant retient d’une discussion à l’autre (il l’écrit quand vous le lui '

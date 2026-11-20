@@ -38,9 +38,10 @@ class TestFastContent(unittest.TestCase):
         ops = pdf.fast_operations(b'q 1 0 0 1 10 -2.5 cm % note\n0 0 m .5 1 l h /GS0 gs S Q')
         self.assertEqual(ops, [([], 'q'), ([1.0, 0.0, 0.0, 1.0, 10.0, -2.5], 'cm'), ([0.0, 0.0], 'm'),
                                ([0.5, 1.0], 'l'), ([], 'h'), (['/GS0'], 'gs'), ([], 'S'), ([], 'Q')])
-        for data in (b'BT (Bonjour) Tj ET', b'[3 2] 0 d 0 0 m 1 1 l S', b'<00150016> Tj',
-                     b'BI /W 1 /H 1 ID x EI', b'true 0 0 m'):
+        for data in (b'BI /W 1 /H 1 ID x EI', b'true 0 0 m'):
             self.assertIsNone(pdf.fast_operations(data), data)
+        for data in (b'BT (Bonjour) Tj ET', b'[3 2] 0 d 0 0 m 1 1 l S', b'<00150016> Tj'):   # round 1105 : ici
+            self.assertIsNotNone(pdf.fast_operations(data), data)
         self.assertIsNone(pdf.fast_operations(None))
         self.assertIsNotNone(pdf.fast_operations(b'0 0 m 10 0 l S BIG 1 0 0 RG'))   # BI dans un mot : pas une image
 

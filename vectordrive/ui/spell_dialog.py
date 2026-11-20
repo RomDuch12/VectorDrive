@@ -76,6 +76,8 @@ class SpellSession:
 class SpellDialog(QDialog):
     def __init__(self, parent, session: SpellSession, show_text=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.session = session
         self.show_text = show_text                       # montre le texte en cours dans le plan de travail
         self.setWindowTitle(tr('Orthographe'))

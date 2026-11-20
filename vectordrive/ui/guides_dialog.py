@@ -17,6 +17,8 @@ def _text(v: float) -> str:
 class GuidesDialog(QDialog):
     def __init__(self, parent=None, guides=(), obliques=(), box=(0.0, 0.0, 100.0, 100.0)):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Repères'))
         self.box = box
         self.resize(520, 480)

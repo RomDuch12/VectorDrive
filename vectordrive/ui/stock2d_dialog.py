@@ -16,6 +16,8 @@ class Stock2DDialog(QDialog):
 
     def __init__(self, parent, stock: stock2d.Stock2D, doc, picked=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Brut du dessin 2D'))
         self.doc, self.picked = doc, picked
         self.item = stock.item

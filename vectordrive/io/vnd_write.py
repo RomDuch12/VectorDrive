@@ -335,6 +335,40 @@ def w_vnimage(w: MfcWriter, obj: MfcObject) -> None:
             w.write_object(f.get('courbe'))
 
 
+def _w_zmap(w: MfcWriter, z: dict) -> None:
+    w.f64s(z['origin'])
+    w.f64(z['f'])
+    w.f64s(z['step'])
+    w.i32(z['w'])
+    w.i32(z['h'])
+    w.raw(z['data'])
+
+
+def w_vbitmap(w: MfcWriter, obj: MfcObject) -> None:
+    """CVbitmap (relief, carte de hauteurs) : symétrique de `vnd.read_vbitmap`."""
+    w_obdao_fin(w, obj)
+    f = obj.fields
+    v = obj.cls.schema
+    _w_zmap(w, f['map'])
+    if v <= 1:
+        return
+    h = f['histo']
+    w.u32(h['version'])
+    w.u32(h['n'])
+    if h['version'] > 2:
+        w.u32(h['current'])
+    if v >= 3:
+        w.u8(f['b3c8'])
+    if v >= 4:
+        w.u8(f['b3c9'])
+    if v >= 5:
+        w.u8(f['has_map2'])
+        if f['has_map2']:
+            _w_zmap(w, f['map2'])
+        if v == 6:
+            w.raw(f['guid6'])
+
+
 def _w_txtpara(w: MfcWriter, para: dict) -> None:
     w.raw(para['para'])
     w.u32(len(para['lines']))
@@ -556,6 +590,7 @@ WRITERS = {
     'CContour': w_contour,
     'CPropertyExtend': w_property_extend,
     'CVnImage': w_vnimage,
+    'CVbitmap': w_vbitmap,
     'CObDaoCtn': w_obdao_ctn,
     'CObList': w_oblist,
 }
@@ -978,6 +1013,14 @@ def translated_object(obj: MfcObject, dx: float, dy: float) -> MfcObject | None:
         return c
     if name == 'CContour':
         c.fields['points'] = [(x + dx * w, y + dy * w, z, w, fl) for x, y, z, w, fl in c.fields.get('points', [])]
+        return c
+    if name == 'CVbitmap':
+        # relief : la carte (et la seconde, s'il y en a une) suit la boîte ; les hauteurs ne changent pas
+        for k in ('map', 'map2'):
+            z = c.fields.get(k)
+            if z is not None:
+                o = z['origin']
+                c.fields[k] = dict(z, origin=(o[0] + dx, o[1] + dy) + tuple(o[2:]))
         return c
     if name in ('CCourbe', 'CZone'):
         mapping = {}
@@ -1432,6 +1475,9 @@ def _without_foreign_objects(doc: Document) -> tuple[Document, int]:
     def drop(items):
         nonlocal n
         for it in items:
+            obj = it.extra.get('vnd_obj')
+            if obj is not None and obj.cls.name == 'CVbitmap' and not v13_issues(obj):
+                continue                               # relief : rien qui renvoie aux tables du fichier d'origine
             if 'vnd_obj' in it.extra and not isinstance(it, Shape):
                 n += 1
             drop_source_object(it)
@@ -1512,6 +1558,19 @@ def _same_points(old_pts, old_type: int, new_pts) -> bool:
 _GEOMETRY = ('pos', 'rayon', 'profondeur', 'geom', 'origin', 'cube', 'boxes', 'v328', 'pts')
 
 
+def _other_relief(old: MfcObject, new: MfcObject) -> bool:
+    """Deux reliefs (CVbitmap) différents, hors de la place de leurs cartes."""
+    if old.cls.schema != new.cls.schema or old.fields.get('guid') != new.fields.get('guid'):
+        return True
+    for k in set(old.fields) | set(new.fields):
+        a, b = old.fields.get(k), new.fields.get(k)
+        if k in ('map', 'map2') and isinstance(a, dict) and isinstance(b, dict):
+            a, b = dict(a, origin=None), dict(b, origin=None)
+        if k != 'bbox' and a != b:
+            return True
+    return False
+
+
 def _patch(old: MfcObject | None, new: MfcObject | None) -> bool:
     """Reporte la géométrie de `new` dans `old` (même structure garantie
     par la signature) : GUID, propriétés et attributs d'origine conservés.
@@ -1540,6 +1599,20 @@ def _patch(old: MfcObject | None, new: MfcObject | None) -> bool:
             if o[0] == 'f64' and struct.pack('<d', o[1]) != struct.pack('<d', n[1]):
                 same = False
                 o[1] = n[1]
+    if old.cls.name == 'CVbitmap' and new.cls.name == 'CVbitmap' and _other_relief(old, new):
+        # un autre relief à cette place (reliefs intervertis, remplacé…) : le sien en entier
+        same = False
+        old.cls = new.cls
+        old.fields = dict(new.fields)
+    if old.cls.name == 'CVnImage' and 'bitmap' in new.fields and new.fields['bitmap'] != old.fields.get('bitmap'):
+        same = False                                   # une autre image à cette place : ses pixels
+        old.fields['bitmap'] = new.fields['bitmap']
+    for k in ('map', 'map2'):
+        # relief (CVbitmap) déplacé : l'origine de ses cartes ; les hauteurs ne changent pas
+        zn, zo = new.fields.get(k), old.fields.get(k)
+        if isinstance(zn, dict) and isinstance(zo, dict) and not _close(zo.get('origin'), zn.get('origin')):
+            same = False
+            old.fields[k] = dict(zo, origin=zn['origin'])
     if (new.fields.get('vernier') or {}).get('raw') not in (None, (old.fields.get('vernier') or {}).get('raw')):
         same = False                                   # cadran déplacé : centre de ses réglages
         old.fields['vernier'] = new.fields['vernier']
@@ -1607,6 +1680,49 @@ def _tree(doc: Document, page_bbox, report: list | None = None) -> MfcObject:
         root.children.extend(_calques(list(doc.layers) or [Layer(name='Plan 1')], report,
                                       first_shown_of(doc)))  # calques vides compris
     return root
+
+
+def _relief_schema(root: MfcObject | None) -> int | None:
+    """Schéma du premier relief (CVbitmap) de l'arbre, ou None."""
+    seen, stack = set(), [root]
+    while stack:
+        o = stack.pop()
+        if not isinstance(o, MfcObject) or id(o) in seen:
+            continue
+        seen.add(id(o))
+        if o.cls.name == 'CVbitmap':
+            return o.cls.schema
+        stack.extend(reversed(o.children))
+        for v in o.fields.values():
+            if isinstance(v, MfcObject):
+                stack.append(v)
+            elif isinstance(v, (list, tuple)) and v and isinstance(v[0], MfcObject):
+                stack.extend(x for x in v if isinstance(x, MfcObject))
+    return None
+
+
+def _one_relief_schema(doc: Document, root: MfcObject | None) -> tuple[Document, int]:
+    """Un VND déclare la classe d'un objet une fois, avec son schéma : des reliefs de schémas différents (importés
+    d'un autre fichier) ne peuvent pas y être écrits tous. Ceux du schéma du relief de la base (sinon du premier) sont
+    gardés ; les autres oublient leur objet d'origine (écrits comme image). Rend (document, nombre d'oubliés)."""
+    schemas = [it.extra['vnd_obj'].cls.schema for it in _all_items(doc)
+               if it.extra.get('vnd_obj') is not None and it.extra['vnd_obj'].cls.name == 'CVbitmap']
+    if len(set(schemas)) < 2:
+        return doc, 0
+    keep = _relief_schema(root)
+    if keep not in schemas:
+        keep = schemas[0]
+    import copy
+    from ..core.document import drop_source_object, struct_copy_layers
+    d = copy.copy(doc)
+    d.layers = struct_copy_layers(doc.layers)
+    n = 0
+    for it in list(_all_items(d)):
+        obj = it.extra.get('vnd_obj')
+        if obj is not None and obj.cls.name == 'CVbitmap' and obj.cls.schema != keep:
+            drop_source_object(it)
+            n += 1
+    return d, n
 
 
 def _all_items(doc: Document):
@@ -1883,6 +1999,10 @@ def _write_document(doc: Document, template: bytes | None = None, *,
             doc, _n = _without_foreign_objects(doc)
             base = template
             root_b, ar_b = vnd.parse(base)
+    doc, mixed = _one_relief_schema(doc, root_b)
+    if mixed:
+        report.append(f"{mixed} relief(s) d'une autre version de TypeEdit que les autres reliefs du dessin : "
+                      'écrit(s) comme image')
     if _LIVE is not None:
         _LIVE.__init__(vnd.font_table(base)[1])        # indices des polices : ceux de la base d'abord
     new_root = _tree(doc, root_b.fields['bbox'], report)

@@ -84,13 +84,17 @@ def carve(region: Path, obstacles: list, gap: float = 0.0) -> Path:
     (l'habillage de VectorCraft et d'Inkscape). Elles peuvent déborder de la forme, ou la couper en plusieurs zones.
     ValueError s'il ne reste rien."""
     from shapely.geometry import MultiPolygon
+    from shapely.ops import unary_union
     zone = region_of(region)
+    cuts = []
     for path in obstacles:
         try:
             cut = region_of(path)
         except ValueError:
             continue
-        zone = zone.difference(cut.buffer(gap) if gap > 0 else cut)
+        cuts.append(cut.buffer(gap) if gap > 0 else cut)
+    if cuts:                                         # une seule soustraction (la zone pliée grossissait)
+        zone = zone.difference(unary_union(cuts))
     if zone.is_empty or zone.area <= 0:
         raise ValueError('forme')
     polys = list(zone.geoms) if isinstance(zone, MultiPolygon) else [zone]

@@ -29,6 +29,8 @@ class WorkspaceDialog(QDialog):
     def __init__(self, parent, ws: WS.Workspace, box=None, toolpaths=(), setup=None, *, setup_key=('', -1),
                  doc=None):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.doc = doc
         self.setup_key = (WS.norm_face(doc, setup_key[0] or '', None, int(setup_key[1])), int(setup_key[1]))
         title = tr('Espace de travail')

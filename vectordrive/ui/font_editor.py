@@ -79,6 +79,8 @@ class CloneBox(QDialog):
 
     def __init__(self, parent):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Reprendre une police'))
         form = QFormLayout(self)
         self.font_box = FontBox()

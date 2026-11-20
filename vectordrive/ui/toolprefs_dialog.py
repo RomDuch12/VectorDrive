@@ -14,6 +14,8 @@ from ..i18n import tr
 class ToolPrefsDialog(QDialog):
     def __init__(self, parent, settings, library=(), kind: str = ''):
         super().__init__(parent)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.setWindowTitle(tr('Outils proposés par opération'))
         self.setSizeGripEnabled(True)
         self.resize(1000, 640)

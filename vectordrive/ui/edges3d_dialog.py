@@ -23,6 +23,8 @@ def _spin(value: float) -> QDoubleSpinBox:
 class EdgesDialog(QDialog):
     def __init__(self, win, solid, last: dict | None = None):
         super().__init__(win)
+        from .fit import release
+        release(self)                                    # fermée : détruite, pas gardée par son parent
         self.solid = solid
         self.chains = EB.sharp_chains(solid)
         last = last or {}
