@@ -36,7 +36,7 @@ TAB_MODES = ('court', 'entier')
 #: icône d'onglet des panneaux du cœur, par nom de panneau
 TAB_ICONS = {'dims': 'tab_dims', 'layers': 'tab_layers', 'symbols': 'tab_library', 'fao': 'tab_paths',
              'fao_liste': 'tab_ops', 'programme': 'tab_program', 'polices': 'tab_fonts',
-             'assistant': 'tab_assistant', 'couleur': 'themes'}
+             'assistant': 'tab_assistant', 'couleur': 'themes', 'programme_texte': 'tab_program'}
 #: mots de liaison jamais laissés au bout d'un libellé court tiré d'un titre
 LINK_WORDS = frozenset(('et', 'de', 'du', 'des', 'la', 'le', 'les', 'à', 'au', 'aux', 'en', 'pour', 'sur', 'ou',
                         '—', '-', '&', 'and', 'of', 'the', 'or', 'for'))
@@ -53,7 +53,7 @@ def short_title(dock) -> str:
     (propriété `vd_court`) ; sinon le début de son titre (ses premiers mots, 14 caractères au plus)."""
     known = {'dims': 'F2', 'layers': tr('Calques'), 'symbols': tr('Biblio'), 'fao': tr('Parcours'),
              'fao_liste': tr('Opérations'), 'programme': tr('Programme'), 'polices': tr('Police'),
-             'assistant': tr('Assistant')}
+             'assistant': tr('Assistant'), 'programme_texte': tr('Texte')}
     name = dock.objectName()
     if name in known:
         return known[name]
@@ -259,7 +259,7 @@ class Columns(QObject):
 
     def _located(self, dock) -> None:
         """Le panneau a changé de place (glissé à la souris aussi) : sa colonne est retenue."""
-        if not self._busy:
+        if not self._busy and dock is not getattr(self.win, 'dock_program_text', None):
             side = self.side(dock)
             if side:
                 st = self._st()
@@ -308,6 +308,13 @@ class Columns(QObject):
         """Le panneau ancré dans la colonne `side`, en onglet avec ceux qui y sont déjà (le groupe le plus fourni,
         montré de préférence), et mis devant. `show` faux (au lancement) : rangé sans être montré ni mis devant."""
         if side not in AREAS:
+            return
+        prog = getattr(self.win, 'program_panel', None)
+        if dock is getattr(self.win, 'dock_program_text', None) and prog is not None:
+            self._quiet(lambda: dock.setFloating(False))  # la colonne du texte : collée à celle du programme,
+            prog.put_text_dock(side)                     # jamais en onglet
+            if show:
+                self._quiet(lambda: (dock.setVisible(True), dock.raise_()))
             return
         ov = self.overlay(dock, create=False)
         if ov is not None and ov.active:
@@ -384,6 +391,7 @@ class Columns(QObject):
                 out.add(d.objectName())
         if str(st.value(F2_KEY, '') or '') == 'dessus' and not st.value(f'{KEY}/onglet/dims', ''):
             out.add('dims')
+        out.add('programme_texte')                      # le texte du programme : sa colonne à part
         return out
 
     def blocks(self, side: str) -> list:
@@ -756,7 +764,8 @@ class Columns(QObject):
         if dock in (getattr(w, 'dock_cam', None), getattr(w, 'dock_paths', None)):
             act = getattr(w, 'A', {}).get('cam_panel')
             return not (act is not None and act.isChecked())
-        return dock.objectName().startswith('plugin_') or dock is getattr(w, 'dock_program', None)
+        return dock.objectName().startswith('plugin_') or dock is getattr(w, 'dock_program', None) or \
+            dock is getattr(w, 'dock_program_text', None)
 
     def _memory(self, side: str) -> tuple:
         """(panneaux retenus cachés avec la colonne, ceux qui étaient devant)."""
@@ -781,7 +790,10 @@ class Columns(QObject):
                 self._quiet(lambda: [d.setVisible(False) for d in there])
         elif not self.shown(side):
             names, front = self._memory(side)
-            back = [d for d in col if d.objectName() in names and not self._gated(d)] \
+            text = getattr(self.win, 'dock_program_text', None)   # le texte du programme revient avec elle si
+            prog = getattr(self.win, 'dock_program', None)       # la fenêtre Programme est restée montrée
+            back = [d for d in col if d.objectName() in names and (not self._gated(d) or (
+                d is text and prog is not None and not prog.isHidden()))] \
                 or [d for d in col if not self._gated(d) and d.objectName() not in ON_DEMAND]
 
             def do():
@@ -858,6 +870,8 @@ class Columns(QObject):
             return w.toggle_paths_window(True)           # sa place et sa taille de fenêtre détachée
         if dock.isFloating():
             want = str(self._st().value(f'{KEY}/place/{dock.objectName()}', '') or '')
+            if dock is getattr(w, 'dock_program_text', None) and hasattr(w, 'program_panel'):
+                want = w.program_panel.text_side()       # ancrée : à côté de la fenêtre Programme
             self.move(dock, want if want in AREAS else 'droite')
             if dock is getattr(w, 'dock_paths', None):
                 w.settings.setValue('fao/liste_detachee', False)
@@ -1016,7 +1030,8 @@ class Columns(QObject):
         """Les panneaux de la FAO : la palette des parcours, les opérations, le programme machine, ceux des plugins."""
         w = self.win
         out = [d for d in (getattr(w, 'dock_cam', None), getattr(w, 'dock_paths', None),
-                           getattr(w, 'dock_program', None)) if d is not None]
+                           getattr(w, 'dock_program', None), getattr(w, 'dock_program_text', None))
+               if d is not None]
         return out + list((getattr(w, 'plugin_docks', None) or {}).values())
 
     def put_away(self) -> list:

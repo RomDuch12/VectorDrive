@@ -3114,6 +3114,20 @@ class MainWindow(QMainWindow):
         d6.setFloating(True)
         d6.setVisible(False)
         self.dock_program = d6
+        # le texte du programme dans une colonne à part, collée à celle de la fenêtre Programme, quand des parties de
+        # plugin y sont montrées (demande du 20/11 : la colonne Datron, le SimPL à côté) ; détachable comme les autres
+        d6t = QDockWidget(tr('Programme : texte'), self)
+        d6t.setObjectName('programme_texte')
+        d6t.setWidget(QWidget())
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, d6t)
+        d6t.setVisible(False)
+        self.dock_program_text = d6t
+        d6t.visibilityChanged.connect(lambda on: QTimer.singleShot(0, self, self._program_text_shown) if on else None)
+        d6.visibilityChanged.connect(lambda _on: QTimer.singleShot(0, self, self._program_window_shown))
+        d6t.dockLocationChanged.connect(lambda _a: setattr(self.program_panel, '_laid', None))   # déplacée : à refaire
+        d6t.topLevelChanged.connect(lambda _f: setattr(self.program_panel, '_laid', None))
+        d6.dockLocationChanged.connect(lambda _a: QTimer.singleShot(0, self, self.program_panel.follow_program_side))
+        d6.topLevelChanged.connect(lambda _f: QTimer.singleShot(0, self, self.program_panel.follow_program_side))
         # « Reconnaître une police » : un panneau de colonne (à droite d'office), son contenu fait la première fois
         d7 = QDockWidget(tr('Reconnaître une police'), self)
         d7.setObjectName('polices')
@@ -5579,7 +5593,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return False
         except Exception as ex:
-            QMessageBox.critical(self, tr('Modèle de dessin'), f'{pathlib.Path(path).name}\n\n{ex}')
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Modèle de dessin'), f'{pathlib.Path(path).name}\n\n{ex}')
             return False
         doc.source_path = ''
         from ..core import surface2d
@@ -6180,6 +6195,8 @@ class MainWindow(QMainWindow):
             w = max(420, min(760, st.width() // 2))
             d.setGeometry(tl.x() + st.width() - w, tl.y(), w, max(360, st.height()))
         d.raise_()
+        self.program_panel.place_viewer()                # des parties montrées : le texte dans sa colonne
+        self.program_panel.text_follow()
         if refresh:
             self.program_panel.refresh()
 
@@ -6213,6 +6230,10 @@ class MainWindow(QMainWindow):
                     d.visibilityChanged.connect(self._program_dock_shown)
                 part = p.viewer if p.sections_shown() else p    # des parties de plugin (NeoDrive, opérations) :
                 self._program_part = part                # elles restent dans la colonne, le texte seul au centre
+                td = getattr(self, 'dock_program_text', None)
+                if part is p.viewer and td is not None and td.widget() is p.viewer:
+                    td.setWidget(QWidget())              # sa colonne à part : vide et cachée pendant ce temps
+                    td.hide()
                 if part is p:
                     d.setWidget(QWidget())               # sa place dans sa fenêtre : vide pendant ce temps
                 page.layout().addWidget(part)
@@ -6272,6 +6293,25 @@ class MainWindow(QMainWindow):
         self._program_reshare()
         self.show_program(refresh=False)              # (pas tout le programme réécrit à chaque clic)
         return True
+
+    def _program_text_shown(self) -> None:
+        """La colonne du texte montrée d'ailleurs (disposition remise, onglet FAO) sans le texte : elle le prend si des
+        parties sont montrées, sinon elle se recache — jamais une colonne vide."""
+        d, p = getattr(self, 'dock_program_text', None), getattr(self, 'program_panel', None)
+        if d is None or p is None or d.isHidden() or d.widget() is p.viewer:
+            return
+        if p.place_viewer() != 'colonne':
+            d.hide()
+
+    def _program_window_shown(self) -> None:
+        """La fenêtre Programme montrée ou fermée : la colonne du texte suit — seulement quand elle a vraiment changé
+        (Qt dit aussi « montrée » pour un onglet remis devant, une fenêtre restaurée : la colonne cachée le reste)."""
+        p, dp = getattr(self, 'program_panel', None), getattr(self, 'dock_program', None)
+        if p is None or dp is None or dp.isHidden() == getattr(self, '_program_was_hidden', None):
+            return
+        self._program_was_hidden = dp.isHidden()
+        if not getattr(self, '_program_moving', False):
+            p.text_follow()
 
     def _program_dock_shown(self, on: bool) -> None:
         """La fenêtre du programme montrée d'ailleurs (fenêtre d'une colonne, onglet FAO, disposition remise) alors
@@ -7300,6 +7340,9 @@ class MainWindow(QMainWindow):
         io_smb.LIVE_TEXTS = bool(option(st, 'symboles/textes_vivants'))   # l'export en SMB aussi
         from . import symbols as ui_symbols
         ui_symbols.SHOW_HIDDEN = bool(option(st, 'navigateur/caches'))
+        prog = getattr(self, 'program_panel', None)      # F10 : le texte du programme dans sa colonne ou non
+        if prog is not None and getattr(self, 'dock_program_text', None) is not None:
+            prog.place_viewer()
         dock = getattr(self, 'dock_assistant', None)     # F10 › Assistant : son panneau, s'il est fait
         panel = dock.widget() if dock is not None else None
         if hasattr(panel, 'apply_settings'):
@@ -8922,7 +8965,11 @@ class MainWindow(QMainWindow):
                 except Exception:                        # noqa: BLE001 — processus en défaut : un par un
                     docs = []
                 pre = dict(zip(todo, docs))
-        return sum(bool(self.open_path(p, preread=pre.get(p))) for p in paths)
+        self._oda_shown = False                          # DWG sans convertisseur : proposé une fois
+        try:
+            return sum(bool(self.open_path(p, preread=pre.get(p))) for p in paths)
+        finally:
+            self._oda_shown = None
 
     def file_browser(self, exec_dialog: bool = True, folder: str | None = None, exts=None,
                      remember: bool = True):
@@ -8971,10 +9018,38 @@ class MainWindow(QMainWindow):
             self.open_paths(drawings)                    # plusieurs : lus ensemble
         return None
 
+    def _offer_oda(self, ex) -> bool:
+        """DWG sans ODA File Converter sur le poste : le message, avec sa page de téléchargement et le choix du
+        programme (retenu dans F10 > Fichiers). Rend vrai s'il s'agissait de cela."""
+        from ..io import dwg
+        if not isinstance(ex, dwg.ConverterMissing):
+            return False
+        if getattr(self, '_oda_shown', None) is True:    # plusieurs DWG à la fois : proposé une fois
+            return True
+        if getattr(self, '_oda_shown', None) is False:
+            self._oda_shown = True
+        box =QMessageBox(QMessageBox.Icon.Warning, tr('ODA File Converter'), str(ex), parent=self)
+        page = box.addButton(tr('Page de téléchargement'), QMessageBox.ButtonRole.ActionRole)
+        pick = box.addButton(tr('Choisir ODAFileConverter.exe…'), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is page:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl(dwg.URL))
+        elif box.clickedButton() is pick:
+            exe, _f = QFileDialog.getOpenFileName(self, tr('ODA File Converter'), os.environ.get('ProgramFiles', ''),
+                                                  'ODAFileConverter (ODAFileConverter*);;' + tr('Programmes')
+                                                  + (' (*.exe)' if os.name == 'nt' else ' (*)'))
+            if exe:
+                self.settings.setValue(dwg.SETTING, exe)
+                self.statusBar().showMessage(tr('ODA File Converter retenu : recommencez'), 8000)
+        return True
+
     def _after_read(self, doc, path: str) -> None:
         """Traitements à l'ouverture selon les options : contours des DXF
         raccordés (une entité DXF par droite ou arc)."""
-        if pathlib.Path(path).suffix.lower() == '.dxf' and \
+        if pathlib.Path(path).suffix.lower() in ('.dxf', '.dwg') and \
                 self.settings.value('import/raccord_dxf', 'true') in (True, 'true'):
             from ..core import chain as CH
             j, c, _ = CH.chain_layers(doc.layers, float(self.settings.value('raccord/tolerance', 0.01)))
@@ -9028,7 +9103,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return False
         except Exception as ex:
-            QMessageBox.critical(self, tr('Ouverture impossible'), f'{pathlib.Path(path).name}\n\n{ex}')
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Ouverture impossible'), f'{pathlib.Path(path).name}\n\n{ex}')
             return False
         self._missing_fonts(doc)
         # Ctrl+S réenregistre le VDZ, ou le VND et le dessin LaserType (sauf fichier lu en partie, GVT : « Enregistrer
@@ -9444,7 +9520,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return
         except Exception as ex:
-            QMessageBox.critical(self, tr('Import impossible'), str(ex))
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Import impossible'), str(ex))
             return
         self._import_undo_step()
         added = self._adopt_layers(other)
@@ -9593,7 +9670,8 @@ class MainWindow(QMainWindow):
                                             'modifié'), 8000)
             return False
         except Exception as ex:
-            QMessageBox.critical(self, tr('Enregistrement impossible'), str(ex))
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Enregistrement impossible'), str(ex))
             return False
         finally:
             self._writing_doc = False
@@ -9689,7 +9767,8 @@ class MainWindow(QMainWindow):
                 for r in self.canvas.doc.report[-3:]:
                     self.statusBar().showMessage(r, 8000)
         except Exception as ex:
-            QMessageBox.critical(self, tr('Export impossible'), str(ex))
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Export impossible'), str(ex))
             return
         self.statusBar().showMessage(tr('Exporté : {0}').format(path), 5000)
 
@@ -9813,7 +9892,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return False
         except Exception as ex:
-            QMessageBox.critical(self, tr('Imprimer'), f'{pathlib.Path(path).name}\n\n{ex}')
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Imprimer'), f'{pathlib.Path(path).name}\n\n{ex}')
             return False
         return self.print_dialog(what='dessin', doc=doc, **kw)
 
@@ -10014,7 +10094,8 @@ class MainWindow(QMainWindow):
         try:
             paint(printer)
         except Exception as ex:
-            QMessageBox.critical(self, tr('Imprimer'), str(ex))
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Imprimer'), str(ex))
             return False
         self._after_print(info is None)
         return True
@@ -13401,7 +13482,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return None
         except Exception as ex:
-            QMessageBox.critical(self, tr('Symbole illisible'), f'{pathlib.Path(path).name}\n\n{ex}')
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Symbole illisible'), f'{pathlib.Path(path).name}\n\n{ex}')
             return None
 
     def place_symbol_by_click(self, path: str) -> bool:
@@ -13492,7 +13574,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return
         except Exception as ex:
-            QMessageBox.critical(self, tr('Import impossible'), str(ex))
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Import impossible'), str(ex))
             return
         self._import_undo_step()
         added = self._adopt_layers(other)
@@ -15935,7 +16018,8 @@ class MainWindow(QMainWindow):
         except Cancelled:
             return None
         except Exception as ex:
-            QMessageBox.critical(self, tr('Ouverture impossible'), f'{pathlib.Path(path).name}\n\n{ex}')
+            if not self._offer_oda(ex):              # DWG sans ODA File Converter
+                QMessageBox.critical(self, tr('Ouverture impossible'), f'{pathlib.Path(path).name}\n\n{ex}')
             return None
         return self.compare_with(other, pathlib.Path(path).name)
 

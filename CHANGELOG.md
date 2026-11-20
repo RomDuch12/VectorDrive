@@ -7262,3 +7262,18 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Passes latérales**, **Débordement** et **Reste jusqu’à l’outil d’avant (XY)** suivent : le reste enlève ce que l’outil d’avant a laissé entre les lettres, sans jamais entamer leurs flancs.
 - La **profondeur** doit être donnée : en relief hors des lettres, elle ne se déduit plus des lettres. Sans elle, rien n’est usiné et un avis le dit.
 - Une opération enregistrée avant garde son ancien parcours. Pour passer au nouveau, ouvrez-la et validez-la par OK. Une opération tirée d’un modèle d’usinage prend le nouveau.
+### v0.971.0 — DWG : ouverture, enregistrement, lot et vignettes
+
+- **Fichiers DWG (AutoCAD)** : ils s’ouvrent, s’importent et s’enregistrent comme les DXF, dans toutes les versions de R12 à AutoCAD 2018 et après. La conversion passe par **ODA File Converter**, gratuit (Open Design Alliance), à installer une fois sur le poste ; il n’est pas fourni avec VectorDrive. VectorDrive le trouve dans Program Files\ODA ; sinon, donnez son chemin dans **F10 › Fichiers**.
+- S’il manque, la fenêtre le dit et propose **Page de téléchargement** ou **Choisir ODAFileConverter.exe…** (une seule fois pour plusieurs DWG). Annuler arrête la conversion en cours.
+- **Version des DWG enregistrés** : F10 › Fichiers, AutoCAD 2018 et après par défaut, jusqu’à R12 pour un destinataire équipé d’un AutoCAD ancien. L’option d’export « un calque par outil » vaut aussi pour le DWG.
+- **Conversion par lot**, **glisser-déposer**, **fichiers récents** et **Importer** prennent les DWG. Le navigateur de fichiers les montre (Tous les dessins, Autres dessins), la bibliothèque aussi.
+- **Vignettes** : celles des DWG viennent de l’aperçu que chaque DWG porte dans son en-tête, sans lancer le convertisseur (instantané).
+### v0.972.0 — Navigateur de fichiers : un filtre DWG
+
+- **Navigateur de fichiers** : un filtre **DWG (AutoCAD)**. Les DWG ne sont plus rangés dans « Autres dessins ».
+### v0.973.0 — Fenêtre Programme : le texte dans sa propre colonne
+
+- **Programme machine** : quand la fenêtre Programme montre les parties d’une machine (Datron : Paramètres programme et Opérations), le texte du programme (le SimPL) passe dans **une colonne supplémentaire**, collée à la colonne de la fenêtre Programme du côté du dessin : à sa droite si elle est à gauche, à sa gauche si elle est à droite. Cette colonne se détache comme les autres panneaux. Fermer la fenêtre Programme la ferme aussi ; **▣** met toujours le texte au centre, à la place du dessin.
+- Les parties se partagent la hauteur de la colonne : un **séparateur** entre elles la règle à la souris. Dépliée, une partie est montrée en entier ; si elles ne tiennent pas, c’est la colonne qui défile.
+- **F10 › FAO** : « Programme machine : le texte dans une colonne à part, à côté des parties » (coché d’office). Décoché : le texte reste sous les parties, comme avant.

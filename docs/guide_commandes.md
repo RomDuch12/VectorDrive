@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.970.0
+# Guide des commandes — VectorDrive 0.973.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 

@@ -50,7 +50,7 @@ BROWSER_EXT = _readable()
 TYPEEDIT_EXT = ('.vnd', '.vnl', '.vnm', '.gvt')
 IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif')
 SOLID_EXT = ('.stp', '.step', '.igs', '.iges', '.stl', '.3dxml', '.catpart', '.catproduct', '.cgr', '.catdrawing')
-_KNOWN = ('.dxf', '.smb', '.svg', '.ai', '.eps', '.pdf', '.vdz') + TYPEEDIT_EXT + IMAGE_EXT + SOLID_EXT
+_KNOWN = ('.dxf', '.dwg', '.smb', '.svg', '.ai', '.eps', '.pdf', '.vdz') + TYPEEDIT_EXT + IMAGE_EXT + SOLID_EXT
 #: choix du filtre : (libellé, extensions) — les nouveaux à la fin : le filtre retenu l'est par son rang
 FILTERS = [('Dessins et programmes', BROWSER_EXT + NC_EXT), ('TypeEdit VND', ('.vnd',)), ('DXF', ('.dxf',)),
            ('Symboles SMB', ('.smb',)), ('SVG', ('.svg',)), ('Illustrator AI', ('.ai',)),
@@ -59,7 +59,8 @@ FILTERS = [('Dessins et programmes', BROWSER_EXT + NC_EXT), ('TypeEdit VND', ('.
            ('STEP (3D, vue de dessus)', ('.stp', '.step')),
            ('TypeEdit et LaserType (VND, VNL, modèles, GVT)', TYPEEDIT_EXT), ('Images', IMAGE_EXT),
            ('Pièces 3D (STEP, IGES, STL, 3D XML, CATIA)', SOLID_EXT),
-           ('Autres dessins (HPGL, EMF, WMF, CorelDRAW, Visio…)', tuple(e for e in BROWSER_EXT if e not in _KNOWN))]
+           ('Autres dessins (HPGL, EMF, WMF, CorelDRAW, Visio…)', tuple(e for e in BROWSER_EXT if e not in _KNOWN)),
+           ('DWG (AutoCAD)', ('.dwg',))]
 #: affichage de la liste : clé → libellé ; réglage retenu (Détails, comme Windows, par défaut)
 VIEWS = {'details': 'Détails (comme Windows)', 'vignettes': 'Vignettes'}
 VIEW_KEY = 'navigateur/vue'

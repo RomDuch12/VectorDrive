@@ -37,6 +37,7 @@ FORMATS: tuple[Format, ...] = (
     Format('vdz', 'VectorDrive', ('.vdz',), _lazy('native', 'read'), _lazy('native', 'write')),
     Format('vnd', 'TypeEdit / Gravostyle', ('.vnd',), _lazy('vnd', 'read'), _lazy('vnd_write', 'write')),
     Format('dxf', 'AutoCAD DXF', ('.dxf',), _lazy('dxf', 'read'), _lazy('dxf', 'write')),
+    Format('dwg', 'AutoCAD DWG (par ODA File Converter)', ('.dwg',), _lazy('dwg', 'read'), _lazy('dwg', 'write')),
     Format('svg', 'SVG', ('.svg',), _lazy('svg', 'read'), _lazy('svg', 'write')),
     Format('pdf', 'PDF', ('.pdf',), _lazy('pdf', 'read'), _lazy('pdf', 'write')),
     Format('ai', 'Adobe Illustrator', ('.ai',), _lazy('registry', '_read_ai'), _lazy('pdf', 'write')),

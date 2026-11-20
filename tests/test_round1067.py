@@ -47,6 +47,7 @@ class Opened(unittest.TestCase):
         self.w = MainWindow()
         self.addCleanup(self.close)
         self.p = self.w.program_panel
+        self.w.settings.setValue('fao/programme_texte_colonne', False)   # le texte sous les parties (1116)
 
     def restore(self):
         r = plugins.REGISTRY

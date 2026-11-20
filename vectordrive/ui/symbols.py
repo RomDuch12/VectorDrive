@@ -75,7 +75,7 @@ BIG_SIZE_KEY = 'symboles/taille_grande'
 
 
 #: fichiers posables depuis la bibliothèque (symboles TypeEdit, dessins DXF, dessins VectorDrive)
-LIBRARY_EXT = ('.smb', '.dxf', '.vdz', '.vnd', '.svg')
+LIBRARY_EXT = ('.smb', '.dxf', '.vdz', '.vnd', '.svg', '.dwg')
 
 
 def library_root() -> pathlib.Path:
@@ -169,7 +169,7 @@ def external_reader(path) -> bool:
     une par fichier d'un dossier lancerait ce logiciel autant de fois. Ouvert, il est lu comme les autres."""
     from ..io import registry
     f = registry.by_extension(path)
-    return f is not None and f.key in ('inkscape', 'catia')
+    return f is not None and f.key in ('inkscape', 'catia', 'dwg')
 
 
 def describe_file(path) -> str:
@@ -206,6 +206,28 @@ def describe_file(path) -> str:
     return '\n'.join(lines)
 
 
+def dwg_preview_image(path, size: int = THUMB):
+    """Vignette d'un DWG : l'aperçu enregistré dans son en-tête (le fond d'AutoCAD compris), centré sur un carré
+    blanc ; None s'il n'en a pas. Sans ODA File Converter : instantané."""
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QColor, QImage, QPainter
+    from ..io import dwg
+    got = dwg.preview(path)
+    if got is None:
+        return None
+    kind, data = got
+    src = QImage.fromData(data, 'PNG') if kind == 'png' else dib_to_qimage(data)
+    if src is None or src.isNull():
+        return None
+    img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(QColor('white'))
+    scaled = src.scaled(size, size, _Qt.AspectRatioMode.KeepAspectRatio, _Qt.TransformationMode.SmoothTransformation)
+    painter = QPainter(img)
+    painter.drawImage((size - scaled.width()) // 2, (size - scaled.height()) // 2, scaled)
+    painter.end()
+    return img
+
+
 def preview_image(path, size: int = THUMB):
     """Vignette d'un fichier (symbole, DXF, VDZ…) tracée à la taille voulue :
     formes fermées teintées, contours à la couleur de leur outil."""
@@ -214,6 +236,8 @@ def preview_image(path, size: int = THUMB):
     from . import nc_preview
     if nc_preview.is_program(path):                      # programme machine : son parcours vu de dessus
         return nc_preview.preview_image(path, size)
+    if pathlib.Path(path).suffix.lower() == '.dwg':      # l'aperçu de son en-tête, sans ODA File Converter
+        return dwg_preview_image(path, size)
     if external_reader(path):
         return None
     try:

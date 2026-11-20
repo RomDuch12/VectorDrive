@@ -30,6 +30,8 @@ OUTLINE_KEY = 'fao/programme_plan'
 VIEW_KEY = 'fao/programme_vue'
 #: les parties apportées par les plugins (`host_panel`) : dépliées ou repliées, retenu par clé
 SECTION_KEY = 'fao/programme_parties'
+#: le texte du programme dans une colonne à part quand des parties de plugin sont montrées (option F10)
+TEXT_COLUMN_KEY = 'fao/programme_texte_colonne'
 #: tailles du texte permises (points)
 TEXT_SIZES = (6, 32)
 
@@ -210,13 +212,21 @@ class ProgramPanel(QWidget):
         self._sections_lay = QVBoxLayout(self.sections_box)
         self._sections_lay.setContentsMargins(0, 0, 0, 0)
         self._sections_lay.setSpacing(2)
+        # les parties l'une sous l'autre, leur hauteur réglée à la souris (demande du 20/11) ; dépliée, chacune a
+        # toute sa hauteur : c'est la colonne qui défile si elles n'y tiennent pas, pas une partie
+        self.sections_split = _Split(Qt.Orientation.Vertical)
+        self.sections_split.setChildrenCollapsible(False)
+        self._sections_lay.addWidget(self.sections_split, 1)
+        from .fit import VScroll
+        self.sections_scroll = VScroll(self.sections_box, min_height=48)
         self.sections_box.hide()
+        self.sections_scroll.hide()
         self.viewer = QWidget()                          # le texte du programme : ce qui va au centre (▣) quand des
         vlay = QVBoxLayout(self.viewer)                  # parties de plugin restent dans la colonne
         vlay.setContentsMargins(0, 0, 0, 0)
         self.vsplit = _Split(Qt.Orientation.Vertical)
         self.vsplit.setChildrenCollapsible(False)
-        self.vsplit.addWidget(self.sections_box)
+        self.vsplit.addWidget(self.sections_scroll)
         self.vsplit.addWidget(self.viewer)
         self.vsplit.setStretchFactor(0, 0)
         self.vsplit.setStretchFactor(1, 1)
@@ -315,15 +325,145 @@ class ProgramPanel(QWidget):
         """Le bouton ▣ dit si le programme est au centre, à la place du dessin ; le texte seul au centre montre son
         propre « Mettre à jour » (la rangée du haut est restée dans la colonne)."""
         self.buttons['center'].setChecked(bool(on))
-        self.buttons['update_here'].setVisible(bool(on) and self.viewer.parentWidget() is not self.vsplit)
-        self._sections_changed()
+        self.buttons['update_here'].setVisible(self.viewer.parentWidget() is not self.vsplit)
+        if on:
+            self._sections_changed()
+        else:
+            self.place_viewer()                          # de retour : sa colonne à part, si des parties
 
     def dock_viewer(self) -> None:
-        """Le texte du programme rendu à son panneau, sous les parties des plugins (il était au centre)."""
-        self.vsplit.addWidget(self.viewer)
-        self.vsplit.setStretchFactor(1, 1)
-        self.viewer.show()
+        """Le texte du programme rendu à sa place (il était au centre) : sa colonne à part, ou son panneau sous les
+        parties des plugins."""
+        self.place_viewer()
+
+    # --- le texte dans une colonne à part (demande du 20/11 : la colonne Datron, le SimPL à côté) -----------------
+    def text_dock(self):
+        """Le panneau « Programme : texte » de la fenêtre (None : pas de fenêtre principale)."""
+        return getattr(self.win, 'dock_program_text', None)
+
+    def split_wanted(self) -> bool:
+        """Le texte dans sa colonne à part : des parties de plugin sont montrées et l'option F10 le veut (d'office)."""
+        if self.text_dock() is None or not self.sections_shown():
+            return False
+        try:
+            from .options import value
+            return bool(value(self.win.settings, TEXT_COLUMN_KEY))
+        except Exception:                                # noqa: BLE001 — réglages illisibles : d'office
+            return True
+
+    def place_viewer(self) -> str:
+        """Le texte du programme à sa place : 'colonne' (sa colonne à part, à côté de celle des parties), 'panneau'
+        (sous les parties, comme avant) ou 'centre' (à la place du dessin : rien ne change). Rend la place."""
+        w, d = self.win, self.text_dock()
+        centered = getattr(w, 'program_centered', None)
+        if callable(centered) and centered():
+            self._sections_changed()
+            return 'centre'
+        if d is not None and self.split_wanted():
+            if d.widget() is not self.viewer:
+                hold = d.widget()
+                d.setWidget(self.viewer)
+                if hold is not None and hold is not self.viewer:
+                    hold.deleteLater()
+                self.viewer.show()
+                self.put_text_dock()
+                self.text_follow()
+            where = 'colonne'
+        else:
+            if self.viewer.parentWidget() is not self.vsplit:
+                if d is not None and d.widget() is self.viewer:
+                    d.setWidget(QWidget())
+                self.vsplit.addWidget(self.viewer)
+                self.vsplit.setStretchFactor(1, 1)
+                self.viewer.show()
+            if d is not None and not d.isHidden():
+                d.hide()
+            where = 'panneau'
+        self.buttons['update_here'].setVisible(self.viewer.parentWidget() is not self.vsplit)
         self._sections_changed()
+        return where
+
+    def text_side(self) -> str:
+        """La colonne de la fenêtre Programme, où va le texte ('droite' si elle est détachée)."""
+        cols, dp = getattr(self.win, 'columns', None), getattr(self.win, 'dock_program', None)
+        side = cols.side(dp) if cols is not None and dp is not None else None
+        return side or 'droite'
+
+    def follow_program_side(self) -> None:
+        """La fenêtre Programme a changé de colonne (ou s'est détachée) : la colonne du texte la suit."""
+        if self.text_side() != getattr(self, '_text_side', None):
+            self.put_text_dock()
+
+    def put_text_dock(self, side: str | None = None) -> None:
+        """La colonne du texte collée à celle de la fenêtre Programme, du côté du dessin : à droite de la colonne de
+        gauche, à gauche de celle de droite (demande du 20/11). Détachée, elle le reste."""
+        w, d = self.win, self.text_dock()
+        cols = getattr(w, 'columns', None)
+        if d is None or cols is None or d.isFloating() or d.widget() is not self.viewer:
+            return
+        side = side if side in ('gauche', 'droite') else self.text_side()
+        self._text_side = self.text_side()
+        if getattr(self, '_laid', None) == side and cols.side(d) == side and not w.tabifiedDockWidgets(d):
+            return                                       # déjà à sa place (pas refait à chaque machine choisie)
+        from .columns import AREAS
+        w._docks_before_cam = None                       # la disposition d'avant la FAO n'est plus à rendre
+        if side == 'gauche' or not w.isVisible() or w.isMinimized():
+            # à gauche, Qt ajoute la colonne à droite : du côté du dessin (fenêtre pas montrée : les places ne se
+            # lisent pas, la colonne est seulement ajoutée ; remise à côté la prochaine fois)
+            cols._quiet(lambda: w.addDockWidget(AREAS[side], d, Qt.Orientation.Horizontal))
+            self._laid = side if side == 'gauche' else None
+            return
+        # à droite, Qt l'ajouterait au bord de la fenêtre : la colonne remise après elle, ses onglets et ses hauteurs
+        blocks = [[m for m in b if m is not d] for b in cols.blocks('droite')]
+        blocks = [b for b in blocks if b]
+        placed = cols.placed()
+        asleep = [x for x in cols.column('droite') if x is not d and x.isHidden()]
+        heights = [max(1, b[0].height()) for b in blocks]
+
+        def do():
+            for b in blocks:
+                for m in b:
+                    w.removeDockWidget(m)
+            for x in asleep:
+                w.removeDockWidget(x)
+            w.addDockWidget(AREAS['droite'], d)
+            prev = None
+            for b in blocks:
+                if prev is None:
+                    w.addDockWidget(AREAS['droite'], b[0], Qt.Orientation.Horizontal)
+                else:
+                    w.splitDockWidget(prev, b[0], Qt.Orientation.Vertical)
+                for m in b[1:]:
+                    w.tabifyDockWidget(b[0], m)
+                for m in b:
+                    m.setVisible(True)
+                prev = b[0]
+            main = max(blocks, key=len)[0] if blocks else None
+            for x in asleep:                             # les cachés : leur onglet dans le groupe, ou sous la colonne
+                if main is None:                         # aucun montré : une seule colonne, en onglets
+                    w.addDockWidget(AREAS['droite'], x, Qt.Orientation.Horizontal)
+                    main = prev = x
+                elif x.objectName() in placed:
+                    w.splitDockWidget(prev, x, Qt.Orientation.Vertical)
+                else:
+                    w.tabifyDockWidget(main, x)
+                x.setVisible(False)
+            for b in blocks:
+                b[0].raise_()
+            if blocks:
+                w.resizeDocks([b[0] for b in blocks], heights, Qt.Orientation.Vertical)
+        cols._quiet(do)
+        self._laid = side
+
+    def text_follow(self) -> None:
+        """La colonne du texte montrée ou cachée avec la fenêtre Programme (fermée, elle se ferme aussi)."""
+        d, dp = self.text_dock(), getattr(self.win, 'dock_program', None)
+        if d is None or dp is None or d.widget() is not self.viewer:
+            return
+        if dp.isHidden() != d.isHidden():
+            d.setVisible(not dp.isHidden())
+            if not d.isHidden():
+                d.raise_()
 
     # --- les parties apportées par les plugins (atelier SimPL, 17/11) -------------------------------------------
     def host_panel(self, key: str, title: str, widget, shown: bool = True) -> None:
@@ -344,7 +484,8 @@ class ProgramPanel(QWidget):
         fl.addWidget(head)
         fl.addWidget(widget, 1)
         self.hosted[key] = (frame, head, widget, str(title))
-        self._sections_lay.addWidget(frame, 1)
+        self.sections_split.addWidget(frame)
+        self.sections_split.setStretchFactor(self.sections_split.indexOf(frame), 1)
         head.setChecked(_flag(self.win.settings.value(f'{SECTION_KEY}/{key}', 'true'), True))
         head.toggled.connect(lambda on, k=key: self.fold_section(k, not on))
         frame.setVisible(bool(shown))
@@ -361,7 +502,11 @@ class ProgramPanel(QWidget):
             head.setChecked(not folded)
             head.blockSignals(blocked)
         head.setText(('▸ ' if folded else '▾ ') + title)
-        self._sections_lay.setStretchFactor(frame, 0 if folded else 1)
+        i = self.sections_split.indexOf(frame)
+        if i >= 0:
+            self.sections_split.setStretchFactor(i, 0 if folded else 1)
+        frame.setMaximumHeight(head.sizeHint().height() if folded else 16777215)   # repliée : son en-tête
+        self.share_sections()
         if remember:
             self.win.settings.setValue(f'{SECTION_KEY}/{key}', not folded)
         self._sections_changed()
@@ -374,22 +519,41 @@ class ProgramPanel(QWidget):
         if frame.isHidden() != bool(on):
             return False
         frame.setVisible(bool(on))
-        self._sections_changed()
+        self.place_viewer()                              # des parties : le texte dans sa colonne à part
         return True
 
     def sections_shown(self) -> list:
         """Les clés des parties de plugin montrées (pour la machine du dessin)."""
         return [k for k, e in self.hosted.items() if not e[0].isHidden()]
 
+    def share_sections(self) -> None:
+        """Les parties montrées se partagent la hauteur : repliées, leur en-tête ; dépliées, le reste à parts
+        égales (le séparateur la règle ensuite à la souris)."""
+        sp = self.sections_split
+        sizes, free, opened = [], max(0, sp.height()), []
+        for i in range(sp.count()):
+            f = sp.widget(i)
+            if f.isHidden():
+                sizes.append(0)
+            elif f.maximumHeight() < 16777215:
+                sizes.append(f.maximumHeight())
+                free -= f.maximumHeight()
+            else:
+                sizes.append(None)
+                opened.append(i)
+        each = max(1, free // max(1, len(opened)))
+        sp.setSizes([each if h is None else h for h in sizes])
+
     def _sections_changed(self) -> None:
         shown = self.sections_shown()
         self.sections_box.setVisible(bool(shown))
+        self.sections_scroll.setVisible(bool(shown))
         opened = any(not self.hosted[k][2].isHidden() for k in shown)
         if opened or self.viewer.parentWidget() is not self.vsplit:
-            self.sections_box.setMaximumHeight(16777215)     # (le texte au centre : les parties ont toute la place)
+            self.sections_scroll.setMaximumHeight(16777215)  # (le texte ailleurs : les parties ont toute la place)
             return
         self._sections_lay.activate()
-        self.sections_box.setMaximumHeight(max(24, self.sections_box.sizeHint().height()))
+        self.sections_scroll.setMaximumHeight(max(24, self.sections_box.sizeHint().height()))
 
     # --- la vue (menu « Vue ») -----------------------------------------------------------------------------------
     def view(self) -> dict:

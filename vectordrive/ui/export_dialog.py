@@ -80,7 +80,7 @@ def kind_of(fmt) -> str:
         return 'image'
     if exts and exts[0] in ('.vnd', '.vnl', '.vnm'):
         return 'vnd'
-    if '.dxf' in exts:
+    if '.dxf' in exts or '.dwg' in exts:                 # (le DWG est écrit par un DXF)
         return 'dxf'
     return 'machine' if getattr(fmt, 'machine', False) else 'dessin'
 
@@ -414,6 +414,8 @@ def run(win) -> str | None:
                 written = without_plates(written)
             expected = sum(1 for _ in written.iter_leaves())
     except Exception as ex:
+        if hasattr(win, '_offer_oda') and win._offer_oda(ex):   # DWG sans ODA File Converter : pas une erreur
+            return None
         from .. import journal
         journal.record(type(ex), ex, ex.__traceback__, where=f'export {pathlib.Path(path).suffix}')
         QMessageBox.critical(win, tr('Export impossible'), str(ex))

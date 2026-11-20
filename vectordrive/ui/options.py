@@ -210,6 +210,16 @@ SPEC: list[tuple[str, list[Opt]]] = [
         Opt('texte/langue_orthographe', 'Langue du correcteur d\'orthographe (vide : celle du poste ; ex. fr-FR)', 'text', ''),
         Opt('import/inkscape', 'Inkscape (pour ouvrir CorelDRAW, EMF, WMF, Visio)', 'text', '',
             tip='Chemin d\'inkscape.exe, s\'il n\'est pas à sa place habituelle. Vide : VectorDrive le cherche'),
+        Opt('import/oda', 'ODA File Converter (pour ouvrir et enregistrer les DWG)', 'file', '',
+            tip='Chemin d\'ODAFileConverter.exe (gratuit, Open Design Alliance), s\'il n\'est pas à sa place '
+                'habituelle. Vide : VectorDrive le cherche dans Program Files\\ODA',
+            extra={'open': True, 'filter': 'ODAFileConverter (ODAFileConverter*)'}),
+        C('export/dwg_version', 'DWG enregistrés : version', 'ACAD2018',
+          [('ACAD2018', 'AutoCAD 2018 et après'), ('ACAD2013', 'AutoCAD 2013 à 2017'),
+           ('ACAD2010', 'AutoCAD 2010 à 2012'), ('ACAD2007', 'AutoCAD 2007 à 2009'),
+           ('ACAD2004', 'AutoCAD 2004 à 2006'), ('ACAD2000', 'AutoCAD 2000 à 2002'),
+           ('ACAD14', 'AutoCAD R14'), ('ACAD12', 'AutoCAD R12')],
+          tip='Pour un destinataire équipé d\'un AutoCAD ancien : la version que son logiciel ouvre'),
     ]),
     ('FAO', [
         Opt('fao/post', 'Post-processeur (machine) du dessin et des nouveaux dessins', 'post', '',
@@ -246,6 +256,10 @@ SPEC: list[tuple[str, list[Opt]]] = [
            ('bloquer', 'Bloquée : la modification est défaite aussitôt'),
            ('rien', 'Aucune alarme (comme le mode FAO de TypeEdit)')]),
         B('fao/panneaux_onglet', 'Onglet CAD : ranger les panneaux FAO ; un onglet FAO les rétablit', True),
+        B('fao/programme_texte_colonne', 'Programme machine : le texte dans une colonne à part, à côté des parties',
+          True, tip='Quand la fenêtre Programme montre des parties de la machine (Paramètres programme, '
+                    'Opérations) : le texte du programme dans sa propre colonne, détachable. Décoché : sous '
+                    'les parties'),
         F('fao/simulation_pas', 'Pas de la simulation (0 = automatique)', 0.0, 0, 2, ' mm'),
         F('fao/vitesse_rapide', 'Temps estimé : vitesse des rapides', 15000.0, 100, 200000, ' mm/min', 0),
         F('fao/acceleration', 'Temps estimé : accélération', 1000.0, 10, 100000, ' mm/s²', 0),
