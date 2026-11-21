@@ -55,7 +55,9 @@ TOOL_GROUPS = {'memory_read': 'memory', 'memory_write': 'memory', 'memory_topics
                **{k: 'cam' for k in ('cam_machines', 'cam_set_machine', 'cam_presets', 'cam_tools', 'cam_operations',
                                      'cam_operation_settings', 'cam_add_operation', 'cam_edit_operation',
                                      'cam_remove_operation', 'cam_move_operation', 'cam_compute', 'cam_program')},
-               'save_copy': 'copies', 'list_copies': 'copies'}
+               'save_copy': 'copies', 'list_copies': 'copies',
+               **{k: 'step' for k in ('step_families', 'step_family', 'step_generate', 'step_from_drawing',
+                                      'step_check', 'step_build')}}
 MAX_DOC = 12000
 #: la FAO de l'assistant (demande du 20/11) : les champs d'une opération qu'il ne change pas par « settings » (les
 #: règles de trajet, la reprise, l'instruction, les fichiers ; l'outil, le nom, active : leurs propres arguments,
@@ -810,8 +812,8 @@ class ToolSet:
           _schema({'name': {'type': 'string'}, 'code': {'type': 'string'}}, ['name', 'code']), self.save_script, True)
         a('read_documentation', 'Documentation: topic "scripts" (the shape script language and its drawing '
           'functions), "commands" (the guide of the application\'s commands, when it is installed; with "query": '
-          'only the sections that contain it).',
-          _schema({'topic': {'type': 'string', 'enum': ['scripts', 'commands']}, 'query': {'type': 'string'}},
+          'only the sections that contain it), "step" (how to make STEP parts with the step tools).',
+          _schema({'topic': {'type': 'string', 'enum': ['scripts', 'commands', 'step']}, 'query': {'type': 'string'}},
                   ['topic']), self.read_documentation)
         a('list_commands', 'The commands of the application (ribbon, menus): key, label, tip, shortcut, enabled. '
           '"query": only those whose key, label or tip contains it.',
@@ -868,6 +870,40 @@ class ToolSet:
                   ['name']), self.save_copy, True)
         a('list_copies', 'The copies you saved (save_copy) that still exist: name, path, "yours" (unchanged since, so you '
           'may overwrite it), and the copies folder.', _schema({}), self.list_copies)
+        a('step_families', 'STEP: the catalogue of standard parts (key, label, category, standard, parameter '
+          'keys); "category": only those of this category. See read_documentation topic "step".',
+          _schema({'category': {'type': 'string'}}), self.step_families)
+        a('step_family', 'STEP: one catalogue part by "key" (step_families): its parameters (kind, default, choices, '
+          'min, max, unit) and notes.', _schema({'key': {'type': 'string'}}, ['key']), self.step_family)
+        a('step_generate', 'STEP: write a catalogue part "key" with "values" {parameter: value} (defaults for the '
+          'others; checked) as an exact STEP file in your STEP folder, "name" (default: the standard name of the '
+          'part); read back after writing. "add_to_drawing": also add it as 3D volumes in the drawing (one undo step). '
+          'A file that is not one of yours is never overwritten; one of yours only with "overwrite": true.',
+          _schema({'key': {'type': 'string'}, 'values': {'type': 'object'}, 'name': {'type': 'string'},
+                   'overwrite': {'type': 'boolean'}, 'add_to_drawing': {'type': 'boolean'}}, ['key']),
+          self.step_generate, True)
+        a('step_from_drawing', 'STEP: write a part made from the closed contours of the objects "ids" (default: the '
+          'selection) in your STEP folder: "shape" "extruded" (edge = the outermost contour, "thickness" mm; inner '
+          'contours "holes" through, "pockets" of "pocket" mm, or "round_holes") or "turned" (each closed contour a '
+          'half profile turned around the axis). "tolerance": mm from the drawn curves (0.01 by default). Read back '
+          'after writing; "add_to_drawing" as step_generate (an extruded part stays where its contours are).',
+          _schema({'ids': IDS, 'shape': {'type': 'string', 'enum': ['extruded', 'turned']},
+                   'thickness': {'type': 'number'}, 'inner': {'type': 'string', 'enum': ['holes', 'pockets',
+                                                                                         'round_holes']},
+                   'pocket': {'type': 'number'}, 'tolerance': {'type': 'number'}, 'name': {'type': 'string'},
+                   'overwrite': {'type': 'boolean'}, 'add_to_drawing': {'type': 'boolean'}}),
+          self.step_from_drawing, True)
+        a('step_build', 'STEP (expert): write bodies described one by one in "spec" {"bodies": [...]}: stacks of '
+          'slabs along Z with nested loops (circle, rect, slot, regular, polygon with arcs), turned profiles, holes '
+          '(counterbores, pockets), placements, catalogue parts for assemblies — the format in read_documentation '
+          'topic "step". A refusal names the body and what is wrong. "dry_run": true checks and measures without '
+          'writing; otherwise as step_generate ("name", "overwrite", "add_to_drawing"; read back after writing).',
+          _schema({'spec': {'type': 'object'}, 'name': {'type': 'string'}, 'dry_run': {'type': 'boolean'},
+                   'overwrite': {'type': 'boolean'}, 'add_to_drawing': {'type': 'boolean'}}, ['spec']),
+          self.step_build, True)
+        a('step_check', 'STEP: read back a file of your STEP folder ("name") with the STEP reader of the application: '
+          'faces, faces meshed, triangles, bounds, "ok". Without "name": the files of your STEP folder.',
+          _schema({'name': {'type': 'string'}}), self.step_check)
         for name, group in TOOL_GROUPS.items():         # retirés par les options (F10 › Assistant)
             if group in self.without:
                 self._tools.pop(name, None)
@@ -1008,8 +1044,11 @@ class ToolSet:
             from ..ui import script_dialog as SD
             text = (SS.__doc__ or '') + '\nExample (coordinates in metres):\n' + getattr(SD, '_EXAMPLE', '')
             return {'topic': topic, 'text': text[:MAX_DOC]}
+        if topic == 'step':
+            from . import step_tools as ST
+            return {'topic': topic, 'text': ST.doc_text()[:MAX_DOC]}
         if topic != 'commands':
-            raise ToolError('"topic" must be "scripts" or "commands"')
+            raise ToolError('"topic" must be "scripts", "commands" or "step"')
         from ..i18n import language
         here = pathlib.Path(__file__).resolve().parents[2] / 'docs'
         name = 'guide_commandes_en.md' if language() == 'en' else 'guide_commandes.md'
@@ -1529,6 +1568,112 @@ class ToolSet:
                             'in_folder': copy_key(os.path.dirname(p)) == copy_key(folder)})
         return {'folder': str(folder), 'copies': out}
 
+
+    # --- les pièces STEP (demande du 20/11, 22 h) : `agent.step_tools` ---------------------------------------------
+    def step_families(self, args: dict) -> dict:
+        from . import step_tools as ST
+        cat = args.get('category')
+        if cat is not None and not isinstance(cat, str):
+            raise ToolError('"category" must be a string')
+        return {'categories': sorted({f['category'] for f in ST.families()}), 'families': ST.families(cat)}
+
+    def step_family(self, args: dict) -> dict:
+        from . import step_tools as ST
+        return ST.family(str(args.get('key') or ''))
+
+    def _step_name(self, name, proposed: str) -> str:
+        from . import step_tools as ST
+        if name is None:
+            return ST.check_name(ST.file_stem(proposed))
+        if isinstance(name, str) and name.strip().lower().endswith(('.step', '.stp')):
+            name = name.strip().rsplit('.', 1)[0]
+        return ST.check_name(name)
+
+    def _step_out(self, bodies, name: str, description: str, args: dict, stepgen=None, centre: bool = True) -> dict:
+        """Les corps écrits dans le dossier STEP de l'assistant, relus ; ajoutés au dessin si demandé. Tout ce qui
+        peut refuser (texte STEP, mesure, volumes du dessin, calque verrouillé) est fait avant d'écrire."""
+        from . import step_tools as ST
+        overwrite, add = args.get('overwrite', False), args.get('add_to_drawing', False)
+        if not isinstance(overwrite, bool) or not isinstance(add, bool):
+            raise ToolError('"overwrite" and "add_to_drawing" must be true or false')
+        if not bodies or len(bodies) > ST.MAX_BODIES:
+            raise ToolError(f'{len(bodies)} bodies: from 1 to {ST.MAX_BODIES}')
+        try:
+            data = ST.step_bytes(bodies, name, description)
+            info = ST.summary(bodies)
+            ready = ST.drawing_solids(self.win, bodies, centre) if add else None
+        except ToolError:
+            raise
+        except Exception as ex:                          # noqa: BLE001 — dit au modèle, rien d'écrit
+            raise ToolError(f'these bodies cannot be written: {type(ex).__name__}: {ex}') from ex
+        path = ST.step_dir(getattr(self.win, 'settings', None)) / (name + '.step')
+        replaced = ST.place(path, data, overwrite)
+        out = {'saved': str(path), 'replaced': replaced, **info}
+        try:
+            out['read_back'] = ST.read_back(path, info)
+        except Exception as ex:                          # noqa: BLE001 — écrit, mais relu en erreur : dit
+            out['read_back'] = {'ok': False, 'error': str(ex)[:300]}
+        if ready is not None:
+            out['added'] = ST.put_solids(self.win, *ready, stepgen)
+        return out
+
+    def step_generate(self, args: dict) -> dict:
+        from . import step_tools as ST
+        key = str(args.get('key') or '')
+        bodies, v, proposed, desc = ST.generate(key, args.get('values'))
+        name = self._step_name(args.get('name'), proposed)
+        out = self._step_out(bodies, name, desc, args, {'key': key, 'values': dict(v)})
+        out['values'] = dict(v)
+        return out
+
+    def step_from_drawing(self, args: dict) -> dict:
+        import pathlib
+        from . import step_tools as ST
+        if args.get('ids') is not None:
+            items = [it for _l, it in self._items(args.get('ids'))]
+        else:
+            items = list(self.win.canvas.selection)
+        if not items:
+            raise ToolError('nothing is selected: give "ids" (list_objects)')
+        src = getattr(self.doc, 'source_path', '') or ''
+        name = self._step_name(args.get('name'), pathlib.Path(src).stem if src else 'piece')
+        shape = args.get('shape', 'extruded')
+        bodies = ST.from_drawing(items, shape, args.get('thickness', 0.0), args.get('inner', 'holes'),
+                                 args.get('pocket', 0.0), name, args.get('tolerance'))
+        out = self._step_out(bodies, name, 'VectorDrive', args, centre=(shape == 'turned'))
+        out['shape'] = shape
+        return out
+
+    def step_build(self, args: dict) -> dict:
+        from . import step_tools as ST
+        dry = args.get('dry_run', False)
+        if not isinstance(dry, bool):
+            raise ToolError('"dry_run" must be true or false')
+        bodies = ST.from_spec(args.get('spec'), lambda ids: [it for _l, it in self._items(ids)])
+        if dry:
+            try:
+                ST.step_bytes(bodies, 'essai')           # ce que l'écriture refuserait, dit dès maintenant
+                return {'dry_run': True, **ST.summary(bodies)}
+            except ToolError:
+                raise
+            except Exception as ex:                      # noqa: BLE001 — le calcul du fichier : dit au modèle
+                raise ST.StepToolError(f'these bodies do not make a STEP file: {type(ex).__name__}: {ex}') from ex
+        name = self._step_name(args.get('name'), bodies[0].name if len(bodies) == 1 else 'assemblage')
+        drawn = any('drawing' in b for b in args['spec']['bodies'])    # (vérifié par from_spec)
+        return self._step_out(bodies, name, 'VectorDrive', args, centre=not drawn)   # une plaque du dessin : sur place
+
+    def step_check(self, args: dict) -> dict:
+        from . import step_tools as ST
+        st = getattr(self.win, 'settings', None)
+        if args.get('name') is None:
+            return ST.listing(st)
+        p = ST.step_file(st, args.get('name'))
+        out = {'name': p.name, 'size': p.stat().st_size}
+        try:
+            out.update(ST.read_back(p))                  # (au-delà de READ_MAX : non relu, dit)
+        except Exception as ex:                          # noqa: BLE001 — illisible : dit
+            out.update({'ok': False, 'error': str(ex)[:300]})
+        return out
 
     # --- les mémoires thématiques (demande du 20/11, 15 h 36) : remplies par l'utilisateur (« Ajouter à une
     # mémoire… »), lues ici --------------------------------------------------------------------------------------------

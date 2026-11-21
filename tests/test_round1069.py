@@ -469,6 +469,8 @@ class Panel(unittest.TestCase):
         """Sans clé : rien ne part ; l'adresse seulement pour Mistral ; un autre modèle : discussion neuve ; les
         erreurs du fournisseur dites en clair."""
         p = self.w.show_assistant_panel()
+        p.mode.setCurrentIndex(p.mode.findData('avance'))   # l'adresse : mode Avancé (round 1128)
+        self.addCleanup(self.w.settings.remove, 'assistant/mode')
         p.keys.forget('openai')
         old = os.environ.pop('OPENAI_API_KEY', None)
         if old is not None:

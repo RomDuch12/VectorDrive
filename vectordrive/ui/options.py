@@ -368,6 +368,14 @@ SPEC: list[tuple[str, list[Opt]]] = [
               '(aucun en rendu logiciel)'),
     ]),
     ('Assistant', [                                       # demande du 19/11 ; la suite : ui/assistant_options.py
+        C('assistant/mode', 'Mode de l’assistant', 'debutant',
+          [('debutant', 'Débutant : clé en main'), ('avance', 'Avancé : tous les réglages')],
+          tip='Débutant : les premiers pas, le fournisseur et la clé seulement, des exemples de demandes ; '
+              'Avancé : le modèle, l’adresse du serveur et tous les boutons du panneau'),
+        C('assistant/valider', 'Garder ou Défaire à la fin de chaque demande', 'mode',
+          [('mode', 'Selon le mode : Débutant oui, Avancé non'), ('oui', 'Toujours'), ('non', 'Jamais')],
+          tip='Une demande finie qui a modifié le dessin : ses modifications gardées, ou défaites d’un coup ; '
+              'les boutons IA ont leur propre contrôle final'),
         C('assistant/fournisseur', 'Fournisseur', 'mistral',
           [('mistral', 'Mistral'), ('anthropic', 'Claude (Anthropic)'), ('openai', 'ChatGPT (OpenAI)')],
           tip='Celui de la discussion ; aussi choisi dans le panneau de l’assistant'),
@@ -392,6 +400,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Jamais le programme écrit sur le disque : le post-traitement reste à vous'),
         B('assistant/outils_copies', 'Il enregistre des copies du dessin', True,
           tip='Dans le dossier des copies ; jamais par-dessus un fichier qui n’est pas l’une de ses copies'),
+        B('assistant/outils_step', 'Il crée des pièces STEP : catalogue, contours du dessin', True,
+          tip='Dans le dossier « step » de ses copies ; jamais par-dessus un fichier qui n’est pas l’un des siens'),
         B('assistant/outils_commandes', 'Il lance les commandes du ruban', True,
           tip='Jamais celles qui enregistrent, exportent, impriment, ferment ou touchent aux réglages'),
         Opt('assistant/dossier_copies', 'Dossier des copies de l’assistant', 'folder', '',
@@ -410,6 +420,14 @@ SPEC: list[tuple[str, list[Opt]]] = [
     ('Raccourcis', []),                                  # demande du 19/11 : la page vient de ui/shortcuts.py
 ]
 BY_KEY = {o.key: o for _t, opts in SPEC for o in opts}
+#: les réglages de l'assistant montrés en mode Avancé seulement (demande du 20/11, 21 h 48) ; la recherche les trouve
+#: toujours
+ASSISTANT_ADVANCED = frozenset({
+    'assistant/modele_anthropic', 'assistant/modele_openai', 'assistant/modele_mistral', 'assistant/adresse_mistral',
+    'assistant/tours_max', 'assistant/devise', 'assistant/outils_memoire', 'assistant/outils_scripts',
+    'assistant/outils_fao', 'assistant/outils_copies', 'assistant/outils_step', 'assistant/outils_commandes', 'assistant/dossier_copies',
+    'assistant/dossier_modeles', 'assistant/taille_texte', 'assistant/couleur_vous', 'assistant/couleur_assistant',
+    'assistant/couleur_valeurs', 'assistant/couleur_outils', 'assistant/valeurs_couleur', 'assistant/montrer_outils'})
 #: onglets de la fenêtre, repris en boutons dans l'onglet Options du ruban : titre → (clé, icône)
 PAGES = {'Général': ('general', 'options'), 'Apparence': ('apparence', 'themes'), 'Dessin': ('dessin', 'bezier'),
          'Affichage': ('affichage', 'view_2d'), 'Fichiers': ('fichiers', 'open'), 'FAO': ('fao', 'cam'),
@@ -591,6 +609,10 @@ class OptionsDialog(QDialog):
             sc.setWidget(page)
             self.tabs.addTab(sc, tr(title))
         lay.addWidget(self.tabs, 1)
+        mode = self.widgets.get('assistant/mode')
+        if mode is not None:                             # Débutant : les réglages courants de l'assistant seulement
+            mode.currentIndexChanged.connect(lambda _i: self.filter_options(self.search.text()))
+            self.filter_options('')
         self.show_page(page_title)
         lay.addWidget(QLabel(tr('* au prochain démarrage')))
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -628,8 +650,11 @@ class OptionsDialog(QDialog):
         q = _fold(text.strip())
         found = 0
         per_tab: dict = {}
+        hidden = self._assistant_hidden()                # la note suit le mode, recherche ou non
+        if q:
+            hidden = set()                               # une recherche : tout ; sans : le mode Débutant les cache
         for tab, form, w, hay in self._rows:
-            on = not q or q in hay
+            on = (not q or q in hay) and id(w) not in hidden
             form.setRowVisible(w, on)
             per_tab[tab] = per_tab.get(tab, 0) + on
             found += on
@@ -642,6 +667,18 @@ class OptionsDialog(QDialog):
         if q and found and not per_tab.get(self.tabs.currentIndex(), 0):
             self.tabs.setCurrentIndex(next(i for i in range(self.tabs.count()) if per_tab.get(i, 0)))
         return found
+
+    def _assistant_hidden(self) -> set:
+        """Les widgets des réglages de l'assistant cachés : ceux du mode Avancé, quand le mode choisi (dans cette
+        fenêtre) est Débutant."""
+        mode = self.widgets.get('assistant/mode')
+        beginner = mode is not None and mode.currentData() == 'debutant'
+        note = getattr(self, 'assistant_note', None)
+        if note is not None:
+            note.setVisible(beginner)
+        if not beginner:
+            return set()
+        return {id(self.widgets[k]) for k in ASSISTANT_ADVANCED if k in self.widgets}
 
     def show_page(self, title: str | None) -> bool:
         """Onglet `title` (titre de SPEC, en français) au premier plan."""
@@ -747,6 +784,10 @@ class OptionsDialog(QDialog):
 
     def _widget(self, o: Opt) -> QWidget:
         v = value(self.settings, o.key)
+        if o.key == 'assistant/mode' and not self.settings.contains(o.key):
+            from ..agent import keys as _keys            # jamais choisi : celui du panneau (Avancé si une clé est
+            from .assistant_panel import mode_of         # retenue), écrit tel quel par OK
+            v = mode_of(self.settings, _keys)
         if o.kind == 'bool':
             w = QCheckBox()
             w.setChecked(bool(v))

@@ -7322,3 +7322,41 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 ### v0.984.0 — Assistant IA : Défaire d’un bouton IA
 
 - Le bouton **Défaire** de la fenêtre Garder / Défaire d’un bouton IA est branché comme les autres commandes (le clic ne passe plus de valeur à la commande).
+### v0.985.0 — Assistant IA : mode Débutant ou Avancé
+
+- En tête du panneau de l’assistant, **Mode** : **Débutant** (clé en main) ou **Avancé** (tous les réglages), aussi dans Options › Assistant. Jamais choisi : Débutant, ou Avancé si une clé est déjà retenue.
+- **Débutant** : sans clé, les **premiers pas** (le fournisseur, Mistral d’office ; « Obtenir une clé d’API » ; la clé à coller puis « Retenir ») ; la clé retenue, une seule ligne (fournisseur, clé, « Changer »). Des **exemples de demandes** tant que la discussion est vide : un clic les met dans la demande, à relire avant d’envoyer. Mémoire et Ajouter à une mémoire sous « Plus ».
+- **Avancé** : le modèle, l’adresse du serveur Mistral et tous les boutons. « Options… » ouvre les options de l’assistant.
+### v0.986.0 — Assistant IA : Garder ou Défaire à la fin d’une demande
+
+- Une demande finie qui a modifié le dessin : une fenêtre **Garder / Défaire** (ses modifications défaites d’un coup ; jamais celles d’avant, ni celles faites entre-temps). D’office en mode Débutant ; Options › Assistant › « Garder ou Défaire à la fin de chaque demande » : selon le mode, toujours ou jamais. Les boutons IA gardent leur propre contrôle final.
+### v0.987.0 — Assistant IA : des boutons IA tout prêts
+
+- La flèche du « + » des boutons IA : **Depuis un modèle** — Cadre autour, Centrer sur la plaque, Vérifier avant la FAO, Nettoyer le dessin, Préparer la FAO. Le bouton s’ouvre rempli (plan de travail, tâche, règles, contrôle final, outils), à relire et ajuster avant de le garder.
+### v0.988.0 — Assistant IA : profils (mode Avancé)
+
+- En mode Avancé, **Profil** : des réglages nommés retrouvés d’un clic — fournisseur, modèles, adresse du serveur, tours, outils permis, consignes, Garder ou Défaire. « Garder… » garde les réglages actuels sous un nom (le même nom : remplacé), le menu de « Retirer » retire un profil sans le prendre. Jamais la clé d’API, ni une valeur qui en a l’air ; jamais le plafond des dépenses (un profil ne le lève pas).
+### v0.989.0 — Assistant IA : vérifier la clé, enregistrer la discussion
+
+- **Vérifier** (à côté de « Retenir ») : une courte demande à part au fournisseur (quelques jetons ; ni la discussion, ni le dessin) ; « Connexion vérifiée », ou l’erreur en clair (clé refusée, modèle inconnu, pas de réseau, crédit épuisé).
+- Clic droit dans la discussion › **Enregistrer la discussion…** : en texte, Markdown ou HTML.
+### v0.990.0 — Options › Assistant selon le mode
+
+- En mode Débutant, la page **Options › Assistant** ne montre que les réglages courants (mode, fournisseur, Garder ou Défaire, plafond des dépenses, consignes, clés, prix) ; les autres (modèles, adresse, tours, outils permis, dossiers, couleurs de la discussion) en mode Avancé — le mode changé dans la fenêtre les montre aussitôt — ou trouvés par la recherche.
+### v0.991.0 — Assistant IA : pièces STEP (catalogue, contours du dessin)
+
+- L’assistant fait des pièces **STEP exactes** (plans, cylindres, cônes, sphères) :
+  - **débutant** : une pièce du catalogue (visserie, transmission, bruts, moule, bridage), ses paramètres vérifiés, au nom normalisé ;
+  - **avancé** : une pièce tirée des contours fermés du dessin, extrudée (trous débouchants, poches ou les deux) ou tournée.
+- Chaque fichier va dans le dossier **step** de ses copies, jamais par-dessus un fichier qui n’est pas l’un des siens, et il est **relu** aussitôt (faces, encombrement). Sur demande, la pièce est aussi posée en volume dans le dessin, en un pas d’annulation (une pièce des contours reste sur eux).
+- **Options › Assistant** : « Il crée des pièces STEP » (permis d’office ; mode Avancé) ; les boutons IA ont la case « Les pièces STEP ».
+### v0.992.0 — Assistant IA : pièces STEP décrites corps par corps (expert)
+
+- L’assistant décrit lui-même une pièce ou un **assemblage** : tranches le long de Z (cercles, rectangles arrondis, oblongs, polygones réguliers, polygones à arcs, cônes, sphères), profils tournés, **lamages, poches et perçages**, placements dans l’espace, pièces du catalogue (une vis posée dans sa plaque).
+- Un trou ne creuse que la matière (dans n’importe quel ordre : lamage puis perçage, ou l’inverse) ; un trou à côté de la pièce, une boucle qui se recoupe sont refusés. Tout est vérifié avant d’écrire ; un refus dit quel corps et ce qui ne va pas, l’assistant corrige et recommence. Il peut d’abord **mesurer sans écrire** (encombrement, volume).
+- Le format est dans sa documentation, avec un exemple (bride lamée percée).
+### v0.993.0 — Assistant IA : le STEP clé en main
+
+- Une suggestion de plus en mode Débutant : « Fais-moi une vis CHC M5 × 20 en STEP ».
+- Trois modèles de boutons IA (flèche du bouton « + ») : **Pièce STEP du dessin** (extrudée, trous et poches), **Pièce tournée STEP** (demi-profil), **Plaque et visserie STEP** (la plaque et une vis CHC dans chaque trou rond, en assemblage, vérifié avant d’écrire). Ils ne modifient pas le dessin.
+- Niveau expert : un corps peut être pris dans le dessin (`"drawing"` : les objets extrudés sur place, comme « pièce STEP du dessin ») et assemblé avec d’autres pièces ; ajouté au dessin, l’assemblage reste où sont ses contours.

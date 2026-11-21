@@ -24,7 +24,7 @@ CONTROL_LABELS = {'aucun': 'Aucun : appliqué tel quel', 'compte_rendu': 'Compte
                   'verification': 'Il vérifie son travail et dit ce qui est conforme',
                   'validation': 'Validation : Garder ou Défaire à la fin'}
 GROUP_LABELS = {'memory': 'Sa mémoire', 'scripts': 'Les scripts de forme', 'commands': 'Les commandes du ruban',
-                'cam': 'La FAO', 'copies': 'Les copies du dessin'}
+                'cam': 'La FAO', 'copies': 'Les copies du dessin', 'step': 'Les pièces STEP'}
 
 
 # --- le plan de travail et la demande ------------------------------------------------------------------------------
@@ -279,7 +279,7 @@ class ValidationBox(QMessageBox):
         super().__init__(panel)
         from .fit import release
         release(self)
-        self.setWindowTitle(tr('Bouton IA : {0}').format(b.label))
+        self.setWindowTitle(tr('Bouton IA : {0}').format(b.label) if b.id else tr('Assistant IA'))
         text = tr('L’assistant a fait {0} modification(s). Les garder ?').format(steps)
         if outside_changed:
             text += '\n\n' + tr('Attention : {0} objet(s) hors du plan de travail ont changé.').format(

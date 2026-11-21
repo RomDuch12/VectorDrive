@@ -21,7 +21,7 @@ MAX_INSTRUCTIONS = 4000
 #: les groupes d'outils qu'un réglage peut retirer : réglage → groupe de `agent.tools.ToolSet(without=…)`
 TOOL_GROUPS = {'assistant/outils_memoire': 'memory', 'assistant/outils_scripts': 'scripts',
                'assistant/outils_commandes': 'commands', 'assistant/outils_fao': 'cam',
-               'assistant/outils_copies': 'copies'}
+               'assistant/outils_copies': 'copies', 'assistant/outils_step': 'step'}
 
 
 def instructions(settings) -> str:
@@ -153,6 +153,11 @@ def _searchable(dlg, form, box, *words) -> None:
 def build(dlg, form, parent=None) -> None:
     """La fin de l'onglet Assistant de la fenêtre des options `dlg` (son formulaire `form`) ; ce qui se garde à OK
     passe par `dlg.on_accept`."""
+    note = QLabel(tr('Mode Débutant : les réglages courants seulement. Les autres (modèles, outils permis, '
+                     'dossiers, couleurs…) : mode Avancé, ou la recherche ci-dessus.'))
+    note.setWordWrap(True)
+    form.insertRow(1, note)                              # sous « Mode de l’assistant »
+    dlg.assistant_note = note
     from ..agent import keys
     from ..agent import tools as AT
     from ..agent.chat import KEY_PAGES, PROVIDERS

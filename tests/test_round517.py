@@ -30,7 +30,7 @@ class TestOptionsSearch(unittest.TestCase):
             self.assertGreater(dlg.filter_options('vnd/compagnon'), 0)  # par la clé
             self.assertEqual(dlg.filter_options('zzzz introuvable'), 0)
             total = dlg.filter_options('')
-            self.assertEqual(total, len(dlg._rows))
+            self.assertEqual(total, len(dlg._rows) - len(dlg._assistant_hidden()))   # Débutant : cachés
             self.assertTrue(all(dlg.tabs.isTabEnabled(i) for i in range(dlg.tabs.count())))
         finally:
             w.modified = False

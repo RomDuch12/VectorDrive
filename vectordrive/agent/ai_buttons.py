@@ -19,7 +19,7 @@ SCOPES = ('selection', 'calque', 'tous')
 #: contrôle final : rien de plus ; un compte rendu ; il vérifie son travail ; une fenêtre Garder / Défaire à la fin
 CONTROLS = ('aucun', 'compte_rendu', 'verification', 'validation')
 #: les groupes d'outils du panneau (`agent.tools.TOOL_GROUPS`) qu'un bouton peut permettre ou non
-GROUPS = ('memory', 'scripts', 'commands', 'cam', 'copies')
+GROUPS = ('memory', 'scripts', 'commands', 'cam', 'copies', 'step')
 MAX_BUTTONS = 40
 LABEL_MAX = 40
 TEXT_MAX = 4000
@@ -91,3 +91,48 @@ def save(settings, buttons) -> None:
 
 def find(settings, bid: str):
     return next((b for b in load(settings) if b.id == bid), None)
+
+
+#: les modèles de boutons (demande du 20/11, 21 h 48 : clé en main) : (libellé, plan de travail, tâche, règles,
+#: contrôle, outils) ; libellé, tâche et règles passés à tr() à la création
+TEMPLATES = (
+    ('Cadre autour', 'selection',
+     'Ajoute un rectangle à 5 mm autour de la sélection, coins arrondis de 2 mm, sur le calque actif.',
+     'Ne modifie pas les objets sélectionnés.', 'compte_rendu', ('memory',)),
+    ('Centrer sur la plaque', 'selection',
+     'Centre la sélection sur la plaque (la zone de travail), sans changer sa taille.',
+     '', 'compte_rendu', ('memory',)),
+    ('Vérifier avant la FAO', 'tous',
+     'Vérifie le dessin avant la FAO : contours ouverts, doublons superposés, objets minuscules, textes non '
+     'vectorisés, objets hors de la plaque. Liste ce que tu trouves, objet par objet.',
+     'Ne modifie rien : rends compte seulement.', 'verification', ('memory',)),
+    ('Nettoyer le dessin', 'tous',
+     'Supprime les doublons superposés et les objets de moins de 0,1 mm ; dis combien tu en as retiré.',
+     'Ne touche pas aux textes.', 'validation', ('memory',)),
+    ('Préparer la FAO', 'tous',
+     'Prépare la FAO du dessin : la machine si elle n’est pas choisie, des opérations adaptées (contour, poche, '
+     'gravure) avec des outils de la bibliothèque, puis le calcul des parcours ; dis ce qu’il faut vérifier.',
+     'Jamais le programme écrit sur le disque.', 'verification', ('memory', 'cam')),
+    # le STEP (demande du 20/11, 22 h) : débutant, avancé, expert
+    ('Pièce STEP du dessin', 'selection',
+     'Fais une pièce STEP extrudée des contours fermés sélectionnés : le plus extérieur est le bord, les contours '
+     'ronds des trous débouchants, les autres des poches de 2 mm ; épaisseur 10 mm. Relis le fichier et donne '
+     'l’encombrement et le volume.', 'Ne modifie pas le dessin.', 'verification', ('memory', 'step')),
+    ('Pièce tournée STEP', 'selection',
+     'Fais une pièce STEP tournée du demi-profil fermé sélectionné (l’axe : le trait droit sélectionné avec lui, '
+     'sinon la verticale par son point le plus à gauche). Relis le fichier et donne les diamètres et la longueur.',
+     'Ne modifie pas le dessin.', 'verification', ('memory', 'step')),
+    ('Plaque et visserie STEP', 'selection',
+     'Fais un assemblage STEP avec step_build : la plaque extrudée de 10 mm des contours sélectionnés (un corps '
+     '« drawing », trous ronds débouchants), et dans chaque trou rond la vis CHC ISO 4762 qui y passe (le plus grand '
+     'diamètre nominal qui laisse du jeu), son axe au centre du trou, tête posée sur le dessus, longueur la plus '
+     'proche de 1,5 fois l’épaisseur. Vérifie d’abord sans écrire.',
+     'Ne modifie pas le dessin. Un trou sans vis qui convienne : dis-le.', 'verification', ('memory', 'step')),
+)
+
+
+def template(i: int, tr=lambda t: t) -> AIButton:
+    """Le modèle `i`, prêt à être relu et gardé (un nouvel identifiant)."""
+    label, scope, task, rules, control, tools = TEMPLATES[i]
+    return AIButton(label=tr(label), scope=scope, task=tr(task), rules=tr(rules) if rules else '',
+                    control=control, tools=list(tools)).clean()

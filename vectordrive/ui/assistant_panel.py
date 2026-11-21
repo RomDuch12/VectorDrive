@@ -32,6 +32,25 @@ from ..i18n import tr
 KEY_PROVIDER = 'assistant/fournisseur'
 KEY_MODEL = 'assistant/modele_{0}'
 KEY_URL = 'assistant/adresse_mistral'
+KEY_MODE = 'assistant/mode'
+#: les modes (demande du 20/11, 21 h 48) : Débutant, clé en main ; Avancé, tous les réglages
+MODES = (('debutant', 'Débutant'), ('avance', 'Avancé'))
+#: des exemples de demandes (mode Débutant, discussion vide)
+SUGGESTIONS = ('Décris ce dessin : calques, objets, dimensions',
+               'Ajoute un cadre à 5 mm autour de la sélection',
+               'Aligne les objets sélectionnés sur leur centre',
+               'Prépare la FAO de ce dessin et dis-moi ce qu’il faut vérifier',
+               'Fais-moi une vis CHC M5 × 20 en STEP',
+               'Que sais-tu faire dans VectorDrive ?')
+
+
+def mode_of(settings, keys) -> str:
+    """Le mode retenu ; jamais choisi : Avancé si une clé est déjà retenue (l'assistant servait déjà), sinon Débutant."""
+    from ..agent.chat import PROVIDERS
+    v = str(settings.value(KEY_MODE, '') or '') if settings is not None else ''
+    if v in dict(MODES):
+        return v
+    return 'avance' if any(keys.stored(p) for p in PROVIDERS) else 'debutant'
 
 #: les couleurs de la discussion (lisibles sur fond clair ou sombre) : vous, l'assistant, les valeurs de ses réponses
 C_USER, C_BOT, C_VALUE = '#1f6fd1', '#2e8b3e', '#c0661a'
@@ -106,6 +125,17 @@ class PlainInput(QPlainTextEdit):
         return _plain_mime(self)
 
 
+class _CheckTools:
+    # les « outils » de « Vérifier » : un seul, sans effet (certains fournisseurs refusent une liste vide)
+
+    def specs(self):
+        return [{'name': 'ping', 'description': 'Not needed: answer with text only.',
+                 'inputSchema': {'type': 'object', 'properties': {}, 'required': []}, 'annotations': {}}]
+
+    def call(self, name, arguments):
+        return [{'type': 'text', 'text': 'pong'}]
+
+
 class AssistantPanel(QWidget):
     """`win` : la fenêtre principale. `client_for(fournisseur)` : un client déjà fait (essais), sinon None."""
 
@@ -131,6 +161,47 @@ class AssistantPanel(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
+        # le mode (demande du 20/11, 21 h 48) : Débutant, clé en main ; Avancé, tous les réglages
+        self._setup_open = False                         # Débutant : « Changer » a rouvert le fournisseur et la clé
+        self.suggest_box = None
+        top = QHBoxLayout()
+        top.addWidget(QLabel(tr('Mode')))
+        self.mode = QComboBox()
+        for k, label in MODES:
+            self.mode.addItem(tr(label), k)
+        self.mode.setToolTip(tr('Débutant : clé en main (premiers pas, exemples de demandes) ; Avancé : tous les '
+                                'réglages'))
+        m = mode_of(st, keys)
+        st.setValue(KEY_MODE, m)                         # retenu : les options (F10) le montrent aussi
+        self.mode.setCurrentIndex(max(0, self.mode.findData(m)))
+        top.addWidget(self.mode, 1)
+        self.btn_options = QPushButton(tr('Options…'))
+        self.btn_options.setToolTip(tr('Les options de l’assistant (F10 › Assistant) : outils permis, consignes, '
+                                       'crédits, discussion'))
+        self.btn_options.clicked.connect(lambda _=False: self.open_options())
+        top.addWidget(self.btn_options)
+        lay.addLayout(top)
+        # les profils (mode Avancé) : des réglages nommés retrouvés d'un clic (jamais la clé)
+        self.profile_box = QWidget()
+        prow = QHBoxLayout(self.profile_box)
+        prow.setContentsMargins(0, 0, 0, 0)
+        prow.addWidget(QLabel(tr('Profil')))
+        self.profile = QComboBox()
+        self.profile.setToolTip(tr('Des réglages nommés : fournisseur, modèle, adresse, outils permis, consignes, '
+                                   'tours (jamais la clé d’API ni le plafond des dépenses)'))
+        prow.addWidget(self.profile, 1)
+        self.btn_profile_save = QPushButton(tr('Garder…'))
+        self.btn_profile_save.setToolTip(tr('Les réglages actuels gardés sous un nom (le même nom : remplacé)'))
+        self.btn_profile_save.clicked.connect(lambda _=False: self.keep_profile())
+        prow.addWidget(self.btn_profile_save)
+        self.btn_profile_del = QPushButton(tr('Retirer'))
+        self.btn_profile_del.setToolTip(tr('Un profil choisi dans le menu, retiré (les réglages actuels restent)'))
+        from PySide6.QtWidgets import QMenu
+        self.btn_profile_del.setMenu(QMenu(self.btn_profile_del))
+        prow.addWidget(self.btn_profile_del)
+        lay.addWidget(self.profile_box)
+        self.fill_profiles()
+        self.profile.activated.connect(lambda i: self.use_profile(self.profile.itemData(i)))
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         self.provider = QComboBox()
@@ -145,13 +216,24 @@ class AssistantPanel(QWidget):
         self.url.setPlaceholderText('https://api.mistral.ai/v1/chat/completions')
         self.url.setToolTip(tr('Adresse du serveur : celle de Mistral d’office ; un serveur local du même format convient'))
         self.lbl_url = QLabel(tr('Adresse'))
-        grid.addWidget(QLabel(tr('Fournisseur')), 0, 0)
+        self.lbl_provider = QLabel(tr('Fournisseur'))
+        self.lbl_model = QLabel(tr('Modèle'))
+        grid.addWidget(self.lbl_provider, 0, 0)
         grid.addWidget(self.provider, 0, 1)
-        grid.addWidget(QLabel(tr('Modèle')), 1, 0)
+        grid.addWidget(self.lbl_model, 1, 0)
         grid.addWidget(self.model, 1, 1)
         grid.addWidget(self.lbl_url, 2, 0)
         grid.addWidget(self.url, 2, 1)
         grid.setColumnStretch(1, 1)
+        self.steps = QLabel(tr('<b>Premiers pas</b> : 1. choisissez le fournisseur (Mistral d’office) ; 2. « Obtenir '
+                               'une clé d’API » : un compte chez lui, un abonnement Le Chat, ChatGPT ou Claude.ai n’en '
+                               'donne pas ; 3. collez la clé ci-dessous, puis « Retenir ».'))
+        self.steps.setWordWrap(True)
+        lay.addWidget(self.steps)
+        self.summary = QLabel('')                        # Débutant, une clé : fournisseur, clé, « Changer »
+        self.summary.setWordWrap(True)
+        self.summary.linkActivated.connect(self._open_setup)
+        lay.addWidget(self.summary)
         lay.addLayout(grid)
 
         row = QHBoxLayout()
@@ -172,6 +254,12 @@ class AssistantPanel(QWidget):
         self.btn_save.setToolTip(tr('Gardée dans le gestionnaire d’identifiants de Windows, jamais dans les réglages'))
         self.btn_save.clicked.connect(self.save_key)
         row.addWidget(self.btn_save)
+        self.btn_check = QPushButton(tr('Vérifier'))
+        self.btn_check.setToolTip(tr('Une courte demande au fournisseur (quelques jetons) : la clé, le modèle et le '
+                                     'réseau vérifiés ; la réponse ou l’erreur en clair'))
+        self.btn_check.clicked.connect(lambda _=False: self.check_key())
+        row.addWidget(self.btn_check)
+        self._checking = False
         lay.addLayout(row)
         self.get_key = QLabel('')
         self.get_key.setOpenExternalLinks(False)
@@ -191,9 +279,25 @@ class AssistantPanel(QWidget):
         self._reply_at = None
         self.view = self._new_view()
         lay.addWidget(self.stack, 1)
+        from .flow import FlowLayout
+        box = QWidget()                                  # Débutant, discussion vide : des exemples de demandes
+        flow = FlowLayout(box)
+        flow.setContentsMargins(0, 0, 0, 0)
+        flow.addWidget(QLabel(tr('Exemples :')))
+        self.suggestions = []
+        for text in SUGGESTIONS:
+            from PySide6.QtWidgets import QToolButton
+            b = QToolButton()
+            b.setText(tr(text))
+            b.setAutoRaise(True)
+            b.setToolTip(tr('Mis dans la demande, à relire ou compléter avant d’envoyer'))
+            b.clicked.connect(lambda _=False, t=tr(text): self.use_suggestion(t))
+            flow.addWidget(b)
+            self.suggestions.append(b)
         self.input = PlainInput()
         self.input.setPlaceholderText(tr('Votre demande (Ctrl+Entrée : envoyer)'))
         self.input.setMaximumHeight(self.input.fontMetrics().lineSpacing() * 5 + 12)
+        lay.addWidget(box)
         lay.addWidget(self.input)
         self.input.installEventFilter(self)              # Ctrl+Entrée : envoyer (l'éditeur la prendrait pour lui)
         row = QHBoxLayout()
@@ -211,7 +315,15 @@ class AssistantPanel(QWidget):
         self.btn_add_memory.setToolTip(tr('Les opérations faites sur ce dessin, dans une mémoire nouvelle ou existante '
                                           '(titre, description) que l’assistant lit quand elle sert'))
         self.btn_add_memory.clicked.connect(lambda _=False: self.add_to_memory())
-        for b in (self.btn_send, self.btn_stop, self.btn_new, self.btn_memory, self.btn_add_memory):
+        from PySide6.QtWidgets import QMenu, QToolButton
+        self.btn_more = QToolButton()                    # Débutant : Mémoire et Ajouter à une mémoire, rangés ici
+        self.btn_more.setText(tr('Plus'))
+        self.btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more = QMenu(self.btn_more)
+        more.addAction(tr('Mémoire…'), lambda: self.edit_memory())
+        more.addAction(tr('Ajouter à une mémoire…'), lambda: self.add_to_memory())
+        self.btn_more.setMenu(more)
+        for b in (self.btn_send, self.btn_stop, self.btn_new, self.btn_memory, self.btn_add_memory, self.btn_more):
             row.addWidget(b)
         lay.addLayout(row)
         # les boutons IA personnalisés (demande du 20/11, 15 h 32) : leur rangée, « + » pour en créer
@@ -238,6 +350,8 @@ class AssistantPanel(QWidget):
         self.relay.usage.connect(self._on_usage)
 
         self.provider.currentIndexChanged.connect(lambda _i: self._provider_changed())
+        self.mode.currentIndexChanged.connect(lambda _i: self._mode_changed())
+        self.suggest_box = box
         self.model.currentTextChanged.connect(lambda t: st.setValue(KEY_MODEL.format(self.slug()), t.strip()))
         self.url.editingFinished.connect(lambda: st.setValue(KEY_URL, self.url.text().strip()))
         self._provider_changed()
@@ -263,6 +377,7 @@ class AssistantPanel(QWidget):
         m = v.createStandardContextMenu(pos)
         m.addSeparator()
         m.addAction(tr('Copier toute la discussion'), lambda: QApplication.clipboard().setText(v.toPlainText()))
+        m.addAction(tr('Enregistrer la discussion…'), lambda: self.save_discussion())
         m.exec(v.viewport().mapToGlobal(pos))
         m.deleteLater()
 
@@ -304,6 +419,7 @@ class AssistantPanel(QWidget):
             self.view, self.conv, self._conv_key = self._new_view(), None, None
         self.stack.setCurrentWidget(self.view)
         self._show_credits()
+        self._apply_mode()                               # les exemples : selon la discussion de cet onglet
 
     def _runner(self, holder):
         """L'exécution des outils d'une discussion : dans le fil de l'interface, sur l'onglet de la discussion
@@ -352,8 +468,6 @@ class AssistantPanel(QWidget):
         self.model.addItems(list(models))
         self.model.setEditText(str(self.win.settings.value(KEY_MODEL.format(p), '') or default))
         self.model.blockSignals(False)
-        self.lbl_url.setVisible(p == 'mistral')
-        self.url.setVisible(p == 'mistral')
         from ..agent.chat import KEY_PAGES
         self.get_key.setText('<a href="{0}">{1}</a>'.format(html.escape(KEY_PAGES[p]),
                                                            html.escape(tr('Obtenir une clé d’API'))))
@@ -370,6 +484,222 @@ class AssistantPanel(QWidget):
             text = tr('Aucune clé : collez celle du fournisseur ci-dessous')
         self.key_state.setText(text)
         self.btn_forget.setEnabled(self.keys.stored(p))
+        self._apply_mode()
+
+    # --- le mode : Débutant (clé en main) ou Avancé (demande du 20/11, 21 h 48) ------------------------------------
+    def advanced(self) -> bool:
+        return self.mode.currentData() == 'avance'
+
+    def _mode_changed(self) -> None:
+        self.win.settings.setValue(KEY_MODE, self.mode.currentData())
+        self._setup_open = False
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        """Ce que montre le panneau selon le mode. Débutant : sans clé, les premiers pas (fournisseur, lien, clé) ;
+        avec une clé, une ligne (fournisseur, clé, « Changer ») ; des exemples de demandes tant que la discussion est
+        vide ; Mémoire et Ajouter à une mémoire sous « Plus ». Avancé : tout."""
+        if getattr(self, 'suggest_box', None) is None:   # en construction
+            return
+        adv = self.advanced()
+        p = self.slug()
+        has_key = bool(self.keys.load(p))
+        setup = adv or not has_key or self._setup_open
+        for w in (self.lbl_provider, self.provider, self.key_state, self.btn_forget, self.key, self.btn_save,
+                  self.get_key, self.btn_check):
+            w.setVisible(setup)
+        self.btn_check.setEnabled(has_key and not self.running)
+        tuned = adv or self._setup_open                  # « Changer » : le modèle et l'adresse aussi (ils servent)
+        for w in (self.lbl_model, self.model):
+            w.setVisible(tuned)
+        for w in (self.lbl_url, self.url):
+            w.setVisible(tuned and p == 'mistral')
+        self.steps.setVisible(not adv and not has_key)
+        brief = not adv and has_key                      # la ligne courte : ce qui sert, et Changer / Masquer
+        self.summary.setVisible(brief)
+        if brief:
+            source = tr('clé retenue') if self.keys.stored(p) else tr('clé de la variable {0}').format(
+                self.providers[p][3])
+            parts = [self.providers[p][0], self.model.currentText().strip(), source]
+            if p == 'mistral' and self.url.text().strip():
+                parts.insert(2, self.url.text().strip())  # un serveur choisi : dit, puisqu'il sert
+            self.summary.setText('{0} · <a href="setup">{1}</a>'.format(
+                ' · '.join(html.escape(x) for x in parts if x),
+                html.escape(tr('Masquer') if self._setup_open else tr('Changer'))))
+        for w in (self.btn_memory, self.btn_add_memory):
+            w.setVisible(adv)
+        self.btn_more.setVisible(not adv)
+        self.profile_box.setVisible(adv)
+        self.suggest_box.setVisible(not adv and not getattr(self, 'running', False) and not self.view.toPlainText().strip())
+
+    def _open_setup(self, _link=None) -> None:
+        """« Changer » : le fournisseur, le modèle et la clé, montrés (mode Débutant) ; « Masquer » : la ligne courte
+        seule."""
+        self._setup_open = not self._setup_open
+        self._apply_mode()
+        if self._setup_open:
+            self.key.setFocus()
+
+    # --- les profils (mode Avancé) -------------------------------------------------------------------------------
+    def fill_profiles(self, current: str = '') -> None:
+        from . import assistant_profiles as PR
+        self.profile.blockSignals(True)
+        self.profile.clear()
+        self.profile.addItem(tr('— réglages actuels —'), '')
+        for p in PR.load(self.win.settings):
+            self.profile.addItem(p['name'], p['name'])
+        self.profile.setCurrentIndex(max(0, self.profile.findData(current)) if current else 0)
+        self.profile.blockSignals(False)
+        menu = self.btn_profile_del.menu()               # Retirer : un profil choisi dans son menu, sans le prendre
+        menu.clear()
+        for p in PR.load(self.win.settings):
+            menu.addAction(p['name'], lambda n=p['name']: self.remove_profile(n))
+        self.btn_profile_del.setEnabled(not menu.isEmpty())
+
+    def use_profile(self, name) -> bool:
+        """Les réglages du profil `name` pris (la prochaine demande : une nouvelle discussion s'ils changent)."""
+        from . import assistant_profiles as PR
+        if not name:
+            return False
+        if self.running:
+            self.status.setText(tr('Une demande est en cours : attendez sa fin, ou Arrêter'))
+            self.fill_profiles()
+            return False
+        p = PR.find(self.win.settings, name)
+        if p is None:
+            self.fill_profiles()
+            return False
+        PR.apply(self.win.settings, p['values'])
+        self.apply_settings()                            # fournisseur, modèle, adresse ; le reste : à la demande
+        self.fill_profiles(p['name'])
+        self.status.setText(tr('Profil « {0} » : ses réglages pris').format(p['name']))
+        return True
+
+    def keep_profile(self, name=None):
+        """Les réglages actuels gardés sous un nom (demandé si `name` est None ; le même nom : remplacé)."""
+        from . import assistant_profiles as PR
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, tr('Garder un profil'), tr('Nom du profil'),
+                                            text=self.profile.currentData() or '')
+            if not ok:
+                return None
+        got = PR.keep(self.win.settings, name)
+        if got is None:
+            self.status.setText(tr('Profil refusé : un nom, et au plus {0} profils').format(PR.MAX_PROFILES))
+            return None
+        self.fill_profiles(got)
+        self.status.setText(tr('Profil « {0} » gardé (jamais la clé d’API)').format(got))
+        return got
+
+    def remove_profile(self, name=None) -> bool:
+        """Le profil `name` retiré (sinon celui de la liste) ; les réglages actuels restent."""
+        from . import assistant_profiles as PR
+        if not isinstance(name, str):
+            name = self.profile.currentData()
+        if not name or not PR.remove(self.win.settings, name):
+            return False
+        current = self.profile.currentData()
+        self.fill_profiles(current if current and PR.find(self.win.settings, current) else '')
+        self.status.setText(tr('Profil « {0} » retiré').format(name))
+        return True
+
+    def use_suggestion(self, text: str) -> None:
+        """Un exemple de demande : mis dans la demande, à relire ou compléter avant d'envoyer."""
+        self.input.setPlainText(text)
+        self.input.setFocus()
+
+    def validate_requests(self) -> bool:
+        """Garder ou Défaire à la fin de chaque demande : réglage « assistant/valider » (selon le mode : Débutant
+        oui, Avancé non)."""
+        v = self._option('assistant/valider')
+        return v == 'oui' or (v == 'mode' and not self.advanced())
+
+    def _request_run(self) -> dict:
+        """Le suivi d'une demande tapée, comme celui d'un bouton IA au contrôle « validation » (tout le dessin)."""
+        from ..agent import ai_buttons as AB
+        stack = self.win._undo
+        b = AB.AIButton(id='', label=tr('Votre demande'), scope='tous', control='validation')
+        return {'button': b, 'pushes': getattr(self.win, '_undo_pushes', 0), 'tool_steps': 0, 'stack': stack,
+                'mark': stack[-1] if stack else None, 'outside': {}, 'doc': self.win.canvas.doc}
+
+    def open_options(self, exec_dialog: bool = True):
+        """Les options de l'assistant (F10 › Assistant)."""
+        return self.win.options_dialog(exec_dialog=exec_dialog, page='Assistant')
+
+    def check_key(self) -> bool:
+        """« Vérifier » : une courte demande à part (quelques jetons : ni la discussion, ni ses outils, ni le dessin —
+        ses crédits comptent pour la session seulement) ; « Connexion vérifiée », ou l'erreur en clair (clé refusée,
+        modèle inconnu, pas de réseau…)."""
+        if self.running:
+            return False
+        p = self.slug()
+        if not self.keys.load(p) and self.client_for(p) is None:
+            self.status.setText(tr('Il faut une clé d’API du fournisseur (lien ci-dessus)'))
+            return False
+        from ..agent import credits as CR
+        limit = CR.cap(self.win.settings)
+        if limit > 0 and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
+            self.status.setText(tr('Plafond des dépenses de la session atteint'))
+            return False
+        from ..agent.chat import Conversation
+        p, model, url, api_key = self._settings_key()[:4]
+        try:
+            conv = Conversation(p, model, api_key, _CheckTools(), url=url, client=self.client_for(p),
+                                system='Connection check: answer with the single word OK.', max_steps=1)
+        except (ImportError, ValueError) as ex:
+            self.status.setText(tr('Vérification impossible : {0}').format(ex))
+            return False
+        conv.on_usage = lambda used, c=conv: self.relay.usage.emit((None, c.provider, c.model, used))
+        self._checking = True
+        try:
+            self._running = conv
+            self._busy(True)
+            self.status.setText(tr('Vérification de la connexion…'))
+            self._thread = threading.Thread(target=self._work, daemon=True, name='vectordrive-assistant-check',
+                                            args=(conv, tr('Vérification de la connexion : réponds seulement « OK ».')))
+            self._thread.start()
+        except Exception:
+            self._checking = False
+            self._thread = None
+            self._busy(False)
+            raise
+        return True
+
+    def save_discussion(self, path=None):
+        """La discussion de l'onglet affiché dans un fichier : texte (.txt, .md) ou HTML (.html) ; rend le chemin, None
+        si rien n'est écrit."""
+        if not self.view.toPlainText().strip():
+            self.status.setText(tr('La discussion est vide'))
+            return None
+        if path is None:
+            from PySide6.QtWidgets import QFileDialog
+            import pathlib as _pl
+            path, chosen = QFileDialog.getSaveFileName(self, tr('Enregistrer la discussion'),
+                                                       str(_pl.Path.home() / 'discussion.txt'),
+                                                       tr('Texte (*.txt);;Markdown (*.md);;HTML (*.html)'))
+            if not path:
+                return None
+            if not _pl.Path(path).suffix:                # le filtre choisi donne l'extension
+                path += '.html' if '*.html' in chosen else '.md' if '*.md' in chosen else '.txt'
+        import pathlib
+        p = pathlib.Path(path)
+        ext = p.suffix.lower()
+        text = (self.view.toHtml() if ext in ('.html', '.htm') else self.view.document().toMarkdown()
+                if ext == '.md' else self.view.toPlainText())
+        tmp = p.with_name(p.name + '.~vd')
+        try:
+            tmp.write_text(text, encoding='utf-8')
+            tmp.replace(p)
+        except OSError as ex:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            self.status.setText(tr('Discussion non enregistrée : {0}').format(ex))
+            return None
+        self.status.setText(tr('Discussion enregistrée : {0}').format(p.name))
+        return str(p)
 
     def save_key(self) -> None:
         k = self.key.text().strip()
@@ -379,6 +709,7 @@ class AssistantPanel(QWidget):
         self.key.clear()
         self.status.setText(tr('Clé retenue dans le gestionnaire d’identifiants de Windows') if kept
                             else tr('Clé retenue pour cette session seulement'))
+        self._setup_open = False                         # Débutant : la ligne courte revient
         self._key_state()
 
     def forget_key(self) -> None:
@@ -413,6 +744,9 @@ class AssistantPanel(QWidget):
         """Les options (F10 › Assistant) reprises : fournisseur, modèle, adresse, taille du texte ; la prochaine
         demande prend les autres (outils, consignes, tours : une nouvelle discussion)."""
         st = self.win.settings
+        m = self.mode.findData(mode_of(st, self.keys))
+        if m >= 0 and m != self.mode.currentIndex():
+            self.mode.setCurrentIndex(m)                 # → _mode_changed
         k = self.provider.findData(str(st.value(KEY_PROVIDER, 'mistral') or 'mistral'))
         if k >= 0 and k != self.provider.currentIndex():
             self.provider.setCurrentIndex(k)             # → _provider_changed
@@ -493,10 +827,13 @@ class AssistantPanel(QWidget):
         self._replying = False
         self._running = conv                             # « Arrêter » la trouve même si la discussion est refaite
         self._busy(True)
+        if getattr(self, '_button_run', None) is None and self.validate_requests():
+            self._button_run = self._request_run()       # Garder ou Défaire à la fin (un bouton IA : le sien)
         self.status.setText(tr('L’assistant réfléchit…'))
         self._thread = threading.Thread(target=self._work, args=(conv, text), daemon=True,
                                         name='vectordrive-assistant')
         self._thread.start()
+        self.suggest_box.setVisible(False)
         return True
 
     def _work(self, conv, text: str) -> None:
@@ -606,8 +943,16 @@ class AssistantPanel(QWidget):
         add = QToolButton()
         add.setText('+')
         add.setToolTip(tr('Nouveau bouton IA : un plan de travail, une tâche, des règles, le contrôle final, une '
-                          'mémoire'))
+                          'mémoire ; la flèche : depuis un modèle tout prêt'))
         add.clicked.connect(lambda _=False: self.new_ai_button())
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(add)                                # les modèles (demande du 20/11, 21 h 48 : clé en main)
+        menu.addAction(tr('Nouveau bouton IA…'), lambda: self.new_ai_button())
+        menu.addSection(tr('Depuis un modèle'))
+        for i, t in enumerate(AB.TEMPLATES):
+            menu.addAction(tr(t[0]), lambda _=False, i=i: self.new_ai_button(template=i))
+        add.setMenu(menu)
+        add.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.ai_row.addWidget(add)
         self.ai_add = add
 
@@ -627,8 +972,9 @@ class AssistantPanel(QWidget):
         self.win.refresh_favorites()
         self.fill_ai_buttons()
 
-    def new_ai_button(self, exec_dialog: bool = True, source=None):
-        """Un nouveau bouton IA (`source` : un bouton à dupliquer). Rend la fenêtre."""
+    def new_ai_button(self, exec_dialog: bool = True, source=None, template=None):
+        """Un nouveau bouton IA (`source` : un bouton à dupliquer ; `template` : le numéro d'un modèle tout prêt).
+        Rend la fenêtre."""
         import dataclasses
         from ..agent import ai_buttons as AB
         from .assistant_buttons import ButtonDialog
@@ -638,8 +984,10 @@ class AssistantPanel(QWidget):
         start = None
         if source is not None:
             start = dataclasses.replace(source, id=AB.AIButton().id, label=(source.label + ' 2')[:AB.LABEL_MAX])
+        elif isinstance(template, int) and not isinstance(template, bool) and 0 <= template < len(AB.TEMPLATES):
+            start = AB.template(template, tr)
         d = ButtonDialog(self.win, start, favorite=True, parent=self)
-        if source is None or start is None:
+        if source is None:
             d.setWindowTitle(tr('Nouveau bouton IA'))
 
         def kept():
@@ -764,12 +1112,26 @@ class AssistantPanel(QWidget):
         if self.win.canvas.doc is not run['doc']:        # un autre onglet entre-temps : rien à comparer ici
             if b.control == 'validation' and steps > 0:
                 self.status.setText(tr('Le dessin du bouton « {0} » n’est plus affiché : Garder ou Défaire impossible '
-                                       'ici (Ctrl+Z sur son onglet)').format(b.label))
+                                       'ici (Ctrl+Z sur son onglet)').format(b.label) if b.id else
+                                    tr('Le dessin de la demande n’est plus affiché : Garder ou Défaire impossible ici '
+                                       '(Ctrl+Z sur son onglet)'))
             return
         moved = UB.changed(run['outside'], self.win)
         if moved:
             self.status.setText(tr('Attention : {0} objet(s) hors du plan de travail ont changé (Ctrl+Z pour '
                                    'revenir)').format(len(moved)))
+        stack, mark = run['stack'], run['mark']
+        only_its = getattr(self.win, '_undo_pushes', 0) - run['pushes'] == steps   # rien d'autre posé pendant
+        if b.control == 'validation' and steps > 0 and only_its and self.win._undo is stack:
+            at = -1 if mark is None else next((i for i in range(len(stack) - 1, -1, -1) if stack[i] is mark), None)
+            if at is not None:                           # ce qui reste de ses pas (l'outil « undo » en retire)
+                steps = len(stack) - 1 - at
+        if b.control == 'validation' and steps > 0 and not only_its:
+            self.status.setText(tr('D’autres modifications ont été faites pendant le bouton « {0} » : Ctrl+Z à la '
+                                   'main pour défaire').format(b.label) if b.id else
+                                tr('D’autres modifications ont été faites pendant la demande : Ctrl+Z à la main pour '
+                                   'défaire'))
+            return
         if b.control == 'validation' and steps > 0:
             prev = getattr(self, 'validation_box', None)
             if prev is not None:                         # celle d'un lancement d'avant : remplacée
@@ -779,8 +1141,6 @@ class AssistantPanel(QWidget):
                 except RuntimeError:                     # déjà détruite
                     pass
             box = UB.ValidationBox(self, b, steps, moved)
-            stack, mark = run['stack'], run['mark']
-            only_its = getattr(self.win, '_undo_pushes', 0) - run['pushes'] == steps   # rien d'autre posé pendant
             top = stack[-1] if stack else None
 
             def its_own() -> bool:
@@ -796,11 +1156,13 @@ class AssistantPanel(QWidget):
                     self.status.setText(tr('Une demande est en cours : attendez sa fin, ou Arrêter'))
                     return
                 if self.win.canvas.doc is not run['doc'] or not its_own():
-                    self.status.setText(tr('D’autres modifications que celles du bouton : Ctrl+Z à la main'))
+                    self.status.setText(tr('D’autres modifications que celles du bouton : Ctrl+Z à la main') if b.id
+                                        else tr('D’autres modifications que celles de la demande : Ctrl+Z à la main'))
                     return
                 for _ in range(steps):
                     self.win.undo()
-                self.status.setText(tr('Modifications du bouton « {0} » défaites').format(b.label))
+                self.status.setText(tr('Modifications du bouton « {0} » défaites').format(b.label) if b.id
+                                    else tr('Modifications de la demande défaites'))
             box.undo_button.clicked.connect(lambda _=False: undo())   # « clicked » passe un booléen
             self.validation_box = box
             box.show()                                   # pas open() : modale à la fenêtre, elle bloquerait l'assistant
@@ -831,6 +1193,7 @@ class AssistantPanel(QWidget):
         self._conv_key = None
         self.view.clear()
         self.status.setText('')
+        self._apply_mode()
 
     def shutdown(self) -> None:
         """La fenêtre se ferme : la demande en cours s'arrête, aucun outil ne s'exécute plus."""
@@ -860,7 +1223,14 @@ class AssistantPanel(QWidget):
         self.btn_new.setEnabled(not on)
         for w in (self.provider, self.model, self.url, self.key, self.btn_save):
             w.setEnabled(not on)
+        if hasattr(self, 'btn_check'):
+            self.btn_check.setEnabled(not on and bool(self.keys.load(self.slug())))
         self.btn_forget.setEnabled(not on and self.keys.stored(self.slug()))
+        box = getattr(self, 'validation_box', None)
+        if box is not None:                              # pendant une demande : pas de Défaire (sa boîte se fermerait)
+            from shiboken6 import isValid
+            if isValid(box):
+                box.undo_button.setEnabled(not on)
 
     def _target(self) -> QTextBrowser:
         out = self._out
@@ -1010,14 +1380,19 @@ class AssistantPanel(QWidget):
 
     def _on_done(self, message: str) -> None:
         self._thread = None                              # dit en dernier par le fil : la demande est finie
-        self._busy(False)
-        self.status.setText(message)
-        self._finish_reply()
-        self._replying = False
-        if message:
-            self._line('<i style="color:#a05a00">{0}</i>'.format(html.escape(message)), raw=True)
-        self._out = None
         try:
-            self._after_button()
+            self._busy(False)
+            if getattr(self, '_checking', False):        # « Vérifier » : pas d'erreur, la connexion est bonne
+                self._checking = False
+                message = message or tr('Connexion vérifiée : le fournisseur répond')
+            self.status.setText(message)
+            self._finish_reply()
+            self._replying = False
+            if message:
+                self._line('<i style="color:#a05a00">{0}</i>'.format(html.escape(message)), raw=True)
+            self._out = None
         finally:
-            self._override = None                        # la demande suivante : les réglages des options
+            try:
+                self._after_button()                     # toujours : `_button_run` vidé
+            finally:
+                self._override = None                    # la demande suivante : les réglages des options
