@@ -377,7 +377,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Une demande finie qui a modifié le dessin : ses modifications gardées, ou défaites d’un coup ; '
               'les boutons IA ont leur propre contrôle final'),
         C('assistant/fournisseur', 'Fournisseur', 'mistral',
-          [('mistral', 'Mistral'), ('anthropic', 'Claude (Anthropic)'), ('openai', 'ChatGPT (OpenAI)')],
+          [('mistral', 'Mistral'), ('local', 'Mistral en local (Ollama)'), ('anthropic', 'Claude (Anthropic)'),
+           ('openai', 'ChatGPT (OpenAI)')],
           tip='Celui de la discussion ; aussi choisi dans le panneau de l’assistant'),
         Opt('assistant/modele_anthropic', 'Modèle Claude', 'text', '',
             tip='Vide : celui d’office ; un autre nom peut être écrit'),
@@ -387,6 +388,14 @@ SPEC: list[tuple[str, list[Opt]]] = [
             tip='Vide : celui d’office ; un autre nom peut être écrit'),
         Opt('assistant/adresse_mistral', 'Adresse du serveur Mistral', 'text', '',
             tip='Vide : celle de Mistral ; un serveur local du même format convient'),
+        Opt('assistant/modele_local', 'Modèle Mistral en local', 'text', '',
+            tip='Vide : celui d’office (Ministral 3 8B) ; le palier de votre carte graphique : plus bas, '
+                '« Mistral en local (Ollama) »'),
+        Opt('assistant/adresse_local', 'Adresse du serveur Ollama', 'text', '',
+            tip='Vide : Ollama sur ce poste (http://localhost:11434) ; un poste de l’atelier : http://nom:11434'),
+        I('assistant/contexte_local', 'Contexte du modèle local (jetons)', 16384, 8192, 131072,
+          tip='Ce que le modèle lit à chaque tour : consignes, outils (~7 000 jetons) et la discussion. Plus grand : '
+              'de plus longues discussions, plus de mémoire de la carte graphique'),
         I('assistant/tours_max', 'Tours au plus pour une demande', 40, 1, 200,
           tip='Un tour : le modèle répond ou appelle ses outils'),
         Opt('assistant/devise', 'Crédits : devise des prix', 'text', '$',
@@ -424,6 +433,7 @@ BY_KEY = {o.key: o for _t, opts in SPEC for o in opts}
 #: toujours
 ASSISTANT_ADVANCED = frozenset({
     'assistant/modele_anthropic', 'assistant/modele_openai', 'assistant/modele_mistral', 'assistant/adresse_mistral',
+    'assistant/modele_local', 'assistant/adresse_local', 'assistant/contexte_local',
     'assistant/tours_max', 'assistant/devise', 'assistant/outils_memoire', 'assistant/outils_scripts',
     'assistant/outils_fao', 'assistant/outils_copies', 'assistant/outils_step', 'assistant/outils_commandes', 'assistant/dossier_copies',
     'assistant/dossier_modeles', 'assistant/taille_texte', 'assistant/couleur_vous', 'assistant/couleur_assistant',

@@ -421,6 +421,8 @@ def _linear(dim: Dim) -> list[Path]:
 def _angular(dim: Dim) -> list[Path]:
     st = dim.style
     p1, v, p3 = (tuple(p) for p in dim.points[:3])
+    if geom.dist(p1, v) < 1e-9 or geom.dist(p3, v) < 1e-9:   # un côté sans longueur : pas d'angle
+        return []
     a1 = math.degrees(math.atan2(p1[1] - v[1], p1[0] - v[0]))
     a3 = math.degrees(math.atan2(p3[1] - v[1], p3[0] - v[0]))
     sweep = (a3 - a1 + 180.0) % 360.0 - 180.0           # angle intérieur, signé
@@ -695,24 +697,38 @@ def space(dims: list[Dim], spacing: float) -> int:
     return len(others)
 
 
+def drawable(dim: Dim) -> bool:
+    """La cote a-t-elle des traits ? Pas une longueur, un rayon, un angle ou un arc nul, ni un repère sans coude."""
+    return bool(build(dim))
+
+
 def group(dim: Dim, tool: int = 0):
-    """La cote en groupe (traits, symboles pleins, texte), définition gardée."""
+    """La cote en groupe (traits, symboles pleins, texte), définition gardée ; ValueError pour une cote nulle (voir
+    `drawable`)."""
     from .document import Group, Shape
-    lines, filled, txt = build(dim)
+    parts = build(dim)
+    if not parts:
+        raise ValueError('cote nulle : rien à dessiner')
+    lines, filled, txt = parts
     g = Group(children=[Shape(path=lines, tool=tool), Shape(path=filled, filled=True, tool=tool),
                         Shape(path=txt, filled=True, tool=tool)], name='Cote')
     g.extra[KEY] = to_dict(dim)
     return g
 
 
-def rebuild(g, dim: Dim) -> None:
-    """Le groupe de la cote recalculé d'après `dim` (en place)."""
-    lines, filled, txt = build(dim)
+def rebuild(g, dim: Dim) -> bool:
+    """Le groupe de la cote recalculé d'après `dim` (en place) ; une cote nulle (voir `drawable`) le laisse tel quel :
+    rend False."""
+    parts = build(dim)
+    if not parts:
+        return False
+    lines, filled, txt = parts
     tool = g.children[0].tool if g.children else 0
     from .document import Shape
     g.children = [Shape(path=lines, tool=tool), Shape(path=filled, filled=True, tool=tool),
                   Shape(path=txt, filled=True, tool=tool)]
     g.extra = {**g.extra, KEY: to_dict(dim)}
+    return True
 
 
 def dim_of(g) -> Dim | None:

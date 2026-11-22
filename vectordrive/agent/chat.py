@@ -31,6 +31,9 @@ from .protocol import ToolError
 PROVIDERS = {
     'mistral': ('Mistral', 'mistral-large-latest',
                 ('mistral-large-latest', 'mistral-medium-latest', 'mistral-small-latest'), 'MISTRAL_API_KEY'),
+    # sur ce poste, par Ollama (`local_models` : un palier par mémoire de carte graphique) ; sans clé
+    'local': ('Mistral en local (Ollama)', 'ministral-3:8b',
+              ('ministral-3:3b', 'ministral-3:8b', 'ministral-3:14b', 'mistral-small3.2:24b'), ''),
     'anthropic': ('Claude (Anthropic)', 'claude-opus-5-5',
                   ('claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'), 'ANTHROPIC_API_KEY'),
     'openai': ('ChatGPT (OpenAI)', 'gpt-6-astra', ('gpt-6-astra', 'gpt-6.1-terra', 'gpt-6-luna'), 'OPENAI_API_KEY'),
@@ -38,7 +41,12 @@ PROVIDERS = {
 #: où prendre une clé d'API (un abonnement Claude.ai, ChatGPT ou Le Chat n'en donne pas)
 KEY_PAGES = {'anthropic': 'https://console.anthropic.com/settings/keys',
              'openai': 'https://platform.openai.com/api-keys',
-             'mistral': 'https://console.mistral.ai/api-keys'}
+             'mistral': 'https://console.mistral.ai/api-keys',
+             'local': 'https://ollama.com/download'}
+#: les fournisseurs sans clé (le modèle tourne sur ce poste ou le réseau de l'atelier)
+NO_KEY = ('local',)
+#: secondes d'attente d'un modèle local (le premier chargement en mémoire, un modèle qui déborde sur le processeur)
+LOCAL_TIMEOUT_S = 600
 MISTRAL_URL = 'https://api.mistral.ai/v1/chat/completions'
 #: au plus tant de tours modèle → outils pour une demande ; de jetons écrits par tour ; secondes d'attente HTTP
 #: les fins de demande dites dans la discussion
@@ -164,7 +172,8 @@ class Conversation:
     `client` : un client déjà fait (essais) — sinon celui du SDK du fournisseur, avec la clé."""
 
     def __init__(self, provider: str, model: str, key: str, tools, *, url: str = '', client=None,
-                 on_text=None, on_tool=None, max_steps: int = MAX_STEPS, system: str = '', on_usage=None):
+                 on_text=None, on_tool=None, max_steps: int = MAX_STEPS, system: str = '', on_usage=None,
+                 context: int = 0):
         if provider not in PROVIDERS:
             raise ValueError(f'unknown provider: {provider}')
         self.provider = provider
@@ -176,11 +185,13 @@ class Conversation:
         self.on_tool = on_tool or (lambda *_a: None)
         self.on_usage = on_usage or (lambda _u: None)
         self.max_steps = max_steps
+        #: la taille du contexte d'un modèle local (jetons ; 0 : celle d'office)
+        self.context = context
         self.notes: list = []
         self._stop = threading.Event()
         specs = list(tools.specs())                      # figés pour toute la discussion (cache, raisonnement)
         self._schemas = {s['name']: s.get('inputSchema') for s in specs}
-        backend = {'anthropic': _Anthropic, 'openai': _OpenAI, 'mistral': _Chat}[provider]
+        backend = {'anthropic': _Anthropic, 'openai': _OpenAI, 'mistral': _Chat, 'local': _Ollama}[provider]
         self._backend = backend(self, key, specs, url=url, client=client)
 
     # --- la demande -----------------------------------------------------------------------------------
@@ -206,8 +217,12 @@ class Conversation:
             pass
 
     def stop(self) -> None:
-        """Arrête la demande en cours au prochain pas (le tour déjà parti chez le fournisseur se termine)."""
+        """Arrête la demande en cours au prochain pas (le tour déjà parti chez le fournisseur se termine ; celui
+        d'un modèle local est coupé aussitôt)."""
         self._stop.set()
+        abort = getattr(getattr(self, '_backend', None), 'abort', None)
+        if abort is not None:
+            abort()
 
     @property
     def stopping(self) -> bool:
@@ -531,3 +546,278 @@ class _Chat:
             if stopped:
                 raise Stopped()
         return '\n'.join(said + [self.conv.note('steps')])
+
+
+class LocalDown(ConnectionError):
+    """Ollama ne répond pas à l'adresse réglée (pas lancé, pas installé, autre poste éteint)."""
+
+    def __init__(self, base: str):
+        super().__init__(f'no answer from {base}')
+        self.base = base
+
+
+class MissingModel(LookupError):
+    """Le modèle demandé n'est pas chez Ollama (pas encore téléchargé)."""
+
+    def __init__(self, model: str):
+        super().__init__(f'model not found: {model}')
+        self.model = model
+        self.status_code = 404
+
+
+class LocalError(RuntimeError):
+    """Une erreur dite par Ollama (mémoire insuffisante, modèle illisible…) : son texte, montré tel quel."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+    @property
+    def memory(self) -> bool:
+        low = self.detail.lower()
+        return 'memory' in low or 'out of memory' in low or 'oom' in low.split()
+
+
+class LocalTimeout(TimeoutError):
+    """Le modèle local n'a rien rendu dans le délai (il déborde sur le processeur, contexte trop grand…)."""
+
+    def __init__(self, base: str, seconds: float):
+        super().__init__(f'{base}: no answer in {seconds:g} s')
+        self.base = base
+
+
+def _arguments(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        got = json.loads(raw or '{}')
+    except (TypeError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def _error_text(raw: str) -> str:
+    """Le texte d'erreur d'Ollama (`{"error": "…"}`), sinon la réponse brute."""
+    try:
+        got = json.loads(raw)
+    except (TypeError, ValueError):
+        return (raw or '').strip()
+    return str(got.get('error') or raw).strip() if isinstance(got, dict) else (raw or '').strip()
+
+
+def merge_stream(lines, stopping=lambda: False) -> dict:
+    """Les morceaux NDJSON de `/api/chat` (`stream: true`) réunis en une réponse : le texte mis bout à bout, les
+    appels d'outils, et le dernier morceau (`done_reason`, jetons). `stopping()` vrai entre deux morceaux : `Stopped`
+    (l'utilisateur a arrêté ; la connexion fermée, Ollama s'arrête). Un morceau `{"error"}` : `LocalError`."""
+    text, calls, last = [], [], {}
+    for raw in lines:
+        if stopping():
+            raise Stopped()
+        raw = raw.decode('utf-8', 'replace') if isinstance(raw, (bytes, bytearray)) else str(raw)
+        if not raw.strip():
+            continue
+        try:
+            part = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(part, dict):
+            continue
+        if part.get('error'):
+            raise LocalError(str(part['error'])[:500])
+        msg = part.get('message') or {}
+        if msg.get('content'):
+            text.append(str(msg['content']))
+        calls.extend(c for c in msg.get('tool_calls') or [] if isinstance(c, dict))
+        if part.get('done'):
+            last = part
+            break
+    if not last:
+        if stopping():
+            raise Stopped()
+        raise LocalError('réponse interrompue')
+    out = dict(last)
+    out['message'] = {'role': 'assistant', 'content': ''.join(text)}
+    if calls:
+        out['message']['tool_calls'] = calls
+    return out
+
+
+class _Ollama(_Chat):
+    """Mistral en local par Ollama (`agent.local_models`) : la boucle de `_Chat`, par l'API d'Ollama (`/api/chat`,
+    qui reçoit la taille du contexte : les outils seuls en prennent ~7 000 jetons, plus que les 4 096 d'office
+    d'Ollama), en flux (« Arrêter » coupe entre deux morceaux) ; sans clé. `client(corps)` (essais) reçoit le corps
+    de `/api/chat` et rend sa réponse réunie."""
+
+    def __init__(self, conv: Conversation, key: str, specs: list, *, url: str = '', client=None):
+        from . import local_models as LM
+        self.conv = conv
+        self.base = LM.base_url(url)
+        if not LM.address_ok(self.base):
+            raise BadAddress(self.base)
+        self.url = self.base + '/api/chat'
+        self.context = int(getattr(conv, 'context', 0) or LM.DEFAULT_CONTEXT)
+        raw = client or self._call
+        self.post = lambda body: self._from_native(raw(self._native(body)))
+        self.tools = [{'type': 'function', 'function': {'name': s['name'], 'description': s['description'],
+                                                        'parameters': s['inputSchema']}} for s in specs]
+        self.messages: list = [{'role': 'system', 'content': conv.system}]
+        self._conn = None                                # la connexion en cours (« Arrêter » la coupe)
+        self._cancel = None                              # l'annulation de l'échange en cours (le sien seul)
+
+    def _connect(self):
+        """Une connexion directe au serveur : ni proxy du système (un proxy d'entreprise ne voit ni le dessin, ni le
+        serveur de l'atelier), ni redirection suivie."""
+        import http.client
+        from urllib.parse import urlsplit
+        u = urlsplit(self.url)
+        cls = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
+        return cls(u.hostname, u.port, timeout=LOCAL_TIMEOUT_S)
+
+    def abort(self) -> None:
+        """« Arrêter » : la connexion coupée tout de suite, même pendant le chargement du modèle (aucun morceau
+        n'arrive encore) ; la lecture en attente se termine en `Stopped`."""
+        import socket
+        cancel = self._cancel
+        if cancel is not None:                           # même avant la connexion : l'échange ne part plus
+            cancel.set()
+        conn = self._conn
+        sock = getattr(conn, 'sock', None)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:                                         # Windows : seule la fermeture réveille une lecture bloquée
+                import _socket
+                _socket.socket.close(sock)
+            except (OSError, TypeError):
+                pass
+
+    def _call(self, body: dict, connect=None) -> dict:
+        """L'échange avec Ollama, dans un fil à part : « Arrêter » rend la main tout de suite (au plus 0,2 s), même
+        quand Ollama charge encore le modèle et n'a rien envoyé (sous Windows, rien ne réveille une lecture de socket
+        en attente) ; la connexion est coupée, Ollama s'arrête."""
+        import queue
+        conn = (connect or self._connect)()
+        cancel = threading.Event()
+        self._conn, self._cancel = conn, cancel
+        box = queue.Queue()
+
+        def work():
+            try:
+                box.put((True, self._exchange(conn, body, cancel)))
+            except BaseException as ex:                  # noqa: BLE001 — rendue au fil de la discussion
+                box.put((False, ex))
+        threading.Thread(target=work, daemon=True, name='vectordrive-ollama').start()
+        while True:
+            try:
+                ok, got = box.get(timeout=0.2)
+            except queue.Empty:
+                if self.conv.stopping:
+                    self.abort()
+                    self._conn = None
+                    raise Stopped() from None
+                continue
+            if ok:
+                return got
+            if self.conv.stopping or cancel.is_set():    # une erreur due à l'arrêt (socket coupé) : « Arrêté »
+                raise Stopped() from None
+            raise got
+
+    def _exchange(self, conn, body: dict, cancel=None) -> dict:
+        import http.client
+        import socket
+        import ssl
+        from urllib.parse import urlsplit
+        cancel = cancel or threading.Event()
+        stopping = lambda: cancel.is_set() or self.conv.stopping  # noqa: E731
+        seen = [False]
+
+        def lines(r):
+            while True:
+                line = r.readline()
+                if not line:
+                    return
+                seen[0] = True
+                yield line
+        try:
+            if stopping():
+                raise Stopped()
+            if getattr(conn, 'connect', None) is not None and getattr(conn, 'sock', None) is None:
+                conn.connect()                           # la connexion d'abord : un arrêt pendant ce temps est vu
+            if stopping():
+                raise Stopped()
+            conn.request('POST', urlsplit(self.url).path or '/api/chat', body=json.dumps(body).encode('utf-8'),
+                         headers={'Content-Type': 'application/json', 'Accept': 'application/x-ndjson'})
+            r = conn.getresponse()
+            if r.status >= 400:
+                detail = _error_text(r.read(500).decode('utf-8', 'replace'))
+                low = detail.lower()
+                if r.status == 404 and 'model' in low and 'not found' in low:
+                    raise MissingModel(self.conv.model)
+                if r.status >= 500 and detail:
+                    raise LocalError(detail)
+                raise ProviderError(r.status, detail)
+            return merge_stream(lines(r), stopping)
+        except (Stopped, LocalError, MissingModel, ProviderError):
+            raise
+        except ssl.SSLError as ex:
+            if stopping():
+                raise Stopped() from None
+            raise LocalError(f'certificat refusé : {ex}') from None
+        except (TimeoutError, socket.timeout):
+            if stopping():
+                raise Stopped() from None
+            raise LocalTimeout(self.base, LOCAL_TIMEOUT_S) from None
+        except (http.client.HTTPException, OSError):
+            if stopping():
+                raise Stopped() from None
+            if seen[0]:                                  # il répondait : coupé en route
+                raise LocalError('réponse interrompue') from None
+            raise LocalDown(self.base) from None
+        finally:
+            if self._conn is conn:
+                self._conn = None
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _native(self, body: dict) -> dict:
+        """Le corps « chat completions » de `_Chat`, dans la forme de `/api/chat`."""
+        msgs = []
+        for m in body['messages']:
+            m = dict(m)
+            if m.get('role') == 'tool':
+                m['tool_name'] = m.pop('name', '')
+                m.pop('tool_call_id', None)
+            if m.get('tool_calls'):
+                m['tool_calls'] = [{'function': {'name': (c.get('function') or {}).get('name', ''),
+                                                 'arguments': _arguments((c.get('function') or {}).get('arguments'))}}
+                                   for c in m['tool_calls']]
+            msgs.append(m)
+        out = {'model': body['model'], 'messages': msgs, 'stream': True,
+               'options': {'num_ctx': self.context, 'num_predict': min(MAX_TOKENS, max(1024, self.context // 2))}}
+        if body.get('tools'):
+            out['tools'] = body['tools']
+        return out
+
+    @staticmethod
+    def _from_native(data) -> dict:
+        """La réponse de `/api/chat`, dans la forme « chat completions » que lit `_Chat`."""
+        if not isinstance(data, dict):
+            data = {}
+        if data.get('error'):
+            raise LocalError(str(data['error'])[:500])
+        msg = data.get('message') or {}
+        calls = [{'id': f'call_{i}', 'type': 'function',
+                  'function': {'name': (c.get('function') or {}).get('name', ''),
+                               'arguments': _arguments((c.get('function') or {}).get('arguments'))}}
+                 for i, c in enumerate(msg.get('tool_calls') or []) if isinstance(c, dict)]
+        out = {'role': 'assistant', 'content': msg.get('content') or ''}
+        if calls:
+            out['tool_calls'] = calls
+        return {'choices': [{'message': out, 'finish_reason': 'length' if data.get('done_reason') == 'length'
+                             else 'stop'}],
+                'usage': {'prompt_tokens': _n(data.get('prompt_eval_count')),
+                          'completion_tokens': _n(data.get('eval_count'))}}

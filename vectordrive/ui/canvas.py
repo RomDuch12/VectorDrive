@@ -2462,8 +2462,15 @@ class Canvas(QWidget):
         return sh
 
     def commit_dim(self, dim):
-        """Cote paramétrée (core.dims) : groupe annulable, sélectionné."""
+        """Cote paramétrée (core.dims) : groupe annulable, sélectionné ; None pour une cote nulle (deux clics au même
+        point, un arc sans longueur), pas posée."""
         from ..core import dims
+        if not dims.drawable(dim):
+            win = self.window()
+            if hasattr(win, 'statusBar'):
+                from ..i18n import tr
+                win.statusBar().showMessage(tr('Cote nulle : rien n’est posé.'), 4000)
+            return None
         if self.undo_push:
             self.undo_push()
         g = dims.group(dim, tool=self.current_tool_index)

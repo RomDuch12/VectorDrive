@@ -1210,7 +1210,8 @@ class DimensionTool(Tool):
                     from ..i18n import tr
                     win.statusBar().showMessage(tr('Posez (ou sélectionnez) d\'abord une cote linéaire'), 4000)
                 return
-            self.c.commit_dim(d)
+            if self.c.commit_dim(d) is None:
+                return
             if self.mode == 'chaine':
                 self.prev = d
             else:
@@ -1223,6 +1224,10 @@ class DimensionTool(Tool):
             d = self.dim(dp)
             self.pts = []
             if d is not None and self.mode == 'repere':
+                from ..core.dims import drawable
+                if not drawable(d):
+                    self.c.commit_dim(d)                     # nulle : refusée (message) avant de demander le texte
+                    return
                 fn = getattr(self.c, 'leader_text_fn', None)
                 text = fn() if fn is not None else None
                 if text is None:
@@ -1287,8 +1292,7 @@ class DimensionTool(Tool):
             return
         d = self.dim(dp)
         self.pts = []
-        if d is not None:
-            self.c.commit_dim(d)
+        if d is not None and self.c.commit_dim(d) is not None:      # une cote nulle : pas posée, pas suivie
             self.prev, self.base = d, None              # la suivante peut partir de celle-ci
 
     def move(self, sp, dp, ev):

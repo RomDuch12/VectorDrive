@@ -7360,3 +7360,21 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - Une suggestion de plus en mode Débutant : « Fais-moi une vis CHC M5 × 20 en STEP ».
 - Trois modèles de boutons IA (flèche du bouton « + ») : **Pièce STEP du dessin** (extrudée, trous et poches), **Pièce tournée STEP** (demi-profil), **Plaque et visserie STEP** (la plaque et une vis CHC dans chaque trou rond, en assemblage, vérifié avant d’écrire). Ils ne modifient pas le dessin.
 - Niveau expert : un corps peut être pris dans le dessin (`"drawing"` : les objets extrudés sur place, comme « pièce STEP du dessin ») et assemblé avec d’autres pièces ; ajouté au dessin, l’assemblage reste où sont ses contours.
+### v0.994.0 — Cotes : une cote nulle n’est plus posée
+
+- Deux clics au même point, un angle dont un côté est nul, un arc sans longueur : l’outil de cote plantait au clic ; la cote n’est plus posée et la barre d’état le dit (« Cote nulle : rien n’est posé. »).
+- Une retouche qui rendrait une cote nulle (options de la cote, par exemple une cote alignée passée en horizontale sur un trait vertical) la laisse telle quelle et le dit ; un repère sans coude est refusé avant de demander son texte ; la cotation automatique et la cotation rapide écartent les cotes nulles.
+### v0.995.0 — VD-convert : le convertisseur seul au clic droit
+
+- **VD-convert** (`VD-convert.exe`, un dossier qui se copie seul, sans installer VectorDrive) : « Convertir avec VectorDrive ▸ en DXF, en SVG, en PDF, en EPS » au clic droit des dessins de l’explorateur Windows, avec le même lecteur et le même écrivain que VectorDrive ; un fichier de même nom n’est jamais écrasé.
+- **Installer** copie VD-convert dans `%LOCALAPPDATA%\Programs\VD-convert`, pose le menu et l’inscrit dans les Applications de Windows, sous votre compte seulement (aucun droit d’administrateur). Avant cela il cherche les **autres versions** — un autre VD-convert installé ailleurs ou plus ancien, le menu de VectorDrive ou d’une copie déplacée, une inscription orpheline — les montre, puis les retire proprement et les remplace ; VectorDrive lui-même reste installé, seul son menu est remplacé. Un dossier n’est supprimé que s’il a été installé par VD-convert.
+- **Désinstaller** (dans sa fenêtre ou depuis les Applications de Windows) retire le menu, l’entrée et le dossier.
+- Sa fenêtre convertit aussi des fichiers choisis ou déposés, et donne le mode d’emploi. Ligne de commande : `VD-convert --convert fichier --to pdf`, `--installer`, `--desinstaller`, `--silencieux`, `--autotest`.
+### v0.996.0 — Mistral en local : l’assistant sans clé, sur votre carte graphique
+
+- Nouveau fournisseur de l’assistant, **Mistral en local (Ollama)** : le modèle tourne sur ce poste (ou un poste de l’atelier), sans clé, sans abonnement ni crédit, et le dessin ne sort pas de l’atelier. Il suffit d’installer Ollama (ollama.com).
+- **Un palier par carte graphique** (Options › Assistant › Mistral en local) : 4 Go → Ministral 3 3B ; 8 Go → Ministral 3 8B ; 12 Go → Ministral 3 14B ; 16 Go → Mistral Small 3.2 24B (le plus capable, juste sur 16 Go : une partie passe par la mémoire du poste, plus lent). « Détecter la carte graphique » choisit le palier conseillé ; « Vérifier Ollama » dit sa version et les modèles présents ; « Démarrer Ollama » ; « Télécharger le modèle » ouvre une console qui montre l’avancement ; « Utiliser ce modèle » en fait l’assistant.
+- La taille du contexte est réglée pour le modèle local (16 384 jetons d’office, 8 192 au moins, dans les options) : les outils de l’assistant en prennent à eux seuls ~7 000, plus que ce qu’Ollama donne d’office.
+- La réponse arrive en flux : « Arrêter » coupe aussitôt, même pendant le chargement du modèle. Une mémoire insuffisante ou un modèle trop lent est dit en clair, avec le conseil d’un palier plus petit ou d’un contexte plus court. Le plafond des dépenses ne bloque pas le modèle local, qui ne coûte rien ; les profils de l’assistant gardent son modèle, son adresse et son contexte.
+- Ollama est joint sans le proxy du système, et en http seulement sur ce poste ou le réseau privé de l’atelier.
+- L’adresse du serveur est gardée à part pour Mistral et pour Ollama ; un serveur Ollama du réseau de l’atelier convient (http://nom:11434).

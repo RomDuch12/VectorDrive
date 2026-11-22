@@ -102,7 +102,11 @@ def stored(provider: str) -> bool:
 
 
 def load(provider: str) -> str:
-    """La clé du fournisseur : retenue, sinon celle de sa variable d'environnement ; '' si aucune."""
+    """La clé du fournisseur : retenue, sinon celle de sa variable d'environnement ; '' si aucune. Un fournisseur
+    sans clé (Mistral en local) : un mot quelconque, que son serveur ignore."""
+    from .chat import NO_KEY
+    if provider in NO_KEY:
+        return 'ollama'
     if _memory.get(provider):
         return _memory[provider]
     key = _read(provider) if _windows() else ''

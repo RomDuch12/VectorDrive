@@ -11282,6 +11282,8 @@ class MainWindow(QMainWindow):
         if old is None:
             return None
         if dim is not None:
+            if not dims.drawable(dim):
+                return None
             self.push_undo()
             dims.rebuild(g, dim)
             self.canvas.invalidate()
@@ -11299,6 +11301,11 @@ class MainWindow(QMainWindow):
             g.children, g.extra = before
             if result:
                 d = dlg.value()
+                if not dims.drawable(d):                 # un type qui rend la cote nulle : rien changé, dit
+                    self.canvas.invalidate()
+                    QMessageBox.information(self, tr('Cote'), tr('Ces réglages rendent la cote nulle : elle reste '
+                                                                 'telle quelle.'))
+                    return
                 self.push_undo()
                 dims.rebuild(g, d)
                 DD.save_style(self.settings, copy.deepcopy(d.style))
@@ -16702,7 +16709,10 @@ class MainWindow(QMainWindow):
         if not dims:
             self.statusBar().showMessage(tr('Rien à coter.'), 5000)
             return []
-        groups = [D.group(d, tool=self.canvas.current_tool_index) for d in dims]
+        groups = [D.group(d, tool=self.canvas.current_tool_index) for d in dims if D.drawable(d)]
+        if not groups:
+            self.statusBar().showMessage(tr('Rien à coter.'), 5000)
+            return []
         self._add_items(groups)
         return groups
 
@@ -16739,7 +16749,10 @@ class MainWindow(QMainWindow):
         if not dims:
             self.statusBar().showMessage(tr('Rien à coter.'), 5000)
             return []
-        groups = [D.group(d, tool=self.canvas.current_tool_index) for d in dims]
+        groups = [D.group(d, tool=self.canvas.current_tool_index) for d in dims if D.drawable(d)]
+        if not groups:
+            self.statusBar().showMessage(tr('Rien à coter.'), 5000)
+            return []
         self._add_items(groups)
         return groups
 

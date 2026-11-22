@@ -150,6 +150,200 @@ def _searchable(dlg, form, box, *words) -> None:
         rows.append((dlg.tabs.count(), form, box, _fold(' '.join(words))))
 
 
+#: le réglage de la mémoire de carte graphique trouvée (Go ; 0 : inconnue) par « Détecter la carte graphique »
+KEY_GPU = 'assistant/gpu_local'
+
+
+def _tier_notes() -> dict:
+    """Ce qu'il faut savoir de chaque palier (traduit)."""
+    return {'ministral-3:3b': tr('rapide ; outils et images ; demandes simples'),
+            'ministral-3:8b': tr('bon équilibre ; outils et images'),
+            'ministral-3:14b': tr('plus sûr sur les demandes en plusieurs étapes'),
+            'mistral-small3.2:24b': tr('le plus capable ; juste sur 16 Go (une partie passe par la mémoire du poste, '
+                                       'plus lent)')}
+
+
+def _local_box(dlg, form, parent=None) -> None:
+    """« Mistral en local (Ollama) » (demande du 22/11) : le palier de la carte graphique (4, 8, 12, 16 Go), l'état
+    d'Ollama, Démarrer, Télécharger le modèle (une console que l'utilisateur voit), Utiliser ce modèle (fournisseur
+    et modèle des options, gardés à OK)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QComboBox
+    from ..agent import local_models as LM
+    from ..i18n import decimal_sep
+    st = dlg.settings
+    box = QGroupBox(tr('Mistral en local (Ollama)'))
+    lay = QVBoxLayout(box)
+    note = QLabel(tr('Un modèle Mistral sur ce poste, par Ollama : sans clé ni crédit, et le dessin reste à '
+                     'l’atelier. Choisissez le palier de votre carte graphique, téléchargez le modèle une fois, puis '
+                     '« Utiliser ce modèle ».'))
+    note.setWordWrap(True)
+    lay.addWidget(note)
+    row = QHBoxLayout()
+    dlg.local_gpu = QLabel('')
+    dlg.local_gpu.setWordWrap(True)
+    detect = QPushButton(tr('Détecter la carte graphique'))
+    row.addWidget(dlg.local_gpu, 1)
+    row.addWidget(detect)
+    lay.addLayout(row)
+    dlg.local_tier = QComboBox()
+    notes = _tier_notes()
+    for t in LM.TIERS:
+        size = ('%g' % t.size_gb).replace('.', decimal_sep())
+        dlg.local_tier.addItem(tr('{0} Go : {1} ({2}, {3} Go) — {4}').format(t.gpu_gb, t.label, t.model, size,
+                                                                             notes.get(t.model, '')), t.model)
+    lay.addWidget(dlg.local_tier)
+    dlg.local_state = QLabel(tr('Ollama : pas encore vérifié'))
+    dlg.local_state.setWordWrap(True)
+    dlg.local_state.setTextFormat(Qt.TextFormat.PlainText)
+    lay.addWidget(dlg.local_state)
+    row = QHBoxLayout()
+    check = QPushButton(tr('Vérifier Ollama'))
+    start = QPushButton(tr('Démarrer Ollama'))
+    pull = QPushButton(tr('Télécharger le modèle'))
+    pull.setToolTip(tr('Une console « ollama pull » : l’avancement s’y affiche ; une fois par modèle'))
+    use = QPushButton(tr('Utiliser ce modèle'))
+    use.setToolTip(tr('Le fournisseur « Mistral en local » et ce modèle, gardés à OK'))
+    link = QLabel('<a href="{0}">{1}</a>'.format(html.escape(LM.DOWNLOAD_PAGE), html.escape(tr('Installer Ollama'))))
+    link.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+    for b in (detect, check, start, pull, use):
+        b.setAutoDefault(False)
+    for w in (check, start, pull, use, link):
+        row.addWidget(w)
+    row.addStretch(1)
+    lay.addLayout(row)
+
+    def model() -> str:
+        return str(dlg.local_tier.currentData() or LM.TIERS[1].model)
+
+    def address() -> str:
+        w = getattr(dlg, 'widgets', {}).get('assistant/adresse_local')
+        return w.text().strip() if w is not None else str(st.value('assistant/adresse_local', '') or '')
+
+    def show_gpu(gb) -> None:
+        if gb:
+            best = LM.recommend(gb)
+            dlg.local_gpu.setText(tr('Carte graphique : {0} Go → palier conseillé : {1}').format(
+                ('%g' % gb).replace('.', decimal_sep()), best.label))
+        else:
+            dlg.local_gpu.setText(tr('Carte graphique : mémoire inconnue — « Détecter » ; sans carte NVIDIA, le plus '
+                                     'petit palier tourne aussi sur le processeur, lentement'))
+
+    def do_detect(_=False) -> float | None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            gb = LM.gpu_memory_gb()
+        finally:
+            QApplication.restoreOverrideCursor()
+        st.setValue(KEY_GPU, gb or 0)
+        show_gpu(gb)
+        i = dlg.local_tier.findData(LM.recommend(gb).model)
+        if i >= 0:
+            dlg.local_tier.setCurrentIndex(i)
+        return gb
+
+    def do_check(_=False, sync: bool = False):
+        """L'état d'Ollama ; demandé dans un fil de travail (`sync` : tout de suite, pour les essais) : la fenêtre
+        reste vive pendant l'attente d'une adresse absente."""
+        url = address()
+        if sync:
+            return show_status(LM.status(url))
+        import threading
+        from PySide6.QtCore import QTimer
+        holder = {}
+        check.setEnabled(False)
+        dlg.local_state.setText(tr('Vérification d’Ollama…'))
+        def work():
+            try:
+                got = LM.status(url)
+            except Exception as ex:                      # noqa: BLE001 — jamais un bouton figé
+                got = {'running': False, 'version': '', 'models': [], 'error': str(ex)}
+            holder['got'] = got
+        threading.Thread(target=work, daemon=True, name='vectordrive-ollama-status').start()
+        timer = QTimer(dlg)
+
+        def poll():
+            if 'got' in holder:
+                timer.stop()
+                timer.deleteLater()
+                check.setEnabled(True)
+                show_status(holder['got'])
+        timer.timeout.connect(poll)
+        timer.start(100)
+        return None
+
+    def show_status(got: dict) -> dict:
+        m = model()
+        if got['running']:
+            st.setValue(LM.KEY_SEEN, '|'.join(got['models']))
+            text = tr('Ollama {0} en marche ; modèles : {1}').format(got['version'] or '?',
+                                                                    ', '.join(got['models']) or tr('aucun'))
+            text += ' — ' + (tr('« {0} » prêt').format(m) if LM.has_model(got['models'], m)
+                             else tr('« {0} » à télécharger').format(m))
+            if m.startswith('ministral-3') and not LM.version_ok(got['version']):
+                text += ' — ' + tr('Ministral 3 demande Ollama 0.13.1 ou plus récent : mettez Ollama à jour')
+        elif got['error'] == 'adresse refusée':
+            text = tr('Adresse refusée : https://, ou http:// vers ce poste ou le réseau de l’atelier')
+        elif LM.exe():
+            text = tr('Ollama est installé mais ne répond pas : « Démarrer Ollama »')
+        else:
+            text = tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis « Vérifier Ollama »')
+        dlg.local_state.setText(text)
+        return got
+
+    def do_start(_=False) -> bool:
+        try:
+            ok = LM.start()
+        except OSError:
+            ok = False
+        if ok:
+            dlg.local_state.setText(tr('Ollama démarre… « Vérifier Ollama » dans quelques secondes'))
+        elif LM.exe():
+            dlg.local_state.setText(tr('Ollama ne s’est pas lancé : démarrez-le depuis le menu Démarrer de Windows'))
+        else:
+            dlg.local_state.setText(tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis '
+                                       '« Vérifier Ollama »'))
+        return ok
+
+    def do_pull(_=False) -> bool:
+        m = model()
+        t = LM.tier_of(m)
+        ok = LM.pull(m)
+        if ok:
+            size = ('%g' % t.size_gb).replace('.', decimal_sep()) if t is not None else '?'
+            dlg.local_state.setText(tr('Téléchargement de « {0} » dans une console (environ {1} Go) ; à la fin, '
+                                       '« Vérifier Ollama »').format(m, size))
+        else:
+            dlg.local_state.setText(tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis '
+                                       '« Vérifier Ollama »'))
+        return ok
+
+    def do_use(_=False) -> None:
+        m = model()
+        w = getattr(dlg, 'widgets', {})
+        if 'assistant/fournisseur' in w:
+            box_ = w['assistant/fournisseur']
+            box_.setCurrentIndex(max(0, box_.findData('local')))
+        if 'assistant/modele_local' in w:
+            w['assistant/modele_local'].setText(m)
+        dlg.local_state.setText(tr('« {0} » sera l’assistant à la fermeture par OK').format(m))
+
+    detect.clicked.connect(do_detect)
+    check.clicked.connect(do_check)
+    start.clicked.connect(do_start)
+    pull.clicked.connect(do_pull)
+    use.clicked.connect(do_use)
+    dlg.local_actions = {'detect': do_detect, 'check': do_check, 'start': do_start, 'pull': do_pull, 'use': do_use}
+    gb = float(st.value(KEY_GPU, 0) or 0)
+    show_gpu(gb)
+    current = str(st.value('assistant/modele_local', '') or '')
+    i = dlg.local_tier.findData(current if LM.tier_of(current) else LM.recommend(gb).model)
+    dlg.local_tier.setCurrentIndex(max(0, i))
+    form.addRow(box)
+    _searchable(dlg, form, box, 'Mistral en local (Ollama)', tr('Mistral en local (Ollama)'),
+                'ollama local gpu carte graphique ministral mistral small hors ligne')
+
+
 def build(dlg, form, parent=None) -> None:
     """La fin de l'onglet Assistant de la fenêtre des options `dlg` (son formulaire `form`) ; ce qui se garde à OK
     passe par `dlg.on_accept`."""
@@ -160,7 +354,7 @@ def build(dlg, form, parent=None) -> None:
     dlg.assistant_note = note
     from ..agent import keys
     from ..agent import tools as AT
-    from ..agent.chat import KEY_PAGES, PROVIDERS
+    from ..agent.chat import KEY_PAGES, NO_KEY, PROVIDERS
     from ..core import shapescript as SS
     st = dlg.settings
 
@@ -176,6 +370,8 @@ def build(dlg, form, parent=None) -> None:
     lay.addWidget(note)
     dlg.key_rows = {}
     for slug, (label, _default, _models, env) in PROVIDERS.items():
+        if slug in NO_KEY:                               # Mistral en local : sans clé (sa partie plus bas)
+            continue
         row = QHBoxLayout()
         name = QLabel(label)
         name.setMinimumWidth(130)
@@ -227,6 +423,7 @@ def build(dlg, form, parent=None) -> None:
         refresh()
     form.addRow(box)
     _searchable(dlg, form, box, 'Clés d’API', tr('Clés d’API'), 'clé cle api key', *PROVIDERS)
+    _local_box(dlg, form, parent)
 
     # --- les crédits : le prix des modèles ------------------------------------------------------------------
     from ..agent import credits as CR

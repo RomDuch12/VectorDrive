@@ -32,6 +32,8 @@ from ..i18n import tr
 KEY_PROVIDER = 'assistant/fournisseur'
 KEY_MODEL = 'assistant/modele_{0}'
 KEY_URL = 'assistant/adresse_mistral'
+#: les fournisseurs dont on règle l'adresse du serveur → leur clé de réglage (Mistral, Mistral en local)
+URL_KEYS = {'mistral': KEY_URL, 'local': 'assistant/adresse_local'}
 KEY_MODE = 'assistant/mode'
 #: les modes (demande du 20/11, 21 h 48) : Débutant, clé en main ; Avancé, tous les réglages
 MODES = (('debutant', 'Débutant'), ('avance', 'Avancé'))
@@ -213,6 +215,7 @@ class AssistantPanel(QWidget):
         self.model.setEditable(True)
         self.model.setToolTip(tr('Le modèle du fournisseur ; un autre nom peut être écrit'))
         self.url = QLineEdit(str(st.value(KEY_URL, '') or ''))
+        self._url_for = 'mistral'                        # le fournisseur dont `url` montre l'adresse
         self.url.setPlaceholderText('https://api.mistral.ai/v1/chat/completions')
         self.url.setToolTip(tr('Adresse du serveur : celle de Mistral d’office ; un serveur local du même format convient'))
         self.lbl_url = QLabel(tr('Adresse'))
@@ -353,7 +356,8 @@ class AssistantPanel(QWidget):
         self.mode.currentIndexChanged.connect(lambda _i: self._mode_changed())
         self.suggest_box = box
         self.model.currentTextChanged.connect(lambda t: st.setValue(KEY_MODEL.format(self.slug()), t.strip()))
-        self.url.editingFinished.connect(lambda: st.setValue(KEY_URL, self.url.text().strip()))
+        self.url.editingFinished.connect(
+            lambda: st.setValue(URL_KEYS.get(self._url_for, KEY_URL), self.url.text().strip()))
         self._provider_changed()
         self._busy(False)
         tab = self._current_tab()
@@ -466,17 +470,43 @@ class AssistantPanel(QWidget):
         self.model.blockSignals(True)
         self.model.clear()
         self.model.addItems(list(models))
+        if p == 'local':                                 # les modèles vus chez Ollama à la dernière vérification
+            from ..agent import local_models as LM
+            seen = self.win.settings.value(LM.KEY_SEEN, '') or ''
+            seen = seen.split('|') if isinstance(seen, str) else [str(x) for x in seen]
+            self.model.addItems([m for m in seen if m and m not in models])
         self.model.setEditText(str(self.win.settings.value(KEY_MODEL.format(p), '') or default))
         self.model.blockSignals(False)
-        from ..agent.chat import KEY_PAGES
-        self.get_key.setText('<a href="{0}">{1}</a>'.format(html.escape(KEY_PAGES[p]),
-                                                           html.escape(tr('Obtenir une clé d’API'))))
+        from ..agent.chat import KEY_PAGES, NO_KEY
+        self.get_key.setText('<a href="{0}">{1}</a>'.format(
+            html.escape(KEY_PAGES[p]),
+            html.escape(tr('Installer Ollama') if p in NO_KEY else tr('Obtenir une clé d’API'))))
+        self._show_url(p)
         self._key_state()
+
+    def _show_url(self, p: str) -> None:
+        """L'adresse du serveur du fournisseur `p` (Mistral : celle de Mistral d'office ; en local : Ollama sur ce
+        poste d'office)."""
+        if p not in URL_KEYS:
+            return
+        self._url_for = p
+        self.url.setText(str(self.win.settings.value(URL_KEYS[p], '') or ''))
+        if p == 'local':
+            from ..agent import local_models as LM
+            self.url.setPlaceholderText(LM.DEFAULT_URL)
+            self.url.setToolTip(tr('Adresse d’Ollama : ce poste d’office ; un poste de l’atelier : http://nom:11434'))
+        else:
+            self.url.setPlaceholderText('https://api.mistral.ai/v1/chat/completions')
+            self.url.setToolTip(tr('Adresse du serveur : celle de Mistral d’office ; un serveur local du même format '
+                                   'convient'))
 
     def _key_state(self) -> None:
         p = self.slug()
         env = self.providers[p][3]
-        if self.keys.stored(p):
+        from ..agent.chat import NO_KEY
+        if p in NO_KEY:
+            text = tr('Sans clé : le modèle tourne sur ce poste, par Ollama ; « Vérifier » l’essaie')
+        elif self.keys.stored(p):
             text = tr('Clé : retenue')
         elif self.keys.load(p):
             text = tr('Clé : celle de la variable {0}').format(env)
@@ -508,20 +538,24 @@ class AssistantPanel(QWidget):
         for w in (self.lbl_provider, self.provider, self.key_state, self.btn_forget, self.key, self.btn_save,
                   self.get_key, self.btn_check):
             w.setVisible(setup)
+        from ..agent.chat import NO_KEY
+        if p in NO_KEY:                                  # sans clé : ni champ, ni Retenir, ni Oublier
+            for w in (self.key, self.btn_save, self.btn_forget):
+                w.setVisible(False)
         self.btn_check.setEnabled(has_key and not self.running)
         tuned = adv or self._setup_open                  # « Changer » : le modèle et l'adresse aussi (ils servent)
         for w in (self.lbl_model, self.model):
             w.setVisible(tuned)
         for w in (self.lbl_url, self.url):
-            w.setVisible(tuned and p == 'mistral')
+            w.setVisible(tuned and p in URL_KEYS)
         self.steps.setVisible(not adv and not has_key)
         brief = not adv and has_key                      # la ligne courte : ce qui sert, et Changer / Masquer
         self.summary.setVisible(brief)
         if brief:
-            source = tr('clé retenue') if self.keys.stored(p) else tr('clé de la variable {0}').format(
-                self.providers[p][3])
+            source = (tr('sans clé') if p in NO_KEY else tr('clé retenue') if self.keys.stored(p)
+                      else tr('clé de la variable {0}').format(self.providers[p][3]))
             parts = [self.providers[p][0], self.model.currentText().strip(), source]
-            if p == 'mistral' and self.url.text().strip():
+            if p in URL_KEYS and self.url.text().strip():
                 parts.insert(2, self.url.text().strip())  # un serveur choisi : dit, puisqu'il sert
             self.summary.setText('{0} · <a href="setup">{1}</a>'.format(
                 ' · '.join(html.escape(x) for x in parts if x),
@@ -639,14 +673,16 @@ class AssistantPanel(QWidget):
             return False
         from ..agent import credits as CR
         limit = CR.cap(self.win.settings)
-        if limit > 0 and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
+        from ..agent.chat import NO_KEY
+        if limit > 0 and p not in NO_KEY and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
             self.status.setText(tr('Plafond des dépenses de la session atteint'))
             return False
         from ..agent.chat import Conversation
         p, model, url, api_key = self._settings_key()[:4]
         try:
             conv = Conversation(p, model, api_key, _CheckTools(), url=url, client=self.client_for(p),
-                                system='Connection check: answer with the single word OK.', max_steps=1)
+                                system='Connection check: answer with the single word OK.', max_steps=1,
+                                context=self._settings_key()[7])
         except (ImportError, ValueError) as ex:
             self.status.setText(tr('Vérification impossible : {0}').format(ex))
             return False
@@ -722,8 +758,9 @@ class AssistantPanel(QWidget):
     def _settings_key(self) -> tuple:
         from . import assistant_options as AO
         p, st = self.slug(), self.win.settings
-        return (p, self.model.currentText().strip(), self.url.text().strip() if p == 'mistral' else '',
-                self.keys.load(p), AO.without(st), AO.instructions(st), self._option('assistant/tours_max'))
+        return (p, self.model.currentText().strip(), self.url.text().strip() if p in URL_KEYS else '',
+                self.keys.load(p), AO.without(st), AO.instructions(st), self._option('assistant/tours_max'),
+                self._option('assistant/contexte_local') if p == 'local' else 0)
 
     def _option(self, key: str):
         from .options import value
@@ -752,7 +789,7 @@ class AssistantPanel(QWidget):
             self.provider.setCurrentIndex(k)             # → _provider_changed
         else:
             self._provider_changed()                     # le modèle des réglages
-        self.url.setText(str(st.value(KEY_URL, '') or ''))
+        self._show_url(self.slug())
         for i in range(self.stack.count()):
             self._style_view(self.stack.widget(i))
         self._show_credits()                             # la devise, le plafond
@@ -766,6 +803,7 @@ class AssistantPanel(QWidget):
             from ..agent.chat import Conversation
             from ..agent.tools import ToolSet
             p, model, url, api_key = key[:4]
+            context = key[7]
             from . import assistant_options as AO
             st = self.win.settings
             tools = ToolSet(self.win, self._runner(self._tab), extended=True,
@@ -773,7 +811,7 @@ class AssistantPanel(QWidget):
             self.conv = Conversation(p, model, api_key, tools, url=url, client=self.client_for(p),
                                      system=AO.system_text(st, removed=ov[0] if ov else None),
                                      max_steps=ov[1] if ov else self._option('assistant/tours_max'),
-                                     on_text=self.relay.text.emit, on_tool=self._tool_seen)
+                                     on_text=self.relay.text.emit, on_tool=self._tool_seen, context=context)
             # les jetons de chaque tour : comptés pour la session et pour le dessin de cette discussion (son onglet,
             # suivi s'il est remplacé sur place), même si un autre onglet est affiché entre-temps
             self.conv.on_usage = (lambda used, holder=self._tab, c=self.conv:
@@ -806,7 +844,9 @@ class AssistantPanel(QWidget):
         from ..agent import credits as CR
         from ..i18n import decimal_sep
         limit = CR.cap(self.win.settings)
-        if limit > 0 and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
+        from ..agent.chat import NO_KEY
+        free = self.slug() in NO_KEY                     # le modèle local ne dépense rien : pas de plafond
+        if limit > 0 and not free and float((self.session_credits or {}).get('cout') or 0.0) >= limit:
             self.status.setText(tr('Plafond des dépenses de la session atteint ({0}) : plus de demande avant le '
                                    'prochain lancement (Options › Assistant)')
                                 .format(CR.money_text(limit, CR.currency(self.win.settings), decimal_sep())))
@@ -818,8 +858,13 @@ class AssistantPanel(QWidget):
             return False
         except ValueError as ex:
             from ..agent.chat import BadAddress
-            self.status.setText(tr('Adresse refusée : https://, ou http:// vers cette machine seulement')
-                                if isinstance(ex, BadAddress) else str(ex))
+            if not isinstance(ex, BadAddress):
+                self.status.setText(str(ex))
+            elif self.slug() == 'local':
+                self.status.setText(tr('Adresse refusée : https://, ou http:// vers ce poste ou le réseau de '
+                                       'l’atelier'))
+            else:
+                self.status.setText(tr('Adresse refusée : https://, ou http:// vers cette machine seulement'))
             return False
         self._out = self.view                            # la discussion de cet onglet, même s'il change
         self._line('<b style="color:{2}">{0}</b> <span style="color:{2}">{1}</span>'.format(
@@ -854,6 +899,21 @@ class AssistantPanel(QWidget):
 
     def explain(self, ex: Exception) -> str:
         """Une erreur du fournisseur, en clair."""
+        from ..agent.chat import LocalDown, LocalError, LocalTimeout, MissingModel
+        if isinstance(ex, LocalTimeout):
+            return tr('Le modèle local n’a pas répondu à temps : un palier plus petit ou un contexte plus court '
+                      '(Options › Assistant › Mistral en local)')
+        if isinstance(ex, LocalError):
+            if ex.memory:
+                return tr('Mémoire insuffisante pour ce modèle : un palier plus petit ou un contexte plus court '
+                          '(Options › Assistant › Mistral en local)')
+            return tr('Ollama : {0}').format(ex.detail[:200])
+        if isinstance(ex, LocalDown):
+            return tr('Ollama ne répond pas ({0}) : lancez-le, ou installez-le (Options › Assistant › Mistral en '
+                      'local)').format(ex.base)
+        if isinstance(ex, MissingModel):
+            return tr('Le modèle « {0} » n’est pas chez Ollama : « Télécharger le modèle » dans Options › Assistant › '
+                      'Mistral en local').format(ex.model)
         status = getattr(ex, 'status_code', None)
         name = type(ex).__name__
         if status == 401:

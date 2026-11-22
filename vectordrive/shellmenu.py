@@ -68,10 +68,11 @@ def targets_for(ext: str) -> list[tuple[str, str]]:
     return [(k, lab) for k, lab in TARGETS if k != src and not (src == 'ps' and k == 'eps')]
 
 
-def plan(program: tuple[str, list[str]] | None = None) -> list[tuple[str, dict]]:
+def plan(program: tuple[str, list[str]] | None = None, lots: bool = True) -> list[tuple[str, dict]]:
     """Clés à poser sous HKEY_CURRENT_USER et leurs valeurs ('' : valeur par
     défaut) : un sous-menu par extension (jamais « DXF en DXF »), et le verbe
-    posé sur l'extension qui y renvoie."""
+    posé sur l'extension qui y renvoie. `lots` False (VD-convert, le
+    convertisseur seul) : sans « Traitement par lots »."""
     program = program or executable()
     icon = f'{program[0]},0'
     out = []
@@ -81,14 +82,16 @@ def plan(program: tuple[str, list[str]] | None = None) -> list[tuple[str, dict]]
             key = rf'{CLASSES}\{sub}\shell\{rank:02d}{kind}'
             out.append((key, {'MUIVerb': f'en {label}', 'Icon': icon}))
             out.append((key + r'\command', {'': command(kind, program)}))
-        key = rf'{CLASSES}\{sub}\shell\90lots'
-        out.append((key, {'MUIVerb': LOTS_TITLE, 'Icon': icon, 'MultiSelectModel': 'Player'}))
-        out.append((key + r'\command', {'': lots_command(program)}))
+        if lots:
+            key = rf'{CLASSES}\{sub}\shell\90lots'
+            out.append((key, {'MUIVerb': LOTS_TITLE, 'Icon': icon, 'MultiSelectModel': 'Player'}))
+            out.append((key + r'\command', {'': lots_command(program)}))
         # Windows ajoute lui-même le « \shell » final de la clé du sous-menu
         out.append((rf'{CLASSES}\SystemFileAssociations\{ext}\shell\{VERB}',
                     {'MUIVerb': TITLE, 'Icon': icon, 'ExtendedSubCommandsKey': sub}))
-    out.append((rf'{CLASSES}\{DIR_KEY}', {'MUIVerb': LOTS_DIR_TITLE, 'Icon': icon}))
-    out.append((rf'{CLASSES}\{DIR_KEY}\command', {'': lots_command(program)}))
+    if lots:
+        out.append((rf'{CLASSES}\{DIR_KEY}', {'MUIVerb': LOTS_DIR_TITLE, 'Icon': icon}))
+        out.append((rf'{CLASSES}\{DIR_KEY}\command', {'': lots_command(program)}))
     return out
 
 
@@ -140,13 +143,13 @@ def _notify() -> None:
         pass
 
 
-def install(write=None, program=None) -> int:
+def install(write=None, program=None, lots: bool = True) -> int:
     """Pose le menu (sous HKEY_CURRENT_USER) ; rend le nombre d'extensions."""
     if write is None:
         if not available():
             raise OSError('menu de l\'explorateur : Windows seulement')
         write = _winreg_write
-    for key, values in plan(program):
+    for key, values in plan(program, lots):
         write(key, values)
     if write is _winreg_write:
         _notify()
@@ -165,14 +168,14 @@ def uninstall(delete=None) -> int:
     return n
 
 
-def check(read=None, program=None) -> tuple[bool, str]:
+def check(read=None, program=None, lots: bool = True) -> tuple[bool, str]:
     """(posé et à jour, explication) : chaque commande inscrite désigne-t-elle
     bien ce programme ?"""
     if read is None:
         if not available():
             return False, 'Windows seulement.'
         read = _winreg_read
-    want = dict(plan(program))
+    want = dict(plan(program, lots))
     posed = [k for k in want if k.endswith(rf'\shell\{VERB}')]
     if not any(read(k, 'MUIVerb') for k in posed):
         return False, 'Non installé.'
