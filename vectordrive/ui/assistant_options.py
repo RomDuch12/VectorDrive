@@ -164,21 +164,30 @@ def _tier_notes() -> dict:
 
 
 def _local_box(dlg, form, parent=None) -> None:
-    """« Mistral en local (Ollama) » (demande du 22/11) : le palier de la carte graphique (4, 8, 12, 16 Go), l'état
-    d'Ollama, Démarrer, Télécharger le modèle (une console que l'utilisateur voit), Utiliser ce modèle (fournisseur
-    et modèle des options, gardés à OK)."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QComboBox
+    """« Mistral en local (Ollama) » (demandes du 22/11) : tout se fait d'ici. Le pas à pas en quatre étapes
+    (installer Ollama, choisir le palier de la carte graphique, télécharger le modèle, l'utiliser), chacune marquée
+    faite ou à faire ; « Tout préparer » enchaîne ce qui manque, après un seul accord. L'installation prend
+    l'installateur officiel (ollama.com), vérifie sa signature (Ollama Inc.) avant de le lancer et montre sa
+    fenêtre ; le modèle se télécharge dans la fenêtre des options (barre d'avancement, Annuler). Le travail long
+    tourne dans un fil à part : la fenêtre reste vive. `dlg.local_confirm(titre, texte)` : l'accord (essais)."""
+    import sys
+    import tempfile
+    import threading
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QProgressBar
     from ..agent import local_models as LM
     from ..i18n import decimal_sep
     st = dlg.settings
     box = QGroupBox(tr('Mistral en local (Ollama)'))
     lay = QVBoxLayout(box)
     note = QLabel(tr('Un modèle Mistral sur ce poste, par Ollama : sans clé ni crédit, et le dessin reste à '
-                     'l’atelier. Choisissez le palier de votre carte graphique, téléchargez le modèle une fois, puis '
-                     '« Utiliser ce modèle ».'))
+                     'l’atelier. « Tout préparer » fait ce qui manque, dans l’ordre ; ou étape par étape :'))
     note.setWordWrap(True)
     lay.addWidget(note)
+    dlg.local_steps = QLabel('')
+    dlg.local_steps.setTextFormat(Qt.TextFormat.PlainText)
+    dlg.local_steps.setWordWrap(True)
+    lay.addWidget(dlg.local_steps)
     row = QHBoxLayout()
     dlg.local_gpu = QLabel('')
     dlg.local_gpu.setWordWrap(True)
@@ -188,30 +197,64 @@ def _local_box(dlg, form, parent=None) -> None:
     lay.addLayout(row)
     dlg.local_tier = QComboBox()
     notes = _tier_notes()
+
+    def gb_text(v: float) -> str:
+        return ('%g' % v).replace('.', decimal_sep())
+
     for t in LM.TIERS:
-        size = ('%g' % t.size_gb).replace('.', decimal_sep())
-        dlg.local_tier.addItem(tr('{0} Go : {1} ({2}, {3} Go) — {4}').format(t.gpu_gb, t.label, t.model, size,
+        dlg.local_tier.addItem(tr('{0} Go : {1} ({2}, {3} Go) — {4}').format(t.gpu_gb, t.label, t.model,
+                                                                             gb_text(t.size_gb),
                                                                              notes.get(t.model, '')), t.model)
     lay.addWidget(dlg.local_tier)
     dlg.local_state = QLabel(tr('Ollama : pas encore vérifié'))
     dlg.local_state.setWordWrap(True)
     dlg.local_state.setTextFormat(Qt.TextFormat.PlainText)
     lay.addWidget(dlg.local_state)
+    prog = QHBoxLayout()
+    dlg.local_bar = QProgressBar()
+    dlg.local_bar.setVisible(False)
+    dlg.local_cancel = QPushButton(tr('Annuler'))
+    dlg.local_cancel.setAutoDefault(False)
+    dlg.local_cancel.setVisible(False)
+    prog.addWidget(dlg.local_bar, 1)
+    prog.addWidget(dlg.local_cancel)
+    lay.addLayout(prog)
     row = QHBoxLayout()
+    prepare = QPushButton(tr('Tout préparer'))
+    prepare.setToolTip(tr('Installe Ollama s’il manque, le démarre, télécharge le modèle choisi s’il manque et en '
+                          'fait l’assistant — après votre accord'))
+    install = QPushButton(tr('Installer Ollama…'))
+    install.setToolTip(tr('L’installateur officiel (ollama.com, environ {0} Go), signature vérifiée, pour votre '
+                          'compte seulement').format(gb_text(LM.INSTALLER_GB)))
     check = QPushButton(tr('Vérifier Ollama'))
     start = QPushButton(tr('Démarrer Ollama'))
     pull = QPushButton(tr('Télécharger le modèle'))
-    pull.setToolTip(tr('Une console « ollama pull » : l’avancement s’y affiche ; une fois par modèle'))
+    pull.setToolTip(tr('Dans cette fenêtre, avec l’avancement ; une fois par modèle'))
     use = QPushButton(tr('Utiliser ce modèle'))
     use.setToolTip(tr('Le fournisseur « Mistral en local » et ce modèle, gardés à OK'))
-    link = QLabel('<a href="{0}">{1}</a>'.format(html.escape(LM.DOWNLOAD_PAGE), html.escape(tr('Installer Ollama'))))
+    link = QLabel('<a href="{0}">{1}</a>'.format(html.escape(LM.DOWNLOAD_PAGE), html.escape('ollama.com')))
     link.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
-    for b in (detect, check, start, pull, use):
+    buttons = (prepare, install, detect, check, start, pull, use)
+    for b in buttons:
         b.setAutoDefault(False)
-    for w in (check, start, pull, use, link):
+    for w in (prepare, install, check, start, pull, use, link):
         row.addWidget(w)
     row.addStretch(1)
     lay.addLayout(row)
+    dlg.local_known = {'running': False, 'models': [], 'version': ''}
+    job = {}
+
+    def stop(_=False):
+        cancel = job.get('cancel')
+        if cancel is not None:
+            cancel.set()
+            dlg.local_state.setText(tr('Annulation…'))
+    dlg.local_cancel.clicked.connect(stop)
+
+    def closed(*_a):
+        job['closed'] = True                             # plus de question après la fermeture
+        stop()
+    dlg.finished.connect(closed)                         # la fenêtre fermée : le téléchargement s'arrête
 
     def model() -> str:
         return str(dlg.local_tier.currentData() or LM.TIERS[1].model)
@@ -220,11 +263,135 @@ def _local_box(dlg, form, parent=None) -> None:
         w = getattr(dlg, 'widgets', {}).get('assistant/adresse_local')
         return w.text().strip() if w is not None else str(st.value('assistant/adresse_local', '') or '')
 
+    def size_of(m: str) -> str:
+        t = LM.tier_of(m)
+        return gb_text(t.size_gb) if t is not None else '?'
+
+    def chosen() -> bool:
+        w = getattr(dlg, 'widgets', {})
+        prov, name = w.get('assistant/fournisseur'), w.get('assistant/modele_local')
+        if prov is None or name is None:
+            return False
+        return prov.currentData() == 'local' and name.text().strip() == model()
+
+    def refresh_steps() -> None:
+        known = dlg.local_known
+        installed = known['running'] or bool(LM.exe()) or not LM.on_this_machine(address())
+        mark = lambda ok: '✔' if ok else '○'                # noqa: E731
+        dlg.local_steps.setText('\n'.join((
+            mark(installed) + ' 1. ' + tr('Installer Ollama (une fois ; environ {0} Go, sans droit '
+                                          'd’administrateur)').format(gb_text(LM.INSTALLER_GB)),
+            mark(st.contains(KEY_GPU) or chosen()) + ' 2. ' + tr('Choisir le palier de la carte graphique '
+                                                                     '(« Détecter »)'),
+            mark(LM.has_model(known['models'], model())) + ' 3. ' + tr('Télécharger le modèle (une fois par '
+                                                                       'modèle)'),
+            mark(chosen()) + ' 4. ' + tr('« Utiliser ce modèle », puis OK : l’assistant démarre Ollama de '
+                                         'lui-même'))))
+
+    def ask(title: str, text: str) -> bool:
+        confirm = getattr(dlg, 'local_confirm', None)
+        if confirm is not None:
+            return bool(confirm(title, text))
+        yes = QMessageBox.StandardButton.Yes
+        return QMessageBox.question(dlg, title, text, yes | QMessageBox.StandardButton.No,
+                                    QMessageBox.StandardButton.No) == yes
+
+    def amount(n: int) -> str:
+        return (gb_text(round(n / 1e9, 1)) + ' Go') if n >= 1e9 else (str(round(n / 1e6)) + ' Mo')
+
+    def show_progress(said) -> None:
+        cancel = job.get('cancel')
+        if not said or (cancel is not None and cancel.is_set()):
+            return
+        text, done, total = said
+        if total:
+            dlg.local_bar.setRange(0, 1000)
+            dlg.local_bar.setValue(int(1000 * min(done, total) / total))
+            text = f'{text} {amount(done)} / {amount(total)}'
+        else:
+            dlg.local_bar.setRange(0, 0)                 # sans total connu : la barre qui défile
+        dlg.local_state.setText(text)
+
+    def busy(on: bool) -> None:
+        for b in buttons + (dlg.local_tier,):
+            b.setEnabled(not on)
+        dlg.local_bar.setVisible(on)
+        dlg.local_cancel.setVisible(on)
+
+    def run_job(work, done, sync: bool = False):
+        """`work(say, cancel)` dans un fil de travail (`say(texte, fait=0, total=0)` : l'avancement) ; puis
+        `done(résultat, erreur)` dans le fil de l'interface. `sync` : tout de suite (essais)."""
+        cancel = threading.Event()
+        holder = {}
+
+        def say(text, done_=0, total=0, final=False):
+            holder['say'] = (text, done_, total)
+            if final:                                    # l'installateur tourne : il ne s'annule plus d'ici
+                holder['final'] = True
+
+        def body():
+            try:
+                holder['out'] = (work(say, cancel), None)
+            except Exception as ex:                      # noqa: BLE001 — rendue à l'interface
+                holder['out'] = (None, ex)
+        if sync:
+            body()
+            show_progress(holder.get('say'))
+            return done(*holder['out'])
+        busy(True)
+        dlg.local_bar.setRange(0, 0)
+        job['cancel'] = cancel                           # « Annuler », la fenêtre fermée : ce travail-ci
+        threading.Thread(target=body, daemon=True, name='vectordrive-ollama-setup').start()
+        timer = QTimer(dlg)
+
+        def poll():
+            show_progress(holder.get('say'))
+            if holder.get('final'):
+                dlg.local_cancel.setVisible(False)
+            out = holder.get('out')
+            if out is None and cancel.is_set() and not holder.get('final'):
+                out = (None, LM.Cancelled())             # la main rendue tout de suite ; le fil finit seul
+            if out is not None:
+                timer.stop()
+                timer.deleteLater()
+                job.pop('cancel', None)
+                busy(False)
+                done(*out)
+        timer.timeout.connect(poll)
+        timer.start(150)
+        return None
+
+    def failed(ex) -> str:
+        """Une erreur d'installation ou de téléchargement, en clair."""
+        if isinstance(ex, LM.Cancelled):
+            return tr('Annulé.')
+        if not isinstance(ex, LM.SetupError):
+            return tr('Erreur : {0}').format(str(ex)[:200])
+        d = ex.detail
+        return {
+            'download': tr('Le téléchargement de l’installateur a échoué ({0})').format(d),
+            'source': tr('Installateur refusé : il ne venait ni d’ollama.com ni de GitHub ({0})').format(d),
+            'file': tr('Installateur refusé : ce n’est pas un programme Windows'),
+            'signature': tr('Installateur refusé : il n’est pas signé par Ollama Inc. ; rien n’a été lancé'),
+            'installer': tr('L’installation d’Ollama s’est arrêtée (code {0})').format(d),
+            'missing': tr('Ollama est introuvable après l’installation : « Vérifier Ollama »'),
+            'address': tr('Adresse refusée : https://, ou http:// vers ce poste ou le réseau de l’atelier'),
+            'model': tr('Choisissez un modèle'),
+            'pull': tr('Ollama refuse le téléchargement : {0}').format(d),
+            'down': tr('Ollama ne répond pas ({0})').format(d or address() or LM.DEFAULT_URL),
+            'start': tr('Ollama ne démarre pas : lancez-le depuis le menu Démarrer de Windows'),
+            'notinstalled': tr('Ollama n’est pas installé : « Installer Ollama » ou « Tout préparer »'),
+            'old': tr('Ollama {0} est trop ancien pour Ministral 3 (0.13.1 au moins) : « Installer Ollama » le met '
+                      'à jour').format(d),
+            'stillold': tr('Ollama est toujours en version {0} : quittez Ollama (zone de notification), puis '
+                           '« Installer Ollama » à nouveau').format(d),
+        }.get(ex.reason, str(ex)[:200])
+
     def show_gpu(gb) -> None:
         if gb:
             best = LM.recommend(gb)
-            dlg.local_gpu.setText(tr('Carte graphique : {0} Go → palier conseillé : {1}').format(
-                ('%g' % gb).replace('.', decimal_sep()), best.label))
+            dlg.local_gpu.setText(tr('Carte graphique : {0} Go → palier conseillé : {1}').format(gb_text(gb),
+                                                                                               best.label))
         else:
             dlg.local_gpu.setText(tr('Carte graphique : mémoire inconnue — « Détecter » ; sans carte NVIDIA, le plus '
                                      'petit palier tourne aussi sur le processeur, lentement'))
@@ -240,6 +407,7 @@ def _local_box(dlg, form, parent=None) -> None:
         i = dlg.local_tier.findData(LM.recommend(gb).model)
         if i >= 0:
             dlg.local_tier.setCurrentIndex(i)
+        refresh_steps()
         return gb
 
     def do_check(_=False, sync: bool = False):
@@ -248,11 +416,10 @@ def _local_box(dlg, form, parent=None) -> None:
         url = address()
         if sync:
             return show_status(LM.status(url))
-        import threading
-        from PySide6.QtCore import QTimer
         holder = {}
         check.setEnabled(False)
         dlg.local_state.setText(tr('Vérification d’Ollama…'))
+
         def work():
             try:
                 got = LM.status(url)
@@ -272,8 +439,10 @@ def _local_box(dlg, form, parent=None) -> None:
         timer.start(100)
         return None
 
-    def show_status(got: dict) -> dict:
-        m = model()
+    def show_status(got: dict, m: str = '') -> dict:
+        m = m or model()
+        dlg.local_known = {'running': bool(got['running']), 'models': list(got['models']),
+                           'version': got.get('version', '')}
         if got['running']:
             st.setValue(LM.KEY_SEEN, '|'.join(got['models']))
             text = tr('Ollama {0} en marche ; modèles : {1}').format(got['version'] or '?',
@@ -281,14 +450,18 @@ def _local_box(dlg, form, parent=None) -> None:
             text += ' — ' + (tr('« {0} » prêt').format(m) if LM.has_model(got['models'], m)
                              else tr('« {0} » à télécharger').format(m))
             if m.startswith('ministral-3') and not LM.version_ok(got['version']):
-                text += ' — ' + tr('Ministral 3 demande Ollama 0.13.1 ou plus récent : mettez Ollama à jour')
+                text += ' — ' + tr('Ministral 3 demande Ollama 0.13.1 ou plus récent : « Installer Ollama » le met à '
+                                   'jour')
         elif got['error'] == 'adresse refusée':
             text = tr('Adresse refusée : https://, ou http:// vers ce poste ou le réseau de l’atelier')
+        elif not LM.on_this_machine(address()):
+            text = tr('Ollama ne répond pas à cette adresse : allumez le poste qui le sert, ou videz l’adresse')
         elif LM.exe():
             text = tr('Ollama est installé mais ne répond pas : « Démarrer Ollama »')
         else:
-            text = tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis « Vérifier Ollama »')
+            text = tr('Ollama n’est pas installé : « Installer Ollama » ou « Tout préparer »')
         dlg.local_state.setText(text)
+        refresh_steps()
         return got
 
     def do_start(_=False) -> bool:
@@ -301,25 +474,104 @@ def _local_box(dlg, form, parent=None) -> None:
         elif LM.exe():
             dlg.local_state.setText(tr('Ollama ne s’est pas lancé : démarrez-le depuis le menu Démarrer de Windows'))
         else:
-            dlg.local_state.setText(tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis '
-                                       '« Vérifier Ollama »'))
+            dlg.local_state.setText(tr('Ollama n’est pas installé : « Installer Ollama » ou « Tout préparer »'))
         return ok
 
-    def do_pull(_=False) -> bool:
-        m = model()
-        t = LM.tier_of(m)
-        ok = LM.pull(m)
-        if ok:
-            size = ('%g' % t.size_gb).replace('.', decimal_sep()) if t is not None else '?'
-            dlg.local_state.setText(tr('Téléchargement de « {0} » dans une console (environ {1} Go) ; à la fin, '
-                                       '« Vérifier Ollama »').format(m, size))
-        else:
-            dlg.local_state.setText(tr('Ollama n’est pas installé : « Installer Ollama » (ollama.com), puis '
-                                       '« Vérifier Ollama »'))
-        return ok
+    def folder():
+        return tempfile.mkdtemp(prefix='vectordrive-ollama-')   # un dossier par travail, retiré après
 
-    def do_use(_=False) -> None:
+    def install_steps(say):
+        texts = {'download': tr('Téléchargement de l’installateur d’Ollama…'),
+                 'verify': tr('Vérification de la signature de l’installateur…'),
+                 'install': tr('Installation d’Ollama (sa fenêtre montre l’avancement)…')}
+        return (lambda k: say(texts.get(k, k), final=k == 'install'),
+                lambda done, total: say(texts['download'], done, total))
+
+    def need_running(url: str, say, cancel) -> None:
+        say(tr('Démarrage d’Ollama…'))
+        if not LM.ensure_running(url, stopping=cancel.is_set):
+            if cancel.is_set():
+                raise LM.Cancelled()
+            raise LM.SetupError(LM.down_reason(url))
+
+    def offer_winget(ex) -> None:
+        """Le téléchargement a échoué (proxy, pare-feu) : winget, dans une console, si l'utilisateur le veut."""
+        if job.get('closed'):
+            return
+        if isinstance(ex, LM.SetupError) and ex.reason in ('download', 'source') and LM.winget() and ask(
+                tr('Installer Ollama'), failed(ex) + '\n\n' + tr('L’installer plutôt par winget (le gestionnaire de '
+                                                                 'paquets de Windows), dans une console ?')):
+            LM.install_winget()
+            dlg.local_state.setText(tr('Installation par winget dans la console ; à la fin, « Vérifier Ollama »'))
+
+    def do_install(_=False, sync: bool = False) -> bool:
+        ver = dlg.local_known.get('version') or ''
+        # trop ancien, sur ce poste : l'installateur le met à jour sur place (un autre poste se met à jour là-bas)
+        outdated = LM.on_this_machine(address()) and bool(ver) and not LM.version_ok(ver)
+        if LM.exe() and not outdated:
+            dlg.local_state.setText(tr('Ollama est déjà installé : « Vérifier Ollama » (pour le mettre à jour : '
+                                       'ollama.com)'))
+            refresh_steps()
+            return False
+        if sys.platform != 'win32':
+            QDesktopServices.openUrl(QUrl(LM.DOWNLOAD_PAGE))
+            dlg.local_state.setText(tr('Installez Ollama depuis ollama.com, puis « Vérifier Ollama »'))
+            return False
+        if not ask(tr('Installer Ollama'), tr(
+                'Télécharger l’installateur officiel d’Ollama (ollama.com, environ {0} Go) et l’installer pour votre '
+                'compte, sans droit d’administrateur ?\n\nSa signature (Ollama Inc.) est vérifiée avant de le '
+                'lancer ; sa fenêtre montre l’installation. Ollama est un logiciel libre (licence MIT).').format(
+                    gb_text(LM.INSTALLER_GB))):
+            return False
+        def work(say, cancel):
+            on_step, on_progress = install_steps(say)
+            path = LM.install(folder(), on_step=on_step, on_progress=on_progress, cancel=cancel)
+            need_running(LM.DEFAULT_URL, say, cancel)    # celui qu'on vient d'installer, quelle que soit l'adresse
+            got = LM.status(LM.DEFAULT_URL)
+            if got['running'] and got['version'] and not LM.version_ok(got['version']):
+                raise LM.SetupError('stillold', got['version'])
+            return got.get('version') or path
+
+        def done(out, err):
+            if err is not None:
+                dlg.local_state.setText(failed(err))
+                offer_winget(err)
+                refresh_steps()
+                return
+            dlg.local_known['running'] = True
+            dlg.local_known['version'] = ''              # revue à la prochaine vérification
+            dlg.local_state.setText(tr('Ollama est installé et en marche : étape suivante, le modèle'))
+            refresh_steps()
+        run_job(work, done, sync)
+        return True
+
+    def do_pull(_=False, sync: bool = False) -> bool:
         m = model()
+        url = address()
+        size = size_of(m)
+
+        def work(say, cancel):
+            need_running(url, say, cancel)
+            head = tr('Téléchargement de « {0} » (environ {1} Go)…').format(m, size)
+            say(head)
+            LM.pull_stream(m, url, on_progress=lambda _step, done_, total: say(head, done_, total), cancel=cancel)
+            return m
+
+        def done(out, err):
+            if err is not None:
+                dlg.local_state.setText(failed(err))
+                refresh_steps()
+                return
+            if not LM.has_model(dlg.local_known['models'], m):
+                dlg.local_known['models'].append(m)
+            dlg.local_known['running'] = True
+            dlg.local_state.setText(tr('« {0} » téléchargé (environ {1} Go) : « Utiliser ce modèle »').format(m, size))
+            refresh_steps()
+        run_job(work, done, sync)
+        return True
+
+    def do_use(_=False, m: str = '') -> None:
+        m = m or model()
         w = getattr(dlg, 'widgets', {})
         if 'assistant/fournisseur' in w:
             box_ = w['assistant/fournisseur']
@@ -327,21 +579,85 @@ def _local_box(dlg, form, parent=None) -> None:
         if 'assistant/modele_local' in w:
             w['assistant/modele_local'].setText(m)
         dlg.local_state.setText(tr('« {0} » sera l’assistant à la fermeture par OK').format(m))
+        refresh_steps()
+
+    def do_prepare(_=False, sync: bool = False) -> bool:
+        """Tout ce qui manque, dans l'ordre, après un seul accord : installer, démarrer, télécharger, utiliser."""
+        m = model()
+        url = address()
+        here = LM.on_this_machine(url)
+        setup = here and not LM.exe()
+        if setup and sys.platform != 'win32':
+            QDesktopServices.openUrl(QUrl(LM.DOWNLOAD_PAGE))
+            dlg.local_state.setText(tr('Installez Ollama depuis ollama.com, puis « Tout préparer »'))
+            return False
+        lines = [tr('Préparer « {0} » comme assistant :').format(m)]
+        if setup:
+            lines.append('• ' + tr('installer Ollama : l’installateur officiel (ollama.com, environ {0} Go), signature '
+                                   'vérifiée, pour votre compte').format(gb_text(LM.INSTALLER_GB)))
+        if here:
+            lines.append('• ' + tr('démarrer Ollama'))
+        lines.append('• ' + tr('télécharger le modèle s’il manque (environ {0} Go)').format(size_of(m)))
+        lines.append('• ' + tr('en faire l’assistant (gardé à OK)'))
+        if not ask(tr('Tout préparer'), '\n'.join(lines) + '\n\n' + tr('Continuer ?')):
+            return False
+
+        def work(say, cancel):
+            if setup:
+                on_step, on_progress = install_steps(say)
+                LM.install(folder(), on_step=on_step, on_progress=on_progress, cancel=cancel)
+            need_running(url, say, cancel)
+            got = LM.status(url)
+            if not got['running']:
+                raise LM.SetupError('down', got.get('error', ''))
+            if m.startswith('ministral-3') and not LM.version_ok(got['version']):
+                raise LM.SetupError('old', got['version'])
+            if not LM.has_model(got['models'], m):
+                head = tr('Téléchargement de « {0} » (environ {1} Go)…').format(m, size_of(m))
+                say(head)
+                LM.pull_stream(m, url, on_progress=lambda _s, done_, total: say(head, done_, total), cancel=cancel)
+                got = {**got, 'models': list(got['models']) + [m]}
+            return got
+
+        def done(out, err):
+            if err is not None:
+                if isinstance(err, LM.SetupError) and err.reason == 'old' and here:
+                    dlg.local_known['version'] = err.detail  # « Installer Ollama » le mettra à jour
+                dlg.local_state.setText(failed(err))
+                offer_winget(err)
+                refresh_steps()
+                return
+            i = dlg.local_tier.findData(m)
+            if i >= 0:
+                dlg.local_tier.setCurrentIndex(i)
+            show_status(out, m)
+            do_use(m=m)
+            dlg.local_state.setText(tr('« {0} » est prêt : il sera l’assistant à la fermeture par OK').format(m))
+        run_job(work, done, sync)
+        return True
 
     detect.clicked.connect(do_detect)
     check.clicked.connect(do_check)
     start.clicked.connect(do_start)
     pull.clicked.connect(do_pull)
     use.clicked.connect(do_use)
-    dlg.local_actions = {'detect': do_detect, 'check': do_check, 'start': do_start, 'pull': do_pull, 'use': do_use}
+    install.clicked.connect(do_install)
+    prepare.clicked.connect(do_prepare)
+    dlg.local_tier.currentIndexChanged.connect(lambda _i: refresh_steps())
+    dlg.local_actions = {'detect': do_detect, 'check': do_check, 'start': do_start, 'pull': do_pull, 'use': do_use,
+                         'install': do_install, 'prepare': do_prepare}
     gb = float(st.value(KEY_GPU, 0) or 0)
     show_gpu(gb)
     current = str(st.value('assistant/modele_local', '') or '')
+    seen = [m for m in str(st.value(LM.KEY_SEEN, '') or '').split('|') if m]
+    dlg.local_known['models'] = seen                     # vus à la dernière vérification (rien n'est demandé ici)
     i = dlg.local_tier.findData(current if LM.tier_of(current) else LM.recommend(gb).model)
     dlg.local_tier.setCurrentIndex(max(0, i))
+    refresh_steps()
     form.addRow(box)
     _searchable(dlg, form, box, 'Mistral en local (Ollama)', tr('Mistral en local (Ollama)'),
-                'ollama local gpu carte graphique ministral mistral small hors ligne')
+                'ollama local gpu carte graphique ministral mistral small hors ligne installer télécharger '
+                'tout préparer pas à pas')
 
 
 def build(dlg, form, parent=None) -> None:

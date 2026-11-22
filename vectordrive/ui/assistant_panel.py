@@ -97,6 +97,7 @@ class _Relay(QObject):
     tool = Signal(str)
     done = Signal(str)
     usage = Signal(object)                               # (porteur de l'onglet, fournisseur, modèle, jetons)
+    status = Signal(str)                                 # une étape à dire : 'ollama-start', 'ollama-ready'
 
 
 def plain_text(text: str) -> str:
@@ -159,6 +160,7 @@ class AssistantPanel(QWidget):
         self.relay.text.connect(self._on_text)
         self.relay.tool.connect(self._on_tool)
         self.relay.done.connect(self._on_done)
+        self.relay.status.connect(self._on_status)
         st = win.settings
 
         lay = QVBoxLayout(self)
@@ -811,7 +813,8 @@ class AssistantPanel(QWidget):
             self.conv = Conversation(p, model, api_key, tools, url=url, client=self.client_for(p),
                                      system=AO.system_text(st, removed=ov[0] if ov else None),
                                      max_steps=ov[1] if ov else self._option('assistant/tours_max'),
-                                     on_text=self.relay.text.emit, on_tool=self._tool_seen, context=context)
+                                     on_text=self.relay.text.emit, on_tool=self._tool_seen, context=context,
+                                     on_status=self.relay.status.emit)
             # les jetons de chaque tour : comptés pour la session et pour le dessin de cette discussion (son onglet,
             # suivi s'il est remplacé sur place), même si un autre onglet est affiché entre-temps
             self.conv.on_usage = (lambda used, holder=self._tab, c=self.conv:
@@ -825,6 +828,8 @@ class AssistantPanel(QWidget):
             if not carry and self._conv_key is not None and self.view.toPlainText().strip():
                 self._line(tr('— Nouvelle discussion ({0}, {1}) —').format(self.providers[p][0], model or '…'))
             self._conv_key = key
+        # Ollama démarré tout seul (réglage repris à chaque demande, sans refaire la discussion)
+        self.conv.autostart = key[0] == 'local' and bool(self._option('assistant/demarrage_local'))
         return self.conv
 
     def send_input(self) -> None:
@@ -909,11 +914,15 @@ class AssistantPanel(QWidget):
                           '(Options › Assistant › Mistral en local)')
             return tr('Ollama : {0}').format(ex.detail[:200])
         if isinstance(ex, LocalDown):
-            return tr('Ollama ne répond pas ({0}) : lancez-le, ou installez-le (Options › Assistant › Mistral en '
-                      'local)').format(ex.base)
+            from ..agent import local_models as LM
+            if not LM.on_this_machine(ex.base):
+                return tr('Ollama ne répond pas ({0}) : allumez le poste qui le sert, ou videz l’adresse (Options › '
+                          'Assistant › Mistral en local)').format(ex.base)
+            return tr('Ollama ne répond pas ({0}) : « Tout préparer » l’installe et le démarre (Options › '
+                      'Assistant › Mistral en local)').format(ex.base)
         if isinstance(ex, MissingModel):
-            return tr('Le modèle « {0} » n’est pas chez Ollama : « Télécharger le modèle » dans Options › Assistant › '
-                      'Mistral en local').format(ex.model)
+            return tr('Le modèle « {0} » n’est pas chez Ollama : « Télécharger le modèle » ou « Tout préparer » '
+                      'dans Options › Assistant › Mistral en local').format(ex.model)
         status = getattr(ex, 'status_code', None)
         name = type(ex).__name__
         if status == 401:
@@ -1355,6 +1364,13 @@ class AssistantPanel(QWidget):
             self.relay.tool.emit(f'⚙ {name} — {what}' if what else f'⚙ {name}')
         else:
             self.relay.tool.emit(f'⚙ {name}')
+
+    def _on_status(self, key: str) -> None:
+        """Une étape du fil de travail (le démarrage d'Ollama), dans la ligne d'état du panneau."""
+        said = {'ollama-start': tr('Ollama ne répondait pas : démarrage d’Ollama…'),
+                'ollama-ready': tr('Ollama est en marche : l’assistant réfléchit…')}
+        if self.running:
+            self.status.setText(said.get(key, key))
 
     def _on_tool(self, text: str) -> None:
         if not self._option('assistant/montrer_outils'):

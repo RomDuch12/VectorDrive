@@ -173,7 +173,7 @@ class Conversation:
 
     def __init__(self, provider: str, model: str, key: str, tools, *, url: str = '', client=None,
                  on_text=None, on_tool=None, max_steps: int = MAX_STEPS, system: str = '', on_usage=None,
-                 context: int = 0):
+                 context: int = 0, autostart: bool = False, on_status=None):
         if provider not in PROVIDERS:
             raise ValueError(f'unknown provider: {provider}')
         self.provider = provider
@@ -187,6 +187,10 @@ class Conversation:
         self.max_steps = max_steps
         #: la taille du contexte d'un modèle local (jetons ; 0 : celle d'office)
         self.context = context
+        #: modèle local : Ollama démarré tout seul s'il ne répond pas (sur ce poste) ; `on_status(clé)` le dit
+        #: ('ollama-start', 'ollama-ready'), dans le fil de travail
+        self.autostart = autostart
+        self.on_status = on_status or (lambda _k: None)
         self.notes: list = []
         self._stop = threading.Event()
         specs = list(tools.specs())                      # figés pour toute la discussion (cache, raisonnement)
@@ -656,13 +660,14 @@ class _Ollama(_Chat):
             raise BadAddress(self.base)
         self.url = self.base + '/api/chat'
         self.context = int(getattr(conv, 'context', 0) or LM.DEFAULT_CONTEXT)
-        raw = client or self._call
+        raw = client or self._post_started
         self.post = lambda body: self._from_native(raw(self._native(body)))
         self.tools = [{'type': 'function', 'function': {'name': s['name'], 'description': s['description'],
                                                         'parameters': s['inputSchema']}} for s in specs]
         self.messages: list = [{'role': 'system', 'content': conv.system}]
         self._conn = None                                # la connexion en cours (« Arrêter » la coupe)
         self._cancel = None                              # l'annulation de l'échange en cours (le sien seul)
+        self._autostarted = False                        # Ollama déjà démarré (ou essayé) pour cette discussion
 
     def _connect(self):
         """Une connexion directe au serveur : ni proxy du système (un proxy d'entreprise ne voit ni le dessin, ni le
@@ -692,6 +697,28 @@ class _Ollama(_Chat):
                 _socket.socket.close(sock)
             except (OSError, TypeError):
                 pass
+
+    def _post_started(self, body: dict) -> dict:
+        """`_call` ; si Ollama ne répond pas sur ce poste et que le réglage le permet : démarré, attendu, puis la
+        demande refaite. Une seule fois par discussion : un Ollama qui ne démarre pas n'est pas attendu à chaque
+        tour."""
+        try:
+            return self._call(body)
+        except LocalDown:
+            if not getattr(self.conv, 'autostart', False) or self._autostarted:
+                raise
+            from . import local_models as LM
+            if not LM.on_this_machine(self.base) or not LM.exe():
+                raise
+            self._autostarted = True
+            self.conv.on_status('ollama-start')
+            ok = LM.ensure_running(self.base, stopping=lambda: self.conv.stopping)
+            if self.conv.stopping:
+                raise Stopped() from None
+            if not ok:
+                raise
+        self.conv.on_status('ollama-ready')
+        return self._call(body)
 
     def _call(self, body: dict, connect=None) -> dict:
         """L'échange avec Ollama, dans un fil à part : « Arrêter » rend la main tout de suite (au plus 0,2 s), même

@@ -15,7 +15,8 @@ NAME_MAX = 40
 #: les réglages d'un profil (jamais une clé : `agent.keys`)
 PROFILE_KEYS = ('assistant/fournisseur', 'assistant/modele_anthropic', 'assistant/modele_openai',
                 'assistant/modele_mistral', 'assistant/adresse_mistral', 'assistant/modele_local',
-                'assistant/adresse_local', 'assistant/contexte_local', 'assistant/tours_max',
+                'assistant/adresse_local', 'assistant/contexte_local', 'assistant/demarrage_local',
+                'assistant/tours_max',
                 'assistant/outils_memoire', 'assistant/outils_scripts', 'assistant/outils_fao',
                 'assistant/outils_copies', 'assistant/outils_commandes', 'assistant/consignes',
                 'assistant/valider')

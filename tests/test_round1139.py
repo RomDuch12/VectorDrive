@@ -447,8 +447,9 @@ class Ui(unittest.TestCase):
             d.local_actions['check'](sync=True)
         self.assertIn('pas installé', d.local_state.text())
         pulled = []
-        with mock.patch.object(L, 'pull', lambda m: pulled.append(m) or True):
-            self.assertTrue(d.local_actions['pull']())
+        with mock.patch.object(L, 'pull_stream', lambda m, url, on_progress=None, cancel=None: pulled.append(m)), \
+                mock.patch.object(L, 'ensure_running', lambda *a, **k: True):
+            self.assertTrue(d.local_actions['pull'](sync=True))
         self.assertEqual(pulled, ['ministral-3:14b'])
         self.assertIn('9,1 Go', d.local_state.text())
         installed = mock.patch.object(L, 'exe', lambda: r'C:\Ollama\ollama.exe')

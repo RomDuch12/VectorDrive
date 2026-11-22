@@ -14,8 +14,10 @@ Un palier par mémoire de carte graphique (modèles quantifiés en 4 bits, taill
 * 16 Go : Mistral Small 3.2 24B (`mistral-small3.2:24b`, 15 Go) — le plus capable ; juste sur 16 Go (une partie
   du contexte passe par la mémoire du poste).
 
-Ministral 3 demande Ollama 0.13.1 ou plus récent. Rien ici ne télécharge ni n'installe de lui-même : « Télécharger
-le modèle » ouvre une console `ollama pull` que l'utilisateur voit et peut fermer.
+Ministral 3 demande Ollama 0.13.1 ou plus récent. Rien ici ne télécharge ni n'installe de lui-même : l'interface le
+demande, après accord de l'utilisateur pour l'installation (l'installateur officiel, signé par Ollama Inc.). Le
+modèle se télécharge par l'API d'Ollama (`pull_stream`, avec l'avancement) ; `pull` (une console) reste pour qui la
+préfère.
 """
 from __future__ import annotations
 
@@ -280,3 +282,341 @@ def table_text(gpu_gb: float | None = None) -> str:
         mark = ' ◀' if best is not None and t == best else ''
         lines.append(f'{t.gpu_gb} Go : {t.label} ({t.model}, {t.size_gb:g} Go) — {t.note}{mark}')
     return '\n'.join(lines)
+
+
+# --- installer Ollama, télécharger un modèle, le démarrer au besoin (demande du 22/11 après-midi : « vd desktop doit
+# pouvoir gérer entièrement l'install de ollama, de son modèle et son utilisation ») ---------------------------------
+#: l'installateur officiel d'Ollama pour Windows (Inno Setup ; pour le compte de l'utilisateur, sans droit
+#: d'administrateur) ; ollama.com renvoie vers les versions publiées sur GitHub
+INSTALLER_URL = 'https://ollama.com/download/OllamaSetup.exe'
+#: les seuls serveurs d'où l'installateur peut venir (https, redirections comprises)
+INSTALLER_HOSTS = ('ollama.com', 'github.com', 'githubusercontent.com')
+#: l'éditeur exigé dans la signature Authenticode de l'installateur, avant de le lancer
+SIGNER = 'O=Ollama Inc.'
+#: la taille de l'installateur (Go, relevée le 22/11/2026), dite avant de le télécharger
+INSTALLER_GB = 1.9
+WINGET_ID = 'Ollama.Ollama'
+#: le port d'Ollama sur ce poste (celui que son application ouvre)
+DEFAULT_PORT = 11434
+#: le démarrage automatique attend Ollama au plus tant de secondes
+START_WAIT_S = 45
+#: le téléchargement d'un modèle attend une nouvelle d'Ollama au plus tant de secondes (la vérification des parties
+#: d'un gros modèle se tait plusieurs minutes)
+PULL_TIMEOUT_S = 1800
+
+
+class Cancelled(Exception):
+    """L'utilisateur a annulé (téléchargement de l'installateur ou du modèle)."""
+
+
+class SetupError(Exception):
+    """L'installation, le démarrage ou le téléchargement n'a pas abouti. `reason` : download (téléchargement),
+    source (serveur refusé), file (pas un programme), signature, installer (code de sortie), missing (introuvable
+    après l'installation), address, model, pull (refus d'Ollama), down (Ollama ne répond pas), start (ne démarre
+    pas), notinstalled, old (version trop ancienne) ; `detail` : ce qu'on en sait."""
+
+    def __init__(self, reason: str, detail: str = ''):
+        super().__init__(f'{reason}: {detail}' if detail else reason)
+        self.reason, self.detail = reason, detail
+
+
+def _system_exe(name: str) -> str:
+    """Un programme de Windows par son chemin complet (jamais un homonyme du dossier courant ou de l'application)."""
+    root = pathlib.Path(os.environ.get('SystemRoot') or r'C:\Windows') / 'System32'
+    if name == 'powershell':
+        return str(root / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe')
+    return str(root / f'{name}.exe')
+
+
+def _int(v) -> int:
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _unlink(p) -> None:
+    try:
+        pathlib.Path(p).unlink()
+    except OSError:
+        pass
+
+
+def on_this_machine(url: str = '') -> bool:
+    """L'adresse est-elle celle d'Ollama sur ce poste (le seul que VectorDrive peut démarrer ou installer) ?"""
+    try:
+        u = urlsplit(base_url(url))
+        host, port = (u.hostname or '').lower(), u.port
+    except ValueError:
+        return False
+    ip = _ip(host)
+    local = host in LOCAL_HOSTS or (ip is not None and ip.is_loopback)
+    return local and port == DEFAULT_PORT                # http://localhost sans port : le port 80, pas Ollama
+
+
+def _host_ok(url: str) -> bool:
+    try:
+        u = urlsplit(url)
+        host = (u.hostname or '').lower()
+    except ValueError:
+        return False
+    return u.scheme == 'https' and any(host == h or host.endswith('.' + h) for h in INSTALLER_HOSTS)
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Les redirections de l'installateur : en https, vers ollama.com ou GitHub seulement."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _host_ok(newurl):
+            raise SetupError('source', urlsplit(newurl).hostname or newurl[:80])
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download_installer(folder, on_progress=None, cancel=None, opener=None) -> pathlib.Path:
+    """Télécharge l'installateur officiel dans `folder` ; `on_progress(fait, total)` en octets ; `cancel` (Event)
+    l'arrête (`Cancelled`, le fichier partiel retiré). Rend le chemin de OllamaSetup.exe."""
+    folder = pathlib.Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    part = folder / 'OllamaSetup.exe.part'
+    out = folder / 'OllamaSetup.exe'
+    opener = opener or urllib.request.build_opener(_SafeRedirect())
+    req = urllib.request.Request(INSTALLER_URL, headers={'User-Agent': 'VectorDrive'})
+    try:
+        with opener.open(req, timeout=60) as r:                    # noqa: S310 — adresse fixe, en https
+            final = r.geturl() if hasattr(r, 'geturl') else INSTALLER_URL
+            if not _host_ok(final):
+                raise SetupError('source', urlsplit(final).hostname or '')
+            total = _int(r.headers.get('Content-Length'))
+            done = 0
+            with open(part, 'wb') as f:
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise Cancelled()
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    done += len(chunk)
+                    if on_progress is not None:
+                        on_progress(done, total)
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        if total and done != total:
+            raise SetupError('download', f'{done}/{total}')
+        with open(part, 'rb') as f:
+            if f.read(2) != b'MZ':
+                raise SetupError('file')
+        _unlink(out)
+        part.replace(out)
+        return out
+    except (Cancelled, SetupError):
+        _unlink(part)
+        raise
+    except (OSError, ValueError, http.client.HTTPException) as ex:
+        _unlink(part)
+        raise SetupError('download', str(getattr(ex, 'reason', ex))[:200]) from None
+
+
+def signature(path, run=None) -> tuple:
+    """(état, sujet) de la signature Authenticode de `path` (PowerShell `Get-AuthenticodeSignature`, le chemin passé
+    par l'environnement, jamais dans la commande) ; ('', '') si illisible ou hors Windows. `run(path)` : essais."""
+    if run is not None:
+        out = run(path)
+    elif sys.platform != 'win32':
+        return '', ''
+    else:
+        script = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+                  "$s = Get-AuthenticodeSignature -LiteralPath $env:VECTORDRIVE_SIGNED_FILE; "
+                  "'' + $s.Status + '|' + $s.SignerCertificate.Subject")
+        try:
+            out = subprocess.run([_system_exe('powershell'), '-NoProfile', '-NonInteractive', '-Command', script],
+                                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120,
+                                 creationflags=0x08000000, env=dict(os.environ, VECTORDRIVE_SIGNED_FILE=str(path)),
+                                 check=False).stdout
+        except (OSError, subprocess.SubprocessError):
+            return '', ''
+    status_, _sep, subject = str(out or '').strip().partition('|')
+    return status_.strip(), subject.strip()
+
+
+def _fields(subject: str, key: str) -> list:
+    """Les valeurs du champ `key` (O, CN…) d'un sujet de certificat, guillemets compris (« O="A, B" »)."""
+    found = re.findall(r'(?:^|,)\s*([A-Za-z0-9.]+)=("(?:[^"]|"")*"|[^,]*)', subject or '')
+    out = []
+    for k, v in found:
+        if k.upper() == key.upper():
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] == '"':
+                v = v[1:-1].replace('""', '"')
+            out.append(v)
+    return out
+
+
+def trusted(path, run=None) -> bool:
+    """La signature est-elle valide, et celle d'Ollama Inc. (un seul champ O=, exactement « Ollama Inc. ») ?"""
+    status_, subject = signature(path, run)
+    return status_ == 'Valid' and _fields(subject, 'O') == [SIGNER.split('=', 1)[1]]
+
+
+def run_installer(path, popen=None):
+    """Lance l'installateur, sans question (`/SILENT` : sa fenêtre montre l'avancement ; `/CLOSEAPPLICATIONS` :
+    un Ollama en marche est fermé pour la mise à jour) ; rend le processus."""
+    popen = popen or subprocess.Popen
+    return popen([str(path), '/SILENT', '/NORESTART', '/SUPPRESSMSGBOXES', '/CLOSEAPPLICATIONS'], close_fds=True)
+
+
+def install(folder, on_step=None, on_progress=None, cancel=None, opener=None, run=None, popen=None) -> str:
+    """Installe Ollama : télécharge l'installateur officiel, vérifie sa signature (rien n'est lancé sinon), l'exécute
+    et attend sa fin ; l'installateur est retiré ensuite. `on_step(clé)` : download, verify, install. Rend le chemin
+    de ollama.exe ; `SetupError` ou `Cancelled` sinon."""
+    step = on_step or (lambda _k: None)
+    setup = pathlib.Path(folder) / 'OllamaSetup.exe'
+    try:
+        step('download')
+        setup = download_installer(folder, on_progress, cancel, opener)
+        step('verify')
+        if not trusted(setup, run):
+            raise SetupError('signature')
+        step('install')                                  # dit d'abord : l'interface n'annonce plus « Annulé »
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        try:
+            code = run_installer(setup, popen).wait()
+        except OSError as ex:
+            raise SetupError('installer', str(ex)[:200]) from None
+        if code:
+            raise SetupError('installer', str(code))
+    finally:
+        _unlink(setup)
+        try:
+            pathlib.Path(folder).rmdir()                 # le dossier de ce travail, vide
+        except OSError:
+            pass
+    path = exe()
+    if not path:
+        raise SetupError('missing')
+    return path
+
+
+def winget() -> str | None:
+    """winget (le gestionnaire de paquets de Windows), s'il est là."""
+    return shutil.which('winget') if sys.platform == 'win32' else None
+
+
+def install_winget(popen=None) -> bool:
+    """Installe Ollama par winget, dans une console que l'utilisateur voit (il y suit l'avancement et y accepte les
+    conditions de la source) ; rend False sans winget."""
+    path = winget()
+    if not path:
+        return False
+    popen = popen or subprocess.Popen
+    popen([_system_exe('cmd'), '/k', path, 'install', '--id', WINGET_ID, '-e', '--source', 'winget'],
+          creationflags=0x00000010, close_fds=True)                  # CREATE_NEW_CONSOLE
+    return True
+
+
+def _error_of(raw: bytes) -> str:
+    text = raw.decode('utf-8', 'replace').strip()
+    try:
+        got = json.loads(text)
+    except ValueError:
+        return text[:300]
+    return str(got.get('error') or text)[:300] if isinstance(got, dict) else text[:300]
+
+
+def pull_stream(model: str, url: str = '', on_progress=None, cancel=None, connect=None) -> None:
+    """Télécharge `model` par l'API d'Ollama (`/api/pull`, en flux), sans console : `on_progress(étape, fait,
+    total)` (octets, toutes les parties du modèle réunies) ; `cancel` (Event) l'arrête à la nouvelle suivante
+    (`Cancelled` ; la connexion fermée, Ollama s'arrête et garde ce qui est déjà là pour reprendre). Sans proxy du
+    système, comme la discussion. `SetupError` si Ollama refuse ou ne répond pas."""
+    m = (model or '').strip()
+    if not m:
+        raise SetupError('model')
+    base = base_url(url)
+    if not address_ok(base):
+        raise SetupError('address')
+    if connect is None:
+        u = urlsplit(base)
+        cls = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
+        conn = cls(u.hostname, u.port, timeout=PULL_TIMEOUT_S)
+    else:
+        conn = connect()
+    path = (urlsplit(base).path or '').rstrip('/') + '/api/pull'
+    stopped = lambda: cancel is not None and cancel.is_set()     # noqa: E731
+    parts = {}
+    try:
+        conn.request('POST', path, body=json.dumps({'model': m, 'stream': True}).encode('utf-8'),
+                     headers={'Content-Type': 'application/json', 'Accept': 'application/x-ndjson'})
+        r = conn.getresponse()
+        if r.status >= 400:
+            raise SetupError('pull', _error_of(r.read(500)))
+        while True:
+            if stopped():
+                raise Cancelled()
+            line = r.readline()
+            if not line:
+                break
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict):
+                continue
+            if d.get('error'):
+                raise SetupError('pull', str(d['error'])[:300])
+            step = str(d.get('status') or '')
+            if d.get('digest') and _int(d.get('total')):
+                parts[str(d['digest'])] = (min(_int(d.get('completed')), _int(d['total'])), _int(d['total']))
+            if on_progress is not None:
+                on_progress(step, sum(c for c, _t in parts.values()), sum(t for _c, t in parts.values()))
+            if step == 'success':
+                return
+        if stopped():
+            raise Cancelled()
+        raise SetupError('pull', 'interrompu')
+    except (Cancelled, SetupError):
+        raise
+    except (OSError, ValueError, http.client.HTTPException) as ex:
+        if stopped():
+            raise Cancelled() from None
+        raise SetupError('down', str(ex)[:200]) from None
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def ensure_running(url: str = '', wait_s: float = START_WAIT_S, stopping=None, status_fn=None, start_fn=None,
+                   sleep=None) -> bool:
+    """Ollama en marche : déjà là, ou (sur ce poste, s'il est installé) démarré puis attendu, au plus `wait_s` s ;
+    `stopping()` : l'utilisateur a arrêté. Rend False sans rien lancer pour un autre poste ou sans Ollama."""
+    import time
+    base = base_url(url)
+    status_fn = status_fn or (lambda: status(base, timeout=1.5))
+    sleep = sleep or time.sleep
+    if status_fn()['running']:
+        return True
+    if not on_this_machine(base) or not exe():
+        return False
+    try:
+        if not (start_fn or start)():
+            return False
+    except OSError:
+        return False
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if stopping is not None and stopping():
+            return False
+        sleep(0.5)
+        if status_fn()['running']:
+            return True
+    return False
+
+
+def down_reason(url: str = '') -> str:
+    """Pourquoi Ollama ne répond pas : 'notinstalled' (sur ce poste, pas installé), 'start' (installé, ne démarre
+    pas), 'down' (un autre poste)."""
+    if not on_this_machine(url):
+        return 'down'
+    return 'start' if exe() else 'notinstalled'

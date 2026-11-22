@@ -396,6 +396,9 @@ SPEC: list[tuple[str, list[Opt]]] = [
         I('assistant/contexte_local', 'Contexte du modèle local (jetons)', 16384, 8192, 131072,
           tip='Ce que le modèle lit à chaque tour : consignes, outils (~7 000 jetons) et la discussion. Plus grand : '
               'de plus longues discussions, plus de mémoire de la carte graphique'),
+        B('assistant/demarrage_local', 'Démarrer Ollama tout seul quand l’assistant local en a besoin', True,
+          tip='Sur ce poste seulement (http://localhost:11434) ; Ollama reste ensuite en marche, dans la zone de '
+              'notification'),
         I('assistant/tours_max', 'Tours au plus pour une demande', 40, 1, 200,
           tip='Un tour : le modèle répond ou appelle ses outils'),
         Opt('assistant/devise', 'Crédits : devise des prix', 'text', '$',
@@ -433,7 +436,7 @@ BY_KEY = {o.key: o for _t, opts in SPEC for o in opts}
 #: toujours
 ASSISTANT_ADVANCED = frozenset({
     'assistant/modele_anthropic', 'assistant/modele_openai', 'assistant/modele_mistral', 'assistant/adresse_mistral',
-    'assistant/modele_local', 'assistant/adresse_local', 'assistant/contexte_local',
+    'assistant/modele_local', 'assistant/adresse_local', 'assistant/contexte_local', 'assistant/demarrage_local',
     'assistant/tours_max', 'assistant/devise', 'assistant/outils_memoire', 'assistant/outils_scripts',
     'assistant/outils_fao', 'assistant/outils_copies', 'assistant/outils_step', 'assistant/outils_commandes', 'assistant/dossier_copies',
     'assistant/dossier_modeles', 'assistant/taille_texte', 'assistant/couleur_vous', 'assistant/couleur_assistant',
