@@ -249,12 +249,14 @@ class TestWindow(Base):
             self.assertTrue(w.eventFilter(b, ev))
             bm.assert_called_once()
         rect = next((b for b in r.findChildren(QToolButton) if b.defaultAction() is w.A.get('tool_rect')), None)
-        if rect is not None:                                            # outil de forme : ses paramètres, d'abord
+        if rect is not None:                                            # outil de forme : le menu, ses réglages
             with mock.patch.object(type(w), 'tool_form_dialog') as fd, \
-                    mock.patch.object(type(w), '_ribbon_button_menu') as bm:
+                    mock.patch.object(type(w), '_ribbon_button_menu') as bm:   # en tête (round 1141)
                 self.assertTrue(w.eventFilter(rect, ev))
+                bm.assert_called_once()
+                fd.assert_not_called()
+                bm.call_args.kwargs['settings']()
                 fd.assert_called_once()
-                bm.assert_not_called()
 
 
 class TestEditor(Base):

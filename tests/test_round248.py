@@ -130,7 +130,11 @@ class TestTool(unittest.TestCase):
             def fake_exec(d):
                 d.set_field('start', 'point')
                 return QDialog.DialogCode.Accepted
-            with mock.patch.object(DD.DimDialog, 'exec', fake_exec):
+            def menu(*a, **k):                                           # le menu du bouton (round 1141) :
+                self.assertIsNotNone(k.get('settings'))                  # ses réglages en tête
+                k['settings']()
+            with mock.patch.object(DD.DimDialog, 'exec', fake_exec), \
+                    mock.patch.object(type(w), '_ribbon_button_menu', side_effect=menu):
                 QApplication.sendEvent(btn, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(2, 2),
                                                               btn.mapToGlobal(QPoint(2, 2))))
             self.assertEqual(DD.default_style(w.settings).start, 'point')

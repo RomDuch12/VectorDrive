@@ -5053,6 +5053,7 @@ class MainWindow(QMainWindow):
             vis = [i for i in range(r.count()) if r.isTabVisible(i)]
             if vis:
                 r.setCurrentIndex(vis[0])
+        self.apply_button_layout()                       # tailles et places choisies au clic droit (round 1141)
         if restyle:
             self._apply_ribbon_options()
         else:
@@ -5198,11 +5199,377 @@ class MainWindow(QMainWindow):
             m.deleteLater()
         return m
 
-    def _ribbon_button_menu(self, button, pos, exec_menu: bool = True):
-        """Clic droit sur un bouton du ruban (ou des favoris) : la commande dans les favoris (barre du haut) ou
-        retirée, ajoutée à un onglet à soi (ou à un nouveau), retirée de l'onglet à soi où elle est."""
+    # --- taille et place des boutons du ruban (round 1141, demande du 22/11 soir : « Sur tout icone bouton_outil
+    # click droit permet d'ajuster la taille et le position bouton dans le ruban ») -------------------------------------
+    #: réglage : {identifiant du groupe: [[commande, grand ?], …]} en JSON (l'ordre choisi des boutons du groupe)
+    BUTTONS_KEY = 'ruban/boutons'
+
+    def _button_id(self, button) -> str | None:
+        """La commande d'un bouton du ruban (son identifiant dans les réglages) ; None s'il n'en a pas."""
+        act = button.defaultAction() if button is not None else None
+        if act is None:
+            return None
+        from .ribbon_editor import RelayAction
+        src = act.src if isinstance(act, RelayAction) else act
+        keys = getattr(self, '_button_keys', None)       # {id(commande): clé} : une recherche, pas un balayage
+        if keys is None or keys[0] != len(self.A):
+            keys = (len(self.A), {id(a): kk for kk, a in self.A.items()}, set())   # (+ celles cherchées en vain)
+            self._button_keys = keys
+        k = keys[1].get(id(src))
+        if k is not None and self.A.get(k) is not src:   # une commande remplacée : table refaite
+            self._button_keys = None
+            k = self._action_key(act)
+        if k is None and act.property('vd_ribbon_id'):
+            k = str(act.property('vd_ribbon_id'))        # boutons Mode et Retour de la disposition TypeEdit 13
+        elif k is None and id(src) not in keys[2]:
+            k = self._action_key(act)                    # une commande neuve à la place d'une autre (même nombre)
+            if k is not None:
+                self._button_keys = None
+            else:
+                keys[2].add(id(src))                     # pas une commande : plus cherchée (table refaite à chaque
+        return k                                         # rangement du ruban)
+
+    def _ribbon_button_groups(self) -> list:
+        """Les groupes du ruban dont les boutons se rangent au clic droit (pas ceux des onglets à soi : leur rangement
+        est dans leurs propres réglages), chacun nommé par sa disposition (VectorDrive, TypeEdit 13) et sa première
+        commande d'origine — le même d'une langue et d'un lancement à l'autre."""
+        from .ribbon import RibbonGroup
+        r = getattr(self, 'ribbon', None)
+        out, seen = [], {}
+        if r is None:
+            return out
+        for i in range(r.count()):
+            w, page = r.widget(i), r.page(i)
+            if page is None or w.property('ribbon_custom'):
+                continue
+            te_file = getattr(self, '_te_file_groups', [])   # groupes de TypeEdit 13 posés sur la page Fichier
+            for g in page.groups():
+                prefix = 'te' if w.property('te_layout') or any(g is x for x in te_file) else 'vd'
+                first = next((k for k in (self._button_id(e) for e, _b in g._origin if RibbonGroup._is_command(e))
+                              if k), None)
+                if first is None:
+                    g.group_id = None
+                    continue
+                gid = f'{prefix}:{first}'
+                seen[gid] = seen.get(gid, 0) + 1
+                g.group_id = gid if seen[gid] == 1 else f'{gid}#{seen[gid]}'
+                out.append(g)
+        return out
+
+    def button_layout(self) -> dict:
+        """Les tailles et places choisies (réglage `ruban/boutons`, relu et nettoyé)."""
+        import json
+        raw = self.settings.value(self.BUTTONS_KEY, '')
+        try:
+            d = json.loads(str(raw)) if raw else {}
+        except ValueError:
+            d = {}
+        out = {}
+        for gid, items in (d.items() if isinstance(d, dict) else ()):
+            if isinstance(items, list):                  # une liste vide : tous ses boutons partis ailleurs
+                out[str(gid)] = [[str(it[0]), bool(it[1])] for it in items
+                                 if isinstance(it, (list, tuple)) and len(it) == 2 and it[0]]
+        return out
+
+    def _origin_listing(self, g) -> list:
+        """[[commande, grand ?]] des boutons du groupe `g` dans l'ordre et à la taille d'origine."""
+        from .ribbon import RibbonGroup
+        out, seen = [], set()
+        for w, big in g._origin:
+            k = self._button_id(w) if RibbonGroup._is_command(w) else None
+            if k and k not in seen:
+                seen.add(k)
+                out.append([k, bool(big)])
+        return out
+
+    def _save_button_layout(self, conf: dict) -> None:
+        """Les réglages retenus ; un groupe revenu tel qu'à l'origine n'y est plus."""
+        import json
+        groups = {g.group_id: g for g in self._ribbon_button_groups()}
+        te = bool(getattr(self, 'layout_active', False))
+        for gid in list(conf):
+            if gid in groups and conf[gid] == self._origin_listing(groups[gid]):
+                del conf[gid]
+            elif gid not in groups and (gid.startswith('vd:') or (te and gid.startswith('te:'))):
+                del conf[gid]                            # groupe qui n'existe plus (ceux de TypeEdit 13 : hors
+                #                                          de sa disposition, gardés pour elle)
+        if conf:
+            self.settings.setValue(self.BUTTONS_KEY, json.dumps(conf, ensure_ascii=False))
+        else:
+            self.settings.remove(self.BUTTONS_KEY)
+
+    def apply_button_layout(self, finalize: bool = False) -> int:
+        """Chaque bouton du ruban à sa taille et à sa place choisies (sinon d'origine) ; rend le nombre de groupes
+        refaits. `finalize` : le ruban remis à sa hauteur et à sa largeur ensuite (après un clic droit)."""
+        from .ribbon import plan_layout, rearrange
+        self._button_keys = None                         # commandes peut-être changées (plugins, disposition)
+        groups = self._ribbon_button_groups()
+        conf = self.button_layout()
+        if not conf and all(g._entries == g._origin for g in groups):
+            return 0                                     # rien de choisi, tout à l'origine : rien à refaire
+        changed = rearrange(plan_layout(groups, conf, self._button_id)) if groups else []
+        if changed and finalize:
+            self.ribbon.finalize()
+        return len(changed)
+
+    def _group_of_button(self, button):
+        """Le groupe du ruban (hors onglets à soi) qui range ce bouton ; None."""
+        return next((g for g in self._ribbon_button_groups() if g.entry_of(button) >= 0), None)
+
+    def _button_listing(self, g) -> list:
+        """[[commande, grand ?, bouton]] des boutons du groupe `g`, dans l'ordre affiché."""
+        from .ribbon import RibbonGroup
+        out = []
+        for w, big in g._entries:
+            k = self._button_id(w) if RibbonGroup._is_command(w) else None
+            if k:
+                out.append([k, bool(big), w])
+        return out
+
+    def _home_of_button(self, button):
+        """Le groupe d'origine de ce bouton (celui qui l'a bâti) ; None."""
+        return next((g for g in self._ribbon_button_groups() if any(e is button for e, _b in g._origin)), None)
+
+    def button_layout_changed(self, button) -> bool:
+        """Ce bouton-là (pas un autre exemplaire de sa commande) n'est-il plus à sa taille ou à sa place d'origine :
+        dans un autre groupe, à une autre taille, ou dans un autre ordre parmi les boutons d'origine de son groupe ?"""
+        home, cur = self._home_of_button(button), self._group_of_button(button)
+        if home is None or cur is None:
+            return False
+        if cur is not home:
+            return True
+        i = home.entry_of(button)
+        if home._entries[i][1] != next(b for e, b in home._origin if e is button):
+            return True
+        # dans l'ordre : ceux qui sont dans toutes les plus longues suites restées dans l'ordre d'origine n'ont pas
+        # bougé (a b c → c a b : seul c a bougé ; a b → b a : les deux)
+        rank = {id(e): n for n, (e, _b) in enumerate(home._origin)}
+        ents = [e for e, _b in home._entries if id(e) in rank]
+        r = [rank[id(e)] for e in ents]
+        n = len(r)
+        fwd = [1] * n
+        for j in range(n):
+            fwd[j] = 1 + max([fwd[q] for q in range(j) if r[q] < r[j]] or [0])
+        bwd = [1] * n
+        for j in range(n - 1, -1, -1):
+            bwd[j] = 1 + max([bwd[q] for q in range(j + 1, n) if r[q] > r[j]] or [0])
+        top = max(fwd) if fwd else 0
+        on = [j for j in range(n) if fwd[j] + bwd[j] - 1 == top]          # sur une plus longue suite
+        i = next(j for j, e in enumerate(ents) if e is button)
+        return i not in on or sum(1 for j in on if fwd[j] == fwd[i]) > 1
+
+    def ribbon_button_op(self, button, op: str, target=None) -> bool:
+        """Clic droit sur un bouton du ruban : `op` = « big », « small » (taille), « left », « right », « first »,
+        « last » (place dans son groupe), « group » (au bout du groupe `target`, de l'onglet), « reset » (taille et
+        place d'origine). Retenu (réglage `ruban/boutons`, ou celui de l'onglet à soi) ; rend vrai si quelque chose a
+        changé."""
+        at = button.property('ribbon_custom_at')
+        if at:
+            return self._custom_button_op(str(at), op, target)
+        k = self._button_id(button)
+        g = self._group_of_button(button)
+        if k is None or g is None:
+            return False
+        name = button.defaultAction().text().replace('&', '')
+        where = ''
+        conf = self.button_layout()
+        if op == 'reset':
+            home = self._home_of_button(button)
+            if home is None or not self.button_layout_changed(button):
+                return False
+            # ce bouton seul (un autre exemplaire de sa commande reste où il est) : ôté du groupe où il est, remis
+            # chez lui à sa place et à sa taille d'origine
+            if g is not home:
+                conf[g.group_id] = [it[:2] for it in self._button_listing(g) if it[2] is not button]
+            items = [it for it in self._button_listing(home) if it[2] is not button]
+            origin = self._origin_listing(home)
+            j = next((n for n, it in enumerate(origin) if it[0] == k), -1)
+            have = [it[0] for it in items]
+            before = next((have.index(it[0]) for it in reversed(origin[:j]) if it[0] in have), -1) if j >= 0 else -1
+            conf[home.group_id] = [it[:2] for it in items]
+            if j >= 0:
+                conf[home.group_id].insert(before + 1, list(origin[j]))
+            self._save_button_layout(conf)
+            self.apply_button_layout(finalize=True)
+            self.statusBar().showMessage(tr('« {0} » : taille et place d’origine').format(name), 5000)
+            return True
+        items = self._button_listing(g)
+        i = next((j for j, it in enumerate(items) if it[2] is button), -1)
+        if i < 0:
+            return False
+        if op in ('big', 'small'):
+            if g.entry_big(button) is None or items[i][1] == (op == 'big'):
+                return False
+            items[i][1] = op == 'big'
+            msg = tr('« {0} » en grand bouton') if op == 'big' else tr('« {0} » en petit bouton')
+        elif op in ('left', 'right'):
+            shown = [j for j, it in enumerate(items) if j == i or not it[2].isHidden()]
+            p = shown.index(i) + (-1 if op == 'left' else 1)
+            if not 0 <= p < len(shown):
+                return False
+            items.insert(shown[p], items.pop(i))
+            msg = tr('« {0} » déplacé vers la gauche') if op == 'left' else tr('« {0} » déplacé vers la droite')
+        elif op in ('first', 'last'):
+            j = 0 if op == 'first' else len(items) - 1
+            if i == j:
+                return False
+            items.insert(j, items.pop(i))
+            msg = tr('« {0} » en tête du groupe') if op == 'first' else tr('« {0} » en fin de groupe')
+        elif op == 'group':
+            dst = next((x for x in self._ribbon_button_groups() if x.group_id == target), None)
+            from .ribbon import _layout_of
+            if dst is None or dst is g or dst.page is not g.page or _layout_of(dst) != _layout_of(g) \
+                    or any(it[0] == k for it in self._button_listing(dst)):
+                return False
+            item = items.pop(i)
+            conf[dst.group_id] = [it[:2] for it in self._button_listing(dst)] + [item[:2]]
+            msg, where = tr('« {0} » placé dans « {1} »'), dst.title.text()
+        else:
+            return False
+        conf[g.group_id] = [it[:2] for it in items]
+        self._save_button_layout(conf)
+        self.apply_button_layout(finalize=True)
+        self.statusBar().showMessage(msg.format(name, where), 5000)
+        return True
+
+    def _custom_button_op(self, at: str, op: str, target=None) -> bool:
+        """Taille et place d'un bouton d'un onglet à soi : dans les réglages de cet onglet (comme « Personnaliser le
+        ruban »)."""
+        from .ribbon_editor import load_all
+        try:
+            rank, gi, ci = (int(v) for v in at.split(':'))
+            tabs = load_all(self.settings)
+            groups = tabs[rank]['groupes']
+            cmds = groups[gi]['commandes']
+            c = cmds[ci]
+        except (ValueError, IndexError):
+            return False
+        act = self.A.get(c['key'])
+        name = c.get('texte') or (act.text().replace('&', '') if act is not None else c['key'])
+        where = ''
+        shown = [j for j, x in enumerate(cmds) if x['key'] in self.A]   # les montrées (un plugin absent : gardée)
+        if op in ('big', 'small'):
+            if bool(c.get('big')) == (op == 'big'):
+                return False
+            c['big'] = op == 'big'
+            msg = tr('« {0} » en grand bouton') if op == 'big' else tr('« {0} » en petit bouton')
+        elif op in ('left', 'right', 'first', 'last'):
+            p = shown.index(ci) if ci in shown else -1
+            if p < 0:
+                return False
+            q = {'left': p - 1, 'right': p + 1, 'first': 0, 'last': len(shown) - 1}[op]
+            if not 0 <= q < len(shown) or q == p:
+                return False
+            cmds.insert(shown[q], cmds.pop(ci))
+            msg = {'left': tr('« {0} » déplacé vers la gauche'), 'right': tr('« {0} » déplacé vers la droite'),
+                   'first': tr('« {0} » en tête du groupe'), 'last': tr('« {0} » en fin de groupe')}[op]
+        elif op == 'group':
+            try:
+                dst = groups[int(target)]
+            except (TypeError, ValueError, IndexError):
+                return False
+            if dst is groups[gi] or any(x['key'] == c['key'] for x in dst['commandes']):
+                return False
+            dst['commandes'].append(cmds.pop(ci))
+            msg, where = tr('« {0} » placé dans « {1} »'), dst['titre']
+            if not cmds:
+                del groups[gi]                           # groupe vidé : retiré, comme « Retirer de »
+        else:
+            return False
+        self._save_custom(tabs, msg.format(name, where))
+        return True
+
+    def reset_button_layout(self, ask: bool = True) -> bool:
+        """Tous les boutons du ruban à leur taille et à leur place d'origine (les onglets à soi restent tels quels)."""
+        if not self.button_layout():
+            return False
+        if ask and QMessageBox.question(self, tr('Ruban d’origine'),
+                                        tr('Remettre tous les boutons du ruban à leur taille et à leur place '
+                                           'd’origine ? (Les onglets à soi restent tels quels.)')) \
+                != QMessageBox.StandardButton.Yes:
+            return False
+        self._save_button_layout({})
+        self.apply_button_layout(finalize=True)
+        self.statusBar().showMessage(tr('Ruban : tailles et places d’origine'), 5000)
+        return True
+
+    def _button_place_menu(self, m, button) -> bool:
+        """Au menu du clic droit d'un bouton du ruban : sa taille et sa place (rien pour un bouton que le ruban ne
+        range pas : barre des favoris, coins du ruban, rangée d'un formulaire). Rend vrai si le menu a reçu quelque
+        chose."""
+        at = button.property('ribbon_custom_at')
+        if at:
+            from .ribbon_editor import load_all
+            try:
+                rank, gi, ci = (int(v) for v in str(at).split(':'))
+                groups = load_all(self.settings)[rank]['groupes']
+                cmds = groups[gi]['commandes']
+                big = bool(cmds[ci].get('big'))
+            except (ValueError, IndexError):
+                return False
+            shown = [j for j, x in enumerate(cmds) if x['key'] in self.A]
+            left, right = bool(shown) and shown[0] != ci, bool(shown) and shown[-1] != ci
+            others = [(str(j), x['titre']) for j, x in enumerate(groups)     # groupes affichés seulement
+                      if j != gi and any(c['key'] in self.A for c in x['commandes'])
+                      and not any(c['key'] == cmds[ci]['key'] for c in x['commandes'])]
+            changed = False
+        else:
+            g = self._group_of_button(button)
+            if g is None or self._button_id(button) is None:
+                return False
+            big = g.entry_big(button)
+            items = self._button_listing(g)
+            shown = [it[2] for it in items if it[2] is button or not it[2].isHidden()]
+            left, right = shown[0] is not button, shown[-1] is not button
+            k = self._button_id(button)
+            from .ribbon import _layout_of
+            others = [(x.group_id, x.title.text()) for x in self._ribbon_button_groups()
+                      if x.page is g.page and x is not g and _layout_of(x) == _layout_of(g)
+                      and (not x.vacant or not x._entries)                                       # un groupe vidé
+                      and not any(it[0] == k for it in self._button_listing(x))]                  # en reçoit encore
+            changed = self.button_layout_changed(button)
+        sm = m.addMenu(icon('same_both'), tr('Taille du bouton'))
+        if big is None:
+            sm.setEnabled(False)                         # un petit contrôle de machine : toujours petit
+        else:
+            from PySide6.QtGui import QActionGroup
+            grp = QActionGroup(sm)
+            for op, text, on in (('big', tr('Grand bouton'), big), ('small', tr('Petit bouton'), not big)):
+                a = sm.addAction(text, lambda _=False, o=op: self.ribbon_button_op(button, o))
+                a.setCheckable(True)
+                a.setChecked(bool(on))
+                grp.addAction(a)
+        pm = m.addMenu(icon('distribute_h'), tr('Position du bouton'))
+        for op, text, ok in (('left', tr('Vers la gauche'), left), ('right', tr('Vers la droite'), right),
+                             ('first', tr('En tête du groupe'), left), ('last', tr('En fin de groupe'), right)):
+            a = pm.addAction(text, lambda _=False, o=op: self.ribbon_button_op(button, o))
+            a.setEnabled(ok)
+        if others:
+            pm.addSeparator()
+            for gid, title in others:
+                pm.addAction(tr('Dans le groupe « {0} »').format(title),
+                             lambda _=False, t=gid: self.ribbon_button_op(button, 'group', t))
+        if changed:
+            m.addAction(icon('undo'), tr('Taille et place d’origine'),
+                        lambda: self.ribbon_button_op(button, 'reset'))
+        if self.button_layout() and not at:
+            m.addAction(tr('Tout le ruban d’origine…'), lambda: self.reset_button_layout())
+        m.addSeparator()
+        return True
+
+    def _ribbon_button_menu(self, button, pos, exec_menu: bool = True, settings=None):
+        """Clic droit sur un bouton du ruban (ou des favoris) : les réglages de l'outil (`settings`, s'il en a), sa
+        taille et sa place dans le ruban (round 1141), la commande dans les favoris (barre du haut) ou retirée,
+        ajoutée à un onglet à soi (ou à un nouveau), retirée de l'onglet à soi où elle est."""
         from .ribbon_editor import load_all
         m = QMenu(self)
+        if settings is not None:                         # un outil qui a ses réglages : eux d'abord (round 1141)
+            a = m.addAction(icon('options'), tr('Réglages de « {0} »…').format(
+                button.defaultAction().text().replace('&', '').replace('\n', ' ')), settings)
+            m.setDefaultAction(a)
+            m.addSeparator()
+        if not self._is_favorite_button(button) and self._in_ribbon(button):
+            self._button_place_menu(m, button)           # sa taille et sa place dans le ruban (round 1141)
         key = self._action_key(button.defaultAction())
         if key is not None and key not in ('ui_mode', 'view_toggle'):     # d'un mode à l'autre
             from . import modes
@@ -5357,6 +5724,7 @@ class MainWindow(QMainWindow):
         back = QAction(icon('undo'), tr('Retour'), self)
         back.setToolTip(tr('Fermer cet onglet et revenir à l\'onglet TypeEdit'))
         back.triggered.connect(self.close_te_contexts)
+        back.setProperty('vd_ribbon_id', 'te_retour')
         self._te_actions.append(back)
         modes: dict = {}
 
@@ -5379,6 +5747,7 @@ class MainWindow(QMainWindow):
                 if base is None and bkey in A:
                     a.setProperty('vd_family_cmd', bkey)     # la commande écartée : dans l'onglet, ou au clic s'il n'y en a pas
                 a.triggered.connect(lambda _=False, k=key, b=base: self.show_te_context(k, b))
+                a.setProperty('vd_ribbon_id', f'te_mode:{cmd}')
                 self._te_actions.append(a)
                 modes[cmd] = a
             return modes[cmd]
@@ -7912,8 +8281,9 @@ class MainWindow(QMainWindow):
                 continue
             page = r.page(i)
             for g in page.groups() if page is not None else ():
-                if g.title.text() == tr('Mode Point') and any(b.defaultAction() is node for b, _big in g._entries):
-                    return i
+                if g.title.text() == tr('Mode Point') and any(getattr(b, 'defaultAction', lambda: None)() is node
+                                                               for b, _big in list(g._entries) + list(g._origin)):
+                    return i                             # (_origin : son bouton rangé ailleurs dans l'onglet)
         return -1
 
     def _on_tab(self, i: int, action) -> bool:
@@ -11197,30 +11567,29 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QToolButton
         if isinstance(obj, QToolButton) and obj.defaultAction() is not None \
                 and obj.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:   # le sien (colonnes)
-            if self._in_ribbon(obj) and ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                self._ribbon_button_menu(obj, ev.globalPos())     # Maj + clic droit : le menu du ruban (modes, onglets
-                return True                                       # à soi), même pour un outil qui a ses réglages
             if self._is_favorite_button(obj):            # un bouton des favoris : les retirer, entre autres
                 self._ribbon_button_menu(obj, ev.globalPos())
                 return True
-            from .form_dialog import TOOL_KINDS
-            key = next((k for k, kind in TOOL_KINDS.items() if self.A.get(k) is obj.defaultAction()), None)
-            if key is not None:
-                self.tool_form_dialog(TOOL_KINDS[key])
-                return True
-            if self.A.get('tool_dim') is obj.defaultAction():
-                self.dim_options()
-                return True
-            if self.A.get('snap_polar') is obj.defaultAction():
-                self.polar_step_dialog()
-                return True
-            if self.A.get('tool_boundary') is obj.defaultAction():
-                self.boundary_gap_dialog()
-                return True
-            if self._in_ribbon(obj):                     # autre bouton du ruban (menus des groupes repliés compris)
-                self._ribbon_button_menu(obj, ev.globalPos())
+            settings = self._tool_settings(obj.defaultAction())
+            if self._in_ribbon(obj):                     # tout bouton du ruban : le menu, avec sa taille et sa place
+                self._ribbon_button_menu(obj, ev.globalPos(), settings=settings)   # (round 1141) ; les réglages
+                return True                                                          # d'un outil en tête
+            if settings is not None:                     # hors du ruban (barres) : les réglages de l'outil
+                settings()
                 return True
         return super().eventFilter(obj, ev)
+
+    def _tool_settings(self, act):
+        """Les réglages de l'outil d'une commande (formes, Cote, Polaire, Contour) : la fonction qui les ouvre ; None."""
+        from .form_dialog import TOOL_KINDS
+        key = next((k for k in TOOL_KINDS if self.A.get(k) is act), None)
+        if key is not None:
+            return lambda _=False, kind=TOOL_KINDS[key]: self.tool_form_dialog(kind)
+        for k, fn in (('tool_dim', self.dim_options), ('snap_polar', self.polar_step_dialog),
+                      ('tool_boundary', self.boundary_gap_dialog)):
+            if self.A.get(k) is act:
+                return lambda _=False, f=fn: f()
+        return None
 
     def _digit_row(self, ev) -> bool:
         """Ctrl + une touche de la rangée des chiffres, quelle que soit la

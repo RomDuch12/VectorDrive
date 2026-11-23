@@ -7384,3 +7384,11 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 - **Installer Ollama…** télécharge l’installateur officiel (ollama.com, environ 1,9 Go ; seulement depuis ollama.com ou GitHub, en https), vérifie qu’il est signé par Ollama Inc. avant de le lancer, puis l’installe pour votre compte, sans droit d’administrateur ; sa fenêtre montre l’installation. Un téléchargement bloqué (proxy, pare-feu) propose winget, dans une console.
 - **Télécharger le modèle** se fait dans la fenêtre des options, avec une barre d’avancement (Go faits sur Go à faire) et Annuler ; Ollama garde ce qui est déjà téléchargé pour reprendre. Pendant ce temps, la fenêtre reste vive et le palier choisi ne change plus. Un Ollama trop ancien pour Ministral 3 se met à jour par « Installer Ollama… ».
 - **Ollama démarre tout seul** quand l’assistant local en a besoin (sur ce poste ; réglage « Démarrer Ollama tout seul… », activé d’office) : la ligne d’état du panneau le dit, puis la demande part.
+### v0.998.0 — Ruban : la taille et la place de chaque bouton, au clic droit
+
+- **Clic droit sur un bouton du ruban** : « Taille du bouton » (grand ou petit) et « Position du bouton » (vers la gauche, vers la droite, en tête ou en fin de groupe, ou dans un autre groupe de l’onglet). C’est retenu d’un lancement à l’autre, dans les deux dispositions (VectorDrive et TypeEdit 13) ; un bouton d’un onglet à soi se range dans les réglages de cet onglet.
+- **Taille et place d’origine** rétablit le bouton ; **Tout le ruban d’origine…** rétablit tous les boutons, après confirmation (les onglets à soi restent tels quels).
+- Un outil qui a ses réglages (formes, Cote, Polaire, Contour) ouvre maintenant ce même menu au clic droit dans le ruban, avec ses réglages en tête (en gras) ; hors du ruban, le clic droit ouvre toujours ses réglages directement.
+### v0.999.0 — Essais du clic droit sur les outils du ruban
+
+- Les essais du clic droit sur l’outil Étoile et sur l’outil Cote passent par le menu du bouton (réglages en tête), comme le ruban depuis la 0.998.0 ; aucun changement pour l’utilisateur.

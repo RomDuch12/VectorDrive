@@ -118,9 +118,10 @@ class Favorites(unittest.TestCase):
         plain = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, at, rect.mapToGlobal(at))
         with mock.patch.object(type(w), 'tool_form_dialog') as fd, \
                 mock.patch.object(type(w), '_ribbon_button_menu') as bm:
-            self.assertTrue(w.eventFilter(rect, plain))                       # clic droit : ses réglages
-            fd.assert_called_once()
-            bm.assert_not_called()
+            self.assertTrue(w.eventFilter(rect, plain))                       # clic droit : le menu, ses réglages
+            bm.assert_called_once()                                           # en tête (round 1141)
+            fd.assert_not_called()
+            self.assertIsNotNone(bm.call_args.kwargs['settings'])
         shift = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, at, rect.mapToGlobal(at),
                                   Qt.KeyboardModifier.ShiftModifier)
         with mock.patch.object(type(w), 'tool_form_dialog') as fd, \

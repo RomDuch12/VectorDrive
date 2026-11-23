@@ -174,6 +174,11 @@ class RibbonGroup(QFrame):
         self._arranged = None
         #: petits boutons montrés en grands par le mode simple (groupe qui n'en a qu'un ou deux)
         self._promoted: set = set()
+        #: (élément, grand ?) dans l'ordre où le groupe a été bâti : la taille et la place choisies au clic droit
+        #: (round 1141) partent toujours de lui, et le rétablissent
+        self._origin: list = []
+        #: identifiant stable du groupe (posé par la fenêtre) : la clé de ses réglages de boutons
+        self.group_id = None
 
     # --- boutons ----------------------------------------------------------------------------
     def buttons(self) -> list:
@@ -211,7 +216,8 @@ class RibbonGroup(QFrame):
             on = states[id(b)]
             if b.isHidden() == on:
                 b.setVisible(on)
-        self.vacant = bool(cmds) and not shown and not other
+        # tous ses boutons déplacés ailleurs (round 1141) : vide, caché aussi
+        self.vacant = (bool(cmds) and not shown and not other) or (not self._entries and bool(self._origin))
         return not self.vacant
 
     @staticmethod
@@ -309,6 +315,7 @@ class RibbonGroup(QFrame):
     def add(self, action: QAction, *, big: bool = True) -> QToolButton:
         b = self._button(action, big)
         self._entries.append((b, big))
+        self._origin.append((b, big))
         if big and not self.compact:
             self._col = None
             self._row.addWidget(b)
@@ -383,6 +390,7 @@ class RibbonGroup(QFrame):
     def add_widget(self, w: QWidget) -> None:
         """Petit contrôle (champ numérique…), empilé comme les petits boutons."""
         self._entries.append((w, None))
+        self._origin.append((w, None))
         self._stack(w)
 
     def insert_after(self, existing: QAction, action: QAction, *, big: bool = True) -> QToolButton | None:
@@ -396,8 +404,118 @@ class RibbonGroup(QFrame):
                 self._row.insertWidget(i + 1, b)
                 k = next((j for j, (e, _b) in enumerate(self._entries) if e is w), len(self._entries) - 1)
                 self._entries.insert(k + 1, (b, big))
+                k = next((j for j, (e, _b) in enumerate(self._origin) if e is w), len(self._origin) - 1)
+                self._origin.insert(k + 1, (b, big))
                 return b
         return None
+
+    def entry_of(self, w) -> int:
+        """Rang de `w` parmi les éléments du groupe (-1 : pas un des siens, ou dans une rangée de formulaire)."""
+        return next((i for i, (e, _b) in enumerate(self._entries) if e is w), -1)
+
+    def entry_big(self, w):
+        """Grand bouton (True), petit (False), ou petit contrôle sans taille au choix (None) ; None s'il n'est pas là."""
+        i = self.entry_of(w)
+        return self._entries[i][1] if i >= 0 else None
+
+
+# --- taille et place des boutons choisies au clic droit (round 1141) ------------------------------------------------
+def _layout_of(g) -> str:
+    """La disposition d'un groupe d'après son identifiant (« vd », « te ») : les boutons ne passent pas de l'une à
+    l'autre."""
+    gid = str(g.group_id or '')
+    return gid.split(':', 1)[0] if ':' in gid else ''
+
+
+def plan_layout(groups, conf: dict, ident) -> dict:
+    """Les éléments de chaque groupe d'après l'ordre d'origine (`_origin`) et les réglages `conf` : {identifiant du
+    groupe: [[identifiant du bouton, grand ?], …]} (l'ordre choisi des boutons du groupe). Un bouton listé dans un autre
+    groupe que le sien, et plus dans le sien, y est déplacé ; un bouton absent des listes (nouveau, ou rétabli) garde
+    sa place d'origine, juste après le bouton qui le précédait. `ident(bouton)` : son identifiant (None : il ne bouge
+    pas). Rend {groupe: [(élément, grand)]}."""
+    groups = list(groups)
+    ids = {}
+    own = {}                                             # groupe → {identifiant: (bouton, grand)} de son origine
+    for g in groups:
+        mine = {}
+        for w, big in g._origin:
+            k = ident(w) if RibbonGroup._is_command(w) else None
+            ids[id(w)] = k
+            if k and k not in mine:
+                mine[k] = (w, big)
+        own[g] = mine
+    listed, noted = {}, {}
+    for g in groups:
+        items = [(str(k), b) for k, b in (conf.get(g.group_id) or [])] if g.group_id else []
+        # une liste qui ne nomme aucun bouton d'origine de son onglet n'est pas la sienne (identifiant d'un groupe qui
+        # a changé : plugin ôté, nouvelle version) : ignorée — une liste vide (tous partis ailleurs) reste la sienne
+        page_ids = {k for h in groups if h.page is g.page for k in own[h]}
+        if items and not any(k in page_ids for k, _b in items):
+            items = []
+            noted[g] = False
+        else:
+            noted[g] = bool(g.group_id) and g.group_id in conf
+        listed[g] = items
+    moved = {}                                           # (groupe quitté, identifiant) → groupe où il est déplacé
+    for g in groups:
+        for k, _b in listed[g]:
+            if k in own[g]:
+                continue
+            # il vient d'un groupe du même onglet qui l'a d'origine et ne le liste plus (une même commande peut être
+            # dans deux groupes : seul l'exemplaire quitté part) ; sans lui, il reste chez lui
+            # (et de la même disposition : les groupes de TypeEdit 13 posés sur la page Fichier partent avec elle)
+            src = next((h for h in groups if h.page is g.page and _layout_of(h) == _layout_of(g) and k in own[h]
+                        and noted[h] and (h, k) not in moved and all(x != k for x, _b in listed[h])), None)
+            if src is not None and all(not (t is g and kk == k) for (_h, kk), t in moved.items()):
+                moved[(src, k)] = g
+    plan = {}
+    for g in groups:
+        incoming = {k: src for (src, k), t in moved.items() if t is g}
+        rank, size = {}, {}
+        for i, (k, b) in enumerate(listed[g]):
+            if k in rank or not (k in own[g] or k in incoming):
+                continue
+            rank[k], size[k] = i, bool(b)
+        ents = [(w, big) for w, big in g._origin
+                if not ((g, ids.get(id(w))) in moved and own[g][ids[id(w)]][0] is w)]
+        for k in sorted(incoming, key=lambda k: rank.get(k, 1 << 30)):
+            w, big = own[incoming[k]][k]
+            ents.append((w, big))
+        ents = [(w, size[ids.get(id(w))] if big is not None and ids.get(id(w)) in size else big) for w, big in ents]
+        slots = [i for i, (w, _b) in enumerate(ents) if ids.get(id(w))]
+        keyed, last = [], -1
+        for seq, i in enumerate(slots):
+            k = ids[id(ents[i][0])]
+            if k in rank:
+                last = rank[k]
+                keyed.append(((rank[k], 0, seq), ents[i]))
+            else:                                        # pas listé : juste après celui qui le précédait
+                keyed.append(((last, 1, seq), ents[i]))
+        keyed.sort(key=lambda t: t[0])
+        for i, (_key, e) in zip(slots, keyed):
+            ents[i] = e
+        plan[g] = ents
+    return plan
+
+
+def rearrange(plan: dict) -> list:
+    """Chaque groupe de `plan` ({groupe: [(élément, grand)]}) rangé ainsi, s'il change : les éléments pris d'abord par
+    leur groupe (un bouton déplacé quitte l'autre), puis les groupes refaits (disposition expert ; le mode simple et
+    les boutons à cacher, ensuite par `Ribbon.refresh_visibility`). Rend les groupes changés."""
+    changed = [g for g, ents in plan.items()
+               if [(id(w), b) for w, b in ents] != [(id(w), b) for w, b in g._entries]]
+    for g in changed:
+        g._entries = list(plan[g])
+        for w, _b in g._entries:
+            if not g.body.isAncestorOf(w):               # venu d'un autre groupe
+                w.setParent(g.body)
+    for g in changed:
+        g._arranged, g._promoted = None, set()
+        g._relayout(None)
+        for w, _b in g._entries:
+            if g._is_command(w):
+                w.show()                                 # le ruban recache ceux à cacher
+    return changed
 
 
 def two_lines(text: str, fm) -> str:

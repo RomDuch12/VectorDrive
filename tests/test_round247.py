@@ -161,7 +161,11 @@ class TestWindow(unittest.TestCase):
             seen.append(d.windowTitle())
             d.set_field('branches', 7)
             return QDialog.DialogCode.Accepted
-        with mock.patch.object(FD.FormDialog, 'exec', fake_exec):
+        def menu(*a, **k):                                               # le menu du bouton (round 1141) :
+            self.assertIsNotNone(k.get('settings'))                      # ses réglages en tête
+            k['settings']()
+        with mock.patch.object(FD.FormDialog, 'exec', fake_exec), \
+                mock.patch.object(type(w), '_ribbon_button_menu', side_effect=menu):
             QApplication.sendEvent(btn, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(2, 2), btn.mapToGlobal(QPoint(2, 2))))
         self.assertEqual(len(seen), 1)
         self.assertEqual(FD.defaults(w.settings, 'star').branches, 7)   # réglage de l'outil gardé
