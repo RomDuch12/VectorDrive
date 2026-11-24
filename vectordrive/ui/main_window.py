@@ -768,7 +768,7 @@ class MainWindow(QMainWindow):
         # le nom de la commande d'abord : il nomme le pas d'annulation que la commande pose
         if checkable:
             a.toggled.connect(lambda _on, act=a: self._note_command(act))
-            a.toggled.connect(slot)
+            a.toggled.connect(lambda on, act=a, run=slot: self._toggled_command(act, run, on))
         else:
             a.triggered.connect(lambda _=False, act=a: self._note_command(act))
             # « triggered » passe checked (False) : jamais dans le premier paramètre
@@ -810,6 +810,9 @@ class MainWindow(QMainWindow):
         message, rien au dessin, à la vue, à la sélection…), la barre d'état le
         dit avec la raison probable : jamais un bouton muet."""
         from PySide6.QtWidgets import QApplication
+        if self.agent_tab_locked() and not self._lock_free(act):     # l'onglet tenu par l'assistant (24/11) ;
+            self._agent_refused()                        # même lancée par une autre (Ctrl+K)
+            return
         if getattr(self, '_fx_depth', 0):                # commande lancée par une autre : sans contrôle
             return slot()
         if self._wants_copy(act):
@@ -1384,6 +1387,7 @@ class MainWindow(QMainWindow):
                               ('shaper', tr('Crayon (formes reconnues)'), 'bezier'),
                               ('eraser', tr('Gomme'), 'delete'),
                               ('punchout', tr('Emporte-pièce'), 'punch'),
+                              ('smooth', tr('Lissage C∞'), 'approximate'),
                               ('blob', tr('Pinceau à aplat'), 'fill'),
                               ('spline', tr('Courbe par points'), 'bezier'),
                               ('sym_ox', tr('Courbe symétrique (axe OX)'), 'sym_ox'),
@@ -1506,6 +1510,11 @@ class MainWindow(QMainWindow):
                  'texte est à convertir en courbes d\'abord)')
         self.A['tool_punchout'].setToolTip(tip)
         self.A['tool_punchout'].setStatusTip(tip)
+        tip = tr('Lissage C∞ : la forme sous la souris est montrée lissée ; un clic la remplace par sa courbe lisse, '
+                 'sans coin et à courbure continue (toute la sélection si elle en fait partie) ; [ et ] : longueur de '
+                 'lissage ; Tab : netteté ; clic droit sur le bouton : les réglages')
+        self.A['tool_smooth'].setToolTip(tip)
+        self.A['tool_smooth'].setStatusTip(tip)
         tip = tr('Point de départ à la souris (O) : un clic près d\'un contour — ouvert : son bout le plus proche '
                  'devient son départ (le sens est retourné s\'il le faut) ; fermé : son point le plus proche. '
                  'L\'usinage commence là ; clic droit : quitter')
@@ -2899,7 +2908,7 @@ class MainWindow(QMainWindow):
                   'blend_curve',
                   'stroke',
                   'var_stroke', 'tool_width', 'nib_stroke', 'normalize', 'remove_loops', 'overkill', 'to_arcs', 'approximate', 'smooth_curve',
-                  'segment'):
+                  'tool_smooth', 'segment'):
             g.add(A[k], big=False)
         g = t.group(tr('Transformation'))
         for k in ('mirror_h', 'mirror_v', 'rot90'):
@@ -3584,7 +3593,27 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr('Propriétés reproduites sur {0} objet(s)').format(len(work)), 5000)
         return len(work)
 
+    def _toggled_command(self, act, slot, on) -> None:
+        """Une commande à cocher : celles qui changent le dessin refusées dans l'onglet tenu par l'assistant (la coche
+        revient) — les bascules d'affichage, de panneau ou d'outil, souvent cochées par le programme, passent ; sinon
+        lancée avec l'état (`on`) si elle le prend, comme Qt le ferait."""
+        if self.agent_tab_locked() and str(act.property('vd_key') or '') in self.AGENT_TOGGLE_REFUSED:
+            was = act.blockSignals(True)
+            act.setChecked(not on)
+            act.blockSignals(was)
+            self._agent_refused()
+            return
+        import inspect
+        try:
+            ps = inspect.signature(slot).parameters.values()
+            takes = any(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL) for p in ps)
+        except (TypeError, ValueError):
+            takes = True
+        return slot(on) if takes else slot()
+
     def _on_selection(self) -> None:
+        if getattr(self, '_agent_away', 0):              # l'assistant de passage dans son onglet : la sélection de
+            return                                       # l'utilisateur revient telle quelle, son ruban ne bouge pas
         self.canvas._hover_cursor_after_change()         # Suppr sur une poignée : la double flèche ne reste pas
         palette = getattr(self, 'color_panel', None)
         if palette is not None:                          # le panneau Couleur, s'il est montré : les couleurs choisies
@@ -7303,6 +7332,8 @@ class MainWindow(QMainWindow):
         from ..cam import post
         from ..plugins import REGISTRY
         fam = post.family(key or '')
+        if getattr(self, '_agent_away', 0):
+            return fam
         m = MC.of_post(key or '')
         mkey = m.key if m is not None else ''
         self._sync_machine_buttons(mkey)
@@ -8443,6 +8474,8 @@ class MainWindow(QMainWindow):
                   'shaper': lambda: T.ShaperTool(self.canvas),
                   'eraser': lambda: T.EraserTool(self.canvas),
                   'punchout': self._punchout_tool,
+                  'smooth': lambda: T.SmoothTool(self.canvas, self.smooth_spec(), self._smooth_keep,
+                                                 self.smooth_items),
                   'blob': lambda: T.BlobBrushTool(self.canvas),
                   'spline': lambda: T.SplineTool(self.canvas),
                   'sym_ox': lambda: T.SymCurveTool(self.canvas, 'ox'),
@@ -8493,6 +8526,13 @@ class MainWindow(QMainWindow):
             snap += ({k: copy.deepcopy(self.canvas.doc.extra.get(k)) for k in keys},)
         self._undo.append(snap)
         self._undo_pushes = getattr(self, '_undo_pushes', 0) + 1          # pile pleine : la longueur ne bouge plus
+        held = getattr(self, '_agent_ref', None)
+        if held is not None and not getattr(self, '_agent_visit', 0) and (
+                not self.docs or not (0 <= self.doc_index < len(self.docs))
+                or self.docs[self.doc_index] is not held()):
+            # l'utilisateur, dans un autre onglet pendant la demande de l'assistant : pas un pas de la demande
+            # (dans l'onglet tenu, affiché, verrouillé : les pas sont les siens)
+            self._undo_pushes_elsewhere = getattr(self, '_undo_pushes_elsewhere', 0) + 1
         if len(self._undo) > getattr(self, 'undo_limit', 200):
             self._undo.pop(0)
         self._redo.clear()
@@ -8511,6 +8551,7 @@ class MainWindow(QMainWindow):
         @contextlib.contextmanager
         def held():
             before = getattr(self, '_undo_pushes', 0)
+            elsewhere = getattr(self, '_undo_pushes_elsewhere', 0)
             redo, oldest = list(self._redo), (self._undo[0] if self._undo else None)
             self.push_undo(label, **kw)
             mark = self._undo[-1] if getattr(self, '_undo_pushes', 0) > before else None   # posé ici (pas imbriqué)
@@ -8523,6 +8564,7 @@ class MainWindow(QMainWindow):
                 if mark is not None and not step['used'] and self._undo and self._undo[-1] is mark:
                     self._undo.pop()
                     self._undo_pushes = before
+                    self._undo_pushes_elsewhere = elsewhere
                     self._redo[:] = redo
                     if oldest is not None and (not self._undo or self._undo[0] is not oldest):
                         self._undo.insert(0, oldest)       # pile pleine : le plus ancien était sorti
@@ -8703,12 +8745,63 @@ class MainWindow(QMainWindow):
         if self.session_dir is not None:
             return True
         self._store_current()
+        silent = self._keeps_closed()
+        self._kept_now = []
         for i in range(len(self.docs)):
-            if self.docs[i].modified:
+            t = self.docs[i]
+            if silent and self._needs_keeping(t) and self._keep_closed(t) is not None:
+                self._kept_now.append(t.uid)
+                continue                                 # gardé sans question, à rouvrir (demande du 24/11)
+            if t.modified:
                 self.switch_tab(i)
-                if self._ask_save(self.docs[i]) == 'cancel':
+                if self._ask_save(t) == 'cancel':
+                    self._forget_kept_now()              # la fenêtre reste : rien de gardé pour rien
                     return False
         return True
+
+    def _forget_kept_now(self) -> None:
+        """La fermeture (ou la mise à jour) n'a pas eu lieu : les onglets gardés pour elle, toujours ouverts, ne sont
+        plus à rendre (une copie d'avant un enregistrement reviendrait sinon, « non enregistrée »)."""
+        from . import closed_store
+        for uid in getattr(self, '_kept_now', None) or ():
+            closed_store.forget(uid)
+        self._kept_now = []
+
+    # --- onglets gardés à la fermeture (demande du 24/11, « à la manière de npp ») ------------------------------------
+    def _keeps_closed(self) -> bool:
+        """Option : un onglet modifié ou jamais enregistré se ferme sans question, gardé pour être rouvert."""
+        from .options import value
+        return bool(value(self.settings, 'options/garder_onglets'))
+
+    @staticmethod
+    def _needs_keeping(tab) -> bool:
+        """Un onglet qui perdrait quelque chose à sa fermeture : modifié, ou jamais enregistré et pas vide."""
+        if tab.modified:
+            return True
+        return not tab.path and not getattr(tab.doc, 'source_path', None) and not tab.pristine()
+
+    def _keep_closed(self, tab):
+        """Le dessin de l'onglet écrit dans les onglets gardés (`closed_store`), sans question ; rend son entrée, ou
+        None s'il n'a pas pu l'être (la question revient alors)."""
+        import json
+        from . import closed_store, session
+        paths = cam = None
+        if tab.toolpaths:                                # ses parcours calculés reviennent avec lui
+            try:
+                paths = session.paths_bytes(tab.toolpaths)
+                cp = getattr(self, 'cam_panel', None)
+                cam = cp.memo_of(tab.doc) if cp is not None else None
+                json.dumps(cam)
+            except Exception:                            # noqa: BLE001 — à recalculer : le dessin d'abord
+                cam = None if paths else cam
+        stamp = None
+        if tab.path:                                     # son fichier tel qu'il avait été lu
+            stamp = getattr(self, '_file_stamps', {}).get(os.path.normcase(os.path.abspath(tab.path)))
+        try:
+            return closed_store.keep(tab, tab.name(), paths=paths, cam=cam, stamp=stamp)
+        except Exception as ex:                          # noqa: BLE001 — disque plein, droits… : on demande, comme avant
+            self.statusBar().showMessage(tr('Onglet non gardé : {0}').format(ex), 10000)
+            return None
 
     def _ask_save(self, tab, answer: str | None = None) -> str:
         """« Enregistrer les modifications de … ? » : 'save' (enregistré),
@@ -8748,7 +8841,10 @@ class MainWindow(QMainWindow):
             m.addAction(icon('save'), tr('Enregistrer'), self.save)
             m.addAction(icon('saveas'), tr('Enregistrer sous…'), self.save_as)
             m.addSeparator()
-            m.addAction(tr('Fermer'), lambda: self.close_tab(self.doc_index))
+            f = m.addAction(tr('Fermer'), lambda: self.close_tab(self.doc_index))
+            if self.agent_tab_locked():                  # tenu par l'assistant : ni rechargé ni fermé
+                r.setEnabled(False)
+                f.setEnabled(False)
         m.addSeparator()
         self._reopen_menu(m)
         if exec_menu:
@@ -8770,22 +8866,43 @@ class MainWindow(QMainWindow):
     def closed_tabs(self) -> list:
         """Onglets à rouvrir, le dernier fermé d'abord (au plus CLOSED_MAX) : le chemin d'un fichier, ou
         l'onglet gardé en mémoire d'un dessin sans fichier. Un fichier ouvert entre-temps n'y est pas."""
+        from . import closed_store
         from .doctabs import same_file
         self._store_current()
         files = [p for p in self._closed_files()
                  if not any(same_file(t.path, p) or same_file(getattr(t.doc, 'source_path', None), p)
                             for t in self.docs)]
         when = getattr(self, '_closed_when', {})
-        items = sorted(list(getattr(self, '_closed_unsaved', [])) + files,
-                       key=lambda e: -when.get(e if isinstance(e, str) else e.uid, 0))
+        uids = {t.uid for t in self.docs}
+        try:                                             # gardés sur le disque (même d'une séance d'avant)
+            kept = [k for k in closed_store.entries() if k.uid not in uids     # pas deux onglets d'un même fichier
+                    and not (k.path and any(same_file(t.path, k.path) for t in self.docs))]
+        except OSError:
+            kept = []
+
+        def stamp(e):
+            if isinstance(e, str):
+                return when.get(e, 0)
+            return getattr(e, 'when', 0) or when.get(e.uid, 0)
+        items = sorted(list(getattr(self, '_closed_unsaved', [])) + kept + files, key=lambda e: -stamp(e))
         return items[:self.CLOSED_MAX]
 
-    def _remember_closed(self, tab) -> None:
-        """Onglet qui se ferme : à rouvrir plus tard. Un onglet vide et intact n'est pas gardé."""
+    def _remember_closed(self, tab, kept=None) -> None:
+        """Onglet qui se ferme : à rouvrir plus tard. Un onglet vide et intact n'est pas gardé. `kept` : son dessin
+        déjà gardé sur le disque (`closed_store`), il reviendra de là."""
+        from . import closed_store
+        path = tab.path or getattr(tab.doc, 'source_path', None)
+        if kept is not None:                             # le fichier relu ne revient pas en plus du dessin gardé
+            if path:
+                self.settings.setValue('fichiers/onglets_fermes', [p for p in self._closed_files()
+                                                                   if pathlib.Path(p) != pathlib.Path(path)])
+            return
+        closed_store.forget(tab.uid)                     # gardé plus tôt (fermeture abandonnée) : plus à rendre
         if tab.pristine():
             return
+        import time as _time
         when = self.__dict__.setdefault('_closed_when', {})
-        stamp = max(when.values(), default=0) + 1
+        stamp = max(max(when.values(), default=0) + 1e-3, _time.time())   # l'heure : comparable aux onglets gardés
         path = tab.path or getattr(tab.doc, 'source_path', None)
         if path:
             path = str(pathlib.Path(path))
@@ -8812,6 +8929,30 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(tr('Fichier introuvable : {0}').format(entry), 6000)
                 return False
             return bool(self.open_path(entry))
+        from . import closed_store
+        if isinstance(entry, closed_store.Kept):         # gardé sur le disque : rouvert tel quel, non enregistré
+            try:
+                doc, tps = closed_store.load(entry)
+            except Exception as ex:                      # noqa: BLE001 — dessin abîmé : retiré de la liste, et dit
+                closed_store.drop(entry)
+                self.statusBar().showMessage(tr('Onglet gardé illisible : {0}').format(ex), 8000)
+                return False
+            self._open_in_tab(doc, entry.path, modified=True)
+            closed_store.drop(entry)                     # ouvert : plus à rendre
+            if entry.path:                               # le fichier tel qu'il était lu avant : un autre enregistrement
+                key = os.path.normcase(os.path.abspath(entry.path))      # depuis sera signalé à « Enregistrer »
+                stamps = self.__dict__.setdefault('_file_stamps', {})
+                if entry.stamp:
+                    stamps[key] = tuple(entry.stamp)
+                else:
+                    stamps.pop(key, None)
+            if tps:                                      # ses parcours, comme la session les rend
+                try:
+                    self.cam_panel.display(tps)
+                    self.cam_panel.restore_memo(entry.cam)
+                except Exception:                        # noqa: BLE001 — à recalculer
+                    pass
+            return True
         self._closed_unsaved = [t for t in getattr(self, '_closed_unsaved', []) if t is not entry]
         self._open_in_tab(entry.doc, None, modified=True)
         return True
@@ -8828,6 +8969,12 @@ class MainWindow(QMainWindow):
                 act = sub.addAction(name if there else tr('{0} (introuvable)').format(name),
                                     lambda _=False, x=e: self.reopen_tab(x))
                 act.setToolTip(e)
+            elif getattr(e, 'file', None):                # gardé sur le disque (`closed_store`)
+                import time as _time
+                at = _time.strftime('%d/%m %H:%M', _time.localtime(e.when)) if e.when else ''
+                act = sub.addAction(tr('{0} (non enregistré, {1})').format(e.name(), at),
+                                    lambda _=False, x=e: self.reopen_tab(x))
+                act.setToolTip(str(e.path) if e.path else tr('Dessin jamais enregistré, gardé à sa fermeture'))
             else:
                 act = sub.addAction(e.name(), lambda _=False, x=e: self.reopen_tab(x))
                 act.setToolTip(tr('Dessin sans fichier, gardé pour cette séance'))
@@ -8869,6 +9016,9 @@ class MainWindow(QMainWindow):
         après confirmation)."""
         path = self.path
         if not path or not pathlib.Path(path).is_file():
+            return False
+        if self.agent_tab_locked():
+            self._agent_refused()
             return False
         if self.modified and confirm and QMessageBox.question(
                 self, tr('Recharger'), tr('Abandonner les modifications et relire {0} ?').format(
@@ -9169,8 +9319,10 @@ class MainWindow(QMainWindow):
         cp = getattr(self, 'cam_panel', None)
         t.toolpaths = list(cp.toolpaths) if cp is not None else []
 
-    def _load_tab(self, i: int, *, keep_view: bool = True) -> None:
-        """L'onglet `i` devient l'onglet affiché."""
+    def _load_tab(self, i: int, *, keep_view: bool = True, quiet: bool = False) -> None:
+        """L'onglet `i` devient l'onglet affiché. `quiet` : le passage de l'assistant dans son onglet, le temps d'un
+        outil (`agent_visit`) — ni la discussion, ni l'alarme FAO, ni la vue 3D, ni l'affichage (calque seul, 2D / 3D)
+        de l'onglet de l'utilisateur ne bougent."""
         t = self.docs[i]
         self.doc_index = i
         self.path, self.modified = t.path, t.modified
@@ -9178,33 +9330,35 @@ class MainWindow(QMainWindow):
         self._format_brush = None
         self.canvas.set_document(t.doc)
         guard = getattr(self, 'fao_guard', None)
-        if guard is not None:                            # un autre dessin : rien à comparer, plus rien ne clignote
+        if guard is not None and not quiet:              # un autre dessin : rien à comparer, plus rien ne clignote
             guard.forget()
             guard.drop_history()
             self.canvas.flash([])
         dock = getattr(self, 'dock_assistant', None)
         ai = dock.widget() if dock is not None else None
-        if hasattr(ai, 'tab_changed'):                   # un assistant par onglet (demande du 18/11 soir)
+        if hasattr(ai, 'tab_changed') and not quiet:     # un assistant par onglet (demande du 18/11 soir)
             ai.tab_changed(t)
         if keep_view and t.view is not None:
             self.canvas.scale, self.canvas.ox, self.canvas.oy = t.view
             self.canvas.viewChanged.emit()
             self.canvas.update()
-        st = t.view_state if keep_view else None
-        self.canvas.set_solo(st.get('solo') if st else None)
-        # le pas des flèches saisi (Ctrl+flèche) : celui de cet onglet ; un onglet neuf, celui des options (demande
-        # du 18/11 soir : « pas déplacement flèche propre à chaque onglet »)
-        step = st.get('arrow_step') if st else None
-        self.canvas.arrow_step = float(step) if isinstance(step, (int, float)) and step > 0 else None
+        st = t.view_state if keep_view and not quiet else None
+        if not quiet:
+            self.canvas.set_solo(st.get('solo') if st else None)
+            # le pas des flèches saisi (Ctrl+flèche) : celui de cet onglet ; un onglet neuf, celui des options
+            # (demande du 18/11 soir : « pas déplacement flèche propre à chaque onglet »)
+            step = st.get('arrow_step') if st else None
+            self.canvas.arrow_step = float(step) if isinstance(step, (int, float)) and step > 0 else None
         if st:
             self._apply_view_state(st)
         self.layers_panel.refresh()
         self.cam_panel.toolpaths = list(t.toolpaths)     # ses parcours avant la liste : ceux des opérations de plugin
         self.cam_panel.refresh()                         # s'y placent (pas dans ceux de l'autre dessin)
         self.cam_panel.ops.clearSelection()              # un autre dessin : les lignes choisies de l'autre ne comptent plus
-        self._history_changed(hide=True)                 # … et la liste des modifications montrée était celle de l'autre
+        if not quiet:
+            self._history_changed(hide=True)             # … et la liste des modifications montrée était celle de l'autre
         self.cam_panel.display(self.cam_panel.toolpaths)
-        if self.panel3d is not None:
+        if self.panel3d is not None and not quiet:
             self.panel3d.stale = True
             if self.view_mode() == '3d':
                 self._refresh3d.start()
@@ -9265,7 +9419,221 @@ class MainWindow(QMainWindow):
         if 0 <= self.doc_index < len(self.docs):
             t = self.docs[self.doc_index]
             t.doc, t.path, t.modified = self.canvas.doc, self.path, self.modified
+        held = self.agent_tab()
+        for t in self.docs:                              # 🔒 : l'onglet tenu par l'assistant
+            t.agent_lock = t is held
         bar.sync(self.docs, self.doc_index)
+        self._agent_lock_view()
+
+    # --- l'onglet tenu par l'assistant (demande du 24/11 : « Assistant IA verrouille son onglet pour travailler jusque
+    # fin travail ou annul user, on doit pouvoir travailler sur les autres onglets ») ---------------------------------
+    #: commandes permises dans l'onglet tenu : la vue, les onglets, les fenêtres — rien qui change le dessin
+    AGENT_FREE = frozenset(('new', 'open', 'doc_close', 'doc_next', 'doc_prev', 'new_from_template', 'quit',
+                            'grid', 'show_starts', 'show_nodes', 'full_screen', 'full_screen_taskbar', 'theme_dark',
+                            'themes', 'theme_editor', 'reopen_tab', 'assistant_ia', 'options', 'about',
+                            'command_search', 'news'))
+    #: commandes à cocher qui changent le dessin (le texte choisi) : refusées dans l'onglet tenu
+    AGENT_TOGGLE_REFUSED = frozenset(('text_compress_line', 'text_compress_para'))
+
+    def agent_tab(self):
+        """L'onglet (DocTab) tenu par l'assistant pendant sa demande, ou None."""
+        ref = getattr(self, '_agent_ref', None)
+        t = ref() if ref is not None else None
+        return t if t is not None and any(x is t for x in self.docs) else None
+
+    def agent_lock(self, tab) -> None:
+        """L'assistant tient `tab` (DocTab) le temps de sa demande ; None : il le rend."""
+        import weakref
+        self._agent_ref = weakref.ref(tab) if tab is not None else None
+        self._agent_sel = None                           # sa sélection d'un outil à l'autre : une demande à la fois
+        if tab is not None:                              # un pinceau pris avant ne peint pas ce qu'il choisira
+            self._format_brush = None
+            self._props_brush = None
+        self._sync_tabs()
+
+    def agent_tab_locked(self) -> bool:
+        """On regarde l'onglet tenu par l'assistant (pas pendant qu'il y passe lui-même) : il n'est pas à modifier."""
+        t = self.agent_tab()
+        return (t is not None and not getattr(self, '_agent_visit', 0) and 0 <= self.doc_index < len(self.docs)
+                and self.docs[self.doc_index] is t)
+
+    def _lock_free(self, act) -> bool:
+        key = str(act.property('vd_key') or '')
+        return key in self.AGENT_FREE or key.startswith(('zoom_', 'view_'))
+
+    def _agent_refused(self) -> None:
+        self.statusBar().showMessage(tr('L’assistant travaille dans cet onglet : il le rend à la fin de sa demande '
+                                        '(ou « Arrêter l’assistant ») ; les autres onglets restent libres.'), 6000)
+
+    def _agent_stop(self) -> None:
+        dock = getattr(self, 'dock_assistant', None)
+        ai = dock.widget() if dock is not None else None
+        if hasattr(ai, 'stop'):
+            ai.stop()
+
+    def _agent_lock_view(self) -> None:
+        """L'onglet affiché est-il tenu ? Plan de travail sans clic ni touche, ruban et panneaux grisés (sauf
+        l'assistant), bandeau « Arrêter » — ou tout rendu."""
+        if getattr(self, '_agent_visit', 0) or getattr(self, 'canvas', None) is None:
+            return
+        locked = self.agent_tab_locked()
+        if locked == getattr(self, '_agent_locked_view', False):
+            return
+        self._agent_locked_view = locked
+        from PySide6.QtWidgets import QDockWidget
+        from . import agent_lock as AL
+        if getattr(self, '_agent_filter', None) is None:
+            self._agent_filter = AL.InputLock(self.agent_tab_locked, self._agent_refused, self)
+            for name in ('canvas', 'ruler_h', 'ruler_v', 'ruler_corner'):     # les règles : guides, origine
+                w = getattr(self, name, None)
+                if w is not None:
+                    w.installEventFilter(self._agent_filter)
+            self._agent_banner = AL.Banner(self._agent_stop, self)
+            self.statusBar().addPermanentWidget(self._agent_banner)
+        self._agent_banner.setVisible(locked)
+        if locked:
+            mine = getattr(self, 'dock_assistant', None)
+            r = getattr(self, 'ribbon', None)            # ses pages, pas le ruban : la barre des onglets de dessin
+            pages = [r.widget(k) for k in range(r.count())] if r is not None else []    # (dans son coin) reste
+            widgets = [w for w in pages + [getattr(self, 'layer_bar', None)]
+                       + [d.widget() for d in self.findChildren(QDockWidget) if d is not mine] if w is not None]
+            self._agent_off = [w for w in widgets if w.isEnabled()]
+            for w in self._agent_off:
+                w.setEnabled(False)
+            return
+        for w in getattr(self, '_agent_off', None) or ():
+            try:
+                w.setEnabled(True)
+            except RuntimeError:                         # détruit entre-temps
+                pass
+        self._agent_off = []
+
+    def _cam_rows(self, rows=None):
+        """Les lignes choisies de la liste des opérations (FAO) : rendues, ou remises (`rows`)."""
+        ops = getattr(getattr(self, 'cam_panel', None), 'ops', None)
+        if ops is None:
+            return []
+        if rows is None:
+            return sorted({ix.row() for ix in ops.selectionModel().selectedRows()})
+        from PySide6.QtCore import QItemSelectionModel
+        sm = ops.selectionModel()
+        sm.clearSelection()
+        for r in rows:
+            if 0 <= r < ops.rowCount():
+                sm.select(ops.model().index(r, 0), QItemSelectionModel.SelectionFlag.Select
+                          | QItemSelectionModel.SelectionFlag.Rows)
+        return rows
+
+    def agent_visit(self, tab):
+        """Le temps d'un outil de l'assistant, son onglet `tab` devient l'onglet de travail (pas affiché : la fenêtre
+        n'est pas redessinée), puis celui de l'utilisateur revient tel quel — sélection, outil en cours, vue, calque
+        seul, pinceau de mise en forme, lignes choisies de la FAO. LookupError : l'onglet n'est plus là."""
+        import contextlib
+        import weakref
+
+        @contextlib.contextmanager
+        def visit():
+            i = next((k for k, t in enumerate(self.docs) if t is tab), -1)
+            if i < 0:
+                raise LookupError('onglet fermé')
+            c = self.canvas
+            self._agent_visit = getattr(self, '_agent_visit', 0) + 1
+            if i == self.doc_index:                      # son onglet affiché : rien à basculer (le verrou s'efface)
+                try:
+                    mine = getattr(self, '_agent_sel', None)  # sa sélection, d'un outil à l'autre (un passage
+                    if mine is not None and mine[0]() is tab:     # de l'utilisateur ailleurs l'a vidée)
+                        alive = {id(it) for it in c.doc.iter_items()}
+                        sel = [it for it in mine[1] if id(it) in alive]
+                        if [id(x) for x in sel] != [id(x) for x in c.selection]:
+                            c.select(sel)
+                        if mine[2] != self._cam_rows():
+                            self._cam_rows(mine[2])
+                    yield
+                finally:
+                    try:
+                        self._agent_sel = (weakref.ref(tab), list(c.selection), self._cam_rows())
+                    finally:
+                        self._agent_visit -= 1
+                return
+            back = self.docs[self.doc_index]             # l'onglet (pas son indice : un outil peut en ouvrir un)
+            keep = {'sel': list(c.selection), 'tool': c.tool_obj, 'name': getattr(c, 'tool', None),
+                    'views': list(c._views), 'solo': c.solo_layer,
+                    'brush': self._format_brush, 'props': getattr(self, '_props_brush', None),
+                    'rot': (c.rot_mode, c.pivot, list(c.frozen_picked)),
+                    'rows': self._cam_rows(), 'guard': getattr(self, 'fao_guard', None),
+                    'stale': getattr(self.panel3d, 'stale', None) if self.panel3d is not None else None}
+            # pas redessinés pendant le passage (le reste de la fenêtre l'est : une barre de progression reste vue)
+            frozen = [w for w in (c, getattr(self, 'layers_panel', None), getattr(self, 'cam_panel', None))
+                      if w is not None and w.updatesEnabled()]
+            for w in frozen:
+                w.setUpdatesEnabled(False)
+            c.tool_obj = None                            # l'outil de l'utilisateur, à moitié tracé : mis de côté
+            self.fao_guard = None                        # l'alarme FAO veille sur l'onglet de l'utilisateur
+            self._props_brush = None                     # son pinceau « reproduire les propriétés » aussi
+            # ailleurs : ni le ruban (Mise en forme, panneaux de la sélection) ni la machine ne suivent son dessin
+            self._agent_away = getattr(self, '_agent_away', 0) + 1
+            loaded = False
+            try:
+                self._store_current()
+                self._load_tab(i, quiet=True)
+                loaded = True
+                c.solo_layer = (tab.view_state or {}).get('solo')   # son affichage à lui (calque seul)
+                mine = getattr(self, '_agent_sel', None)  # sa sélection d'un outil à l'autre
+                if mine is not None and mine[0]() is tab:
+                    alive = {id(it) for it in c.doc.iter_items()}
+                    c.select([it for it in mine[1] if id(it) in alive])
+                    self._cam_rows(mine[2])
+                yield
+            finally:
+                try:
+                    try:
+                        if loaded:                       # son travail, sans la vue de l'utilisateur
+                            self._agent_sel = (weakref.ref(tab), list(c.selection), self._cam_rows())
+                            self._store_work()
+                    finally:                             # quoi qu'il arrive : l'onglet de l'utilisateur revient
+                        k = next((n for n, t in enumerate(self.docs) if t is back), None)
+                        self._load_tab(k if k is not None else max(0, min(self.doc_index, len(self.docs) - 1)),
+                                       quiet=True)
+                    c._views = keep['views']
+                    c.solo_layer = keep['solo']
+                    c.tool_obj = keep['tool']
+                    if keep['name'] is not None:
+                        c.tool = keep['name']
+                        act = self.A.get(f'tool_{keep["name"]}')    # son bouton d'outil, enfoncé de nouveau
+                        if act is not None and act.isCheckable() and not act.isChecked():
+                            was = act.blockSignals(True)
+                            act.setChecked(True)
+                            act.blockSignals(was)
+                    c.select(keep['sel'])
+                    c.rot_mode, c.pivot, c.frozen_picked = keep['rot']
+                    self._cam_rows(keep['rows'])
+                    if self.panel3d is not None and keep['stale'] is not None:
+                        self.panel3d.stale = keep['stale']
+                finally:
+                    self.fao_guard = keep['guard']
+                    self._format_brush = keep['brush']   # après la sélection remise : rien n'est peint
+                    self._props_brush = keep['props']
+                    self._agent_away -= 1
+                    self._agent_visit -= 1
+                    for w in frozen:
+                        try:
+                            w.setUpdatesEnabled(True)
+                        except RuntimeError:
+                            pass
+                    self._sync_tabs()
+                    self._history_changed()
+        return visit()
+
+    def _store_work(self) -> None:
+        """Le travail de l'onglet de travail (dessin, chemin, modifié, annulation, parcours) dans son DocTab, sans la
+        vue ni l'affichage : l'assistant passé dans son onglet n'y écrit pas ceux de l'utilisateur."""
+        if not 0 <= self.doc_index < len(self.docs):
+            return
+        t = self.docs[self.doc_index]
+        t.doc, t.path, t.modified = self.canvas.doc, self.path, self.modified
+        t.undo, t.redo = self._undo, self._redo
+        cp = getattr(self, 'cam_panel', None)
+        t.toolpaths = list(cp.toolpaths) if cp is not None else []
 
     def _open_in_tab(self, doc, path: str | None, *, modified: bool = False, at: int | None = None) -> int:
         """`doc` dans l'onglet `at`, sinon dans un nouvel onglet — ou dans
@@ -9274,10 +9642,11 @@ class MainWindow(QMainWindow):
         self.finish_typing()
         self._store_current()
         tab = DocTab(doc, path, modified)
-        if at is not None and 0 <= at < len(self.docs):
+        if at is not None and 0 <= at < len(self.docs) and self.docs[at] is not self.agent_tab():
             i = at
             self.docs[i] = tab
-        elif 0 <= self.doc_index < len(self.docs) and self.docs[self.doc_index].pristine():
+        elif 0 <= self.doc_index < len(self.docs) and self.docs[self.doc_index].pristine() \
+                and self.docs[self.doc_index] is not self.agent_tab():     # (l'onglet tenu n'est pas remplacé)
             i = self.doc_index
             self.docs[i] = tab
         else:
@@ -9326,15 +9695,24 @@ class MainWindow(QMainWindow):
         i = self.doc_index if i is None else i
         if not 0 <= i < len(self.docs):
             return False
+        if self.docs[i] is self.agent_tab():             # tenu par l'assistant : rendu à la fin de sa demande
+            self._agent_refused()
+            return False
         self.finish_typing()
         self._store_current()
-        if self.docs[i].modified:
+        kept = None
+        if answer is None and self._needs_keeping(self.docs[i]) and self._keeps_closed():
+            kept = self._keep_closed(self.docs[i])       # sans question : gardé, à rouvrir (demande du 24/11)
+        if self.docs[i].modified and kept is None:
             self.switch_tab(i)
             if self._ask_save(self.docs[i], answer) == 'cancel':
                 return False
             self._store_current()
+        if kept is not None:
+            self.statusBar().showMessage(tr('« {0} » gardé, non enregistré : Rouvrir un onglet fermé (Ctrl+Maj+T) '
+                                            'le rend tel quel').format(kept.name()), 8000)
         was_current = i == self.doc_index
-        self._remember_closed(self.docs[i])
+        self._remember_closed(self.docs[i], kept)
         del self.docs[i]
         if not self.docs:
             self.doc_index = -1
@@ -10983,8 +11361,10 @@ class MainWindow(QMainWindow):
         try:
             path = run(self, tr('Téléchargement de la mise à jour'), update.fetch, up)
         except Cancelled:
+            self._forget_kept_now()                      # VectorDrive reste ouvert : rien de gardé pour rien
             return
         except Exception as ex:
+            self._forget_kept_now()
             QMessageBox.critical(self, tr('Mises à jour'), str(ex))
             return
         if portable.is_portable():
@@ -11618,7 +11998,8 @@ class MainWindow(QMainWindow):
                 'tool_fillet2': lambda: self.corner_settings('fillet'),
                 'tool_chamfer2': lambda: self.corner_settings('chamfer'),
                 'tool_breakline': self.breakline_settings, 'tool_tan_circle': self.tan_circle_settings,
-                'node_simplify': self.simplify_settings, 'sym_cyclic': self.cyclic_settings}
+                'node_simplify': self.simplify_settings, 'sym_cyclic': self.cyclic_settings,
+                'tool_smooth': self.smooth_settings, 'smooth_curve': self.smooth_settings}
 
     def _cad_value(self, key: str, name: str, default: float) -> float:
         """Un nombre des réglages retenus `cad/<key>` (ceux de `_ask`) ; `default` s'il manque ou est illisible."""
@@ -17606,25 +17987,95 @@ class MainWindow(QMainWindow):
         contours choisis remplacés par une courbe lisse qui les approche (filtrée C∞, tracée en B-spline cubique : à
         courbure continue). Rend l'écart maxi au contour d'origine (mm),
         None si rien n'est fait. `params` : réponses données d'avance (essais)."""
-        from ..core import smoothcurve as SC
         shapes = self._selected_shapes()
         if not shapes:
             QMessageBox.information(self, tr('Courbe lisse'), tr('Sélectionnez au moins un objet.'))
             return None
-        spec = [('length', float, 2.0, tr('Longueur de lissage (mm de tracé) : les détails au tracé plus court s’effacent')),
-                ('sharpness', float, 1.0, tr('Netteté (1 : doux ; jusqu’à 4 : forme mieux gardée, légères ondulations près des coins)')),
-                ('tolerance', float, 0.01, tr('Écart de tracé des courbes (mm)'))]
-        p = self._ask('courbe_lisse', tr('Courbe lisse'), spec, params=params)
+        p = self._ask('courbe_lisse', tr('Courbe lisse'), self._smooth_fields(), params=params)
         if p is None:
             return None
-        length, sharp = max(0.0, float(p['length'])), min(4.0, max(1.0, float(p['sharpness'])))
-        tol = max(1e-4, float(p['tolerance']))
+        return self._smooth_selection(self._smooth_clean(p))
+
+    SMOOTH_DEFAULT = {'length': 2.0, 'sharpness': 1.0, 'tolerance': 0.01}
+
+    def _smooth_fields(self) -> list:
+        d = self.SMOOTH_DEFAULT
+        return [('length', float, d['length'], tr('Longueur de lissage (mm de tracé) : les détails au tracé plus court s’effacent')),
+                ('sharpness', float, d['sharpness'], tr('Netteté (1 : doux ; jusqu’à 4 : forme mieux gardée, légères ondulations près des coins)')),
+                ('tolerance', float, d['tolerance'], tr('Écart de tracé des courbes (mm)'))]
+
+    @staticmethod
+    def _smooth_clean(p: dict) -> dict:
+        """Les réglages du lissage dans leurs bornes."""
+        return {'length': max(0.0, float(p['length'])), 'sharpness': min(4.0, max(1.0, float(p['sharpness']))),
+                'tolerance': max(1e-4, float(p['tolerance']))}
+
+    def smooth_spec(self) -> dict:
+        """Les réglages retenus du lissage C∞ (outil et Courbe lisse…, les mêmes)."""
+        return self._smooth_clean({k: self._cad_value('courbe_lisse', k, d) for k, d in self.SMOOTH_DEFAULT.items()})
+
+    def _smooth_keep(self, spec: dict) -> None:
+        """Les réglages changés dans l'outil ([ ] et Tab) : retenus."""
+        self.settings.setValue('cad/courbe_lisse', self._smooth_clean(spec))
+
+    def smooth_settings(self, params: dict | None = None):
+        """Clic droit sur Lissage C∞ ou Courbe lisse… (demande du 24/11 : « Outil lissage c-infini paramétrable ») :
+        longueur de lissage, netteté, écart de tracé, retenus sans rien lisser ; l'outil pris les suit. Rend les
+        réglages ou None."""
+        self.settings.setValue('cad/courbe_lisse', self.smooth_spec())     # ceux de [ ] et Tab proposés
+        p = self._ask('courbe_lisse', tr('Lissage C∞'), self._smooth_fields(), params=params)
+        if p is None:
+            return None
+        out = self._smooth_clean(p)
+        self.settings.setValue('cad/courbe_lisse', out)
+        tool = getattr(self.canvas, 'tool_obj', None)
+        if hasattr(tool, 'set_spec') and type(tool).__name__ == 'SmoothTool':
+            tool.set_spec(out)
+        return out
+
+    def smooth_items(self, items: list, spec: dict) -> int:
+        """L'outil Lissage C∞ : `items` remplacés par leur courbe lisse (un pas d'annulation) ; rend le nombre de
+        formes lissées."""
+        if not items:
+            return 0
+        was = list(self.canvas.selection)
+        inside = all(any(x is y for y in was) for x in items)
+        self.canvas.select(list(items))
+        worst, n = None, 0
+        try:
+            worst = self._smooth_selection(self._smooth_clean(spec))
+            n = 0 if worst is None else len(self._selected_shapes())
+        finally:
+            def live(x):
+                return any(x is y for L in self.canvas.doc.layers for y in L.items)
+            if not inside or worst is None:              # une forme hors de la sélection (ou rien de fait) : la
+                self.canvas.select([x for x in was if live(x)])                  # sélection d'avant reste
+            else:                                        # les formes lissées, et le reste de la sélection d'avant
+                new = list(self.canvas.selection)        # (groupes, textes, images)
+                self.canvas.select(new + [x for x in was if live(x) and not any(x is y for y in new)])
+        return n
+
+    #: données d'une forme qui ne valent plus pour son tracé lissé (forme paramétrée, cotes, objet TypeEdit d'origine,
+    #: coins réglables, pontets, départs et entrées posés à la main)
+    SMOOTH_DROP = ('forme', 'corners', 'cote', 'vnd_obj', 'vnd_shift', 'vnd_moved', 'tabs_xy', 'start_xy', 'lead_xy',
+                   'open_start')
+
+    def _smooth_selection(self, p: dict):
+        """Les formes choisies remplacées par leur courbe lisse ; rend l'écart maxi (mm), None si rien n'est fait."""
+        from ..core import smoothcurve as SC
+        shapes = self._selected_shapes()
+        if not shapes:
+            return None
+        length, sharp, tol = p['length'], p['sharpness'], p['tolerance']
         before = [s.path for s in shapes]
         report: dict = {}
         self._fit_selection(tr('Courbe lisse'), lambda path: SC.smooth(path, length, sharp, tol, report))
         after = [s.path for s in self._selected_shapes()]
         if len(after) != len(before) or all(a is b for a, b in zip(after, before)):
             return None                                  # abandonné
+        for s in self._selected_shapes():                # (un dict neuf : celui d'avant reste à l'annulation)
+            if isinstance(s.extra, dict) and any(k in s.extra for k in self.SMOOTH_DROP):
+                s.extra = {k: v for k, v in s.extra.items() if k not in self.SMOOTH_DROP}
         worst = float(report.get('deviation', 0.0))
         self.statusBar().showMessage(tr('Courbe lisse : écart maxi {0} mm au contour d’origine, {1} segment(s)').format(
             f'{worst:.3f}'.replace('.', ','), sum(a.segment_count() for a in after)), 10000)

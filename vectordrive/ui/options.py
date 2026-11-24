@@ -63,6 +63,10 @@ SPEC: list[tuple[str, list[Opt]]] = [
           True, restart=True,
           tip='Les dessins modifiés reviennent tels quels, à enregistrer quand vous le décidez ; '
               'vos fichiers ne sont jamais écrits sans vous'),
+        B('options/garder_onglets', 'Fermer un onglet modifié sans question : il est gardé, à rouvrir tel quel',
+          True, tip='Le dessin, jamais enregistré ou modifié, est écrit dans le dossier de VectorDrive et revient par '
+                    '« Rouvrir un onglet fermé » (Ctrl+Maj+T), même après un redémarrage, noté non enregistré ; vos '
+                    'fichiers ne sont jamais écrits'),
         B('options/ouvrir_dernier', 'Rouvrir le dernier dessin au démarrage (sans la session)', False),
         I('options/decimales', 'Décimales des cotes affichées', 3, 0, 6),
     ]),

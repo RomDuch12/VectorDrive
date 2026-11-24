@@ -7412,3 +7412,21 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 
 - **Poche** (concentrique, en spirale ou en balayage) : nouveau champ « Nombre de passes limité », comme la gravure 2,5D — seules les n premières passes depuis le bord sont faites, le reste n’est pas vidé. Avec « Finition : pas de passe sur le cadre » (gravure en relief), elles sont comptées **autour des logos** seulement : l’évidement se limite à une bande autour des formes, le cadre n’est pas suivi. Un nombre impair donne un tour de plus (les tours se font depuis les deux bords de la bande : jamais de crête au milieu). 0 (d’office) : tout est vidé, comme avant.
 - Une poche « seulement le reste » placée après une poche limitée vide ce que celle-ci a laissé.
+### v1.4.0 — Poche limitée : plus de tour de finition en trop
+
+- **Poche à nombre de passes limité** avec sa **passe de finition** cochée : la finition ne fait plus un tour en trop le long du bord intérieur de la bande (là où l’évidement s’arrête, au milieu de la matière). Elle suit seulement les vraies parois : les logos, et le cadre s’il est repassé.
+- Une poche « seulement le reste » placée après en tient compte : la bande n’est comptée vidée à la cote finie que le long des parois finies.
+### v1.5.0 — Onglets fermés sans question, gardés pour être rouverts
+
+- **Fermer un onglet** jamais enregistré, ou modifié et non enregistré, ne pose plus de question : le dessin est gardé en silence dans le dossier de VectorDrive (avec ses parcours d’outil), comme le fait Notepad++. **Rouvrir un onglet fermé** (Ctrl+Maj+T, ou la liste du menu, où il est noté « non enregistré » avec sa date) le rend tel quel, même après un redémarrage, toujours noté non enregistré ; un fichier modifié garde son chemin. Vos fichiers ne sont jamais écrits.
+- Les 25 derniers sont gardés. Si le dessin ne peut pas être écrit, la question revient. Un fichier enregistré entre-temps par ailleurs est signalé à la réouverture.
+- Option « Fermer un onglet modifié sans question » (Options, active d’office) : décochée, la question revient comme avant.
+### v1.6.0 — Outil Lissage C∞, réglable
+
+- **Lissage C∞** (ruban, groupe Contours, à côté de Courbe lisse…) : un outil. La forme sous la souris est montrée lissée ; un clic la remplace par sa courbe lisse, sans coin et à courbure continue (toute la sélection si la forme cliquée en fait partie). L’outil reste pris : on lisse forme après forme ; un pas d’annulation par clic.
+- Réglable : **[** et **]** changent la longueur de lissage, **Tab** la netteté (1 à 4) ; clic droit sur le bouton : longueur, netteté, tolérance. Les réglages sont retenus et partagés avec Courbe lisse….
+- Seules les formes se lissent (pas les groupes, textes ni images) ; la sélection en cours est gardée. Les données dérivées du tracé d’origine (départ, attaches, coins…) ne suivent pas la courbe lissée.
+### v1.7.0 — L’assistant tient son onglet ; on travaille dans les autres
+
+- Pendant une demande, **l’onglet de l’assistant est verrouillé** (🔒 dans son titre) jusqu’à la fin de la demande ou « Arrêter l’assistant » (rendu tout de suite) : on peut le regarder (molette, bouton du milieu, zoom), pas le modifier — clics, touches, règles, ruban et panneaux sont arrêtés, il ne se ferme ni ne se recharge ; une bande en bas dit pourquoi, avec le bouton Arrêter.
+- **Les autres onglets restent libres** : on y dessine pendant que l’assistant travaille. Ses outils agissent toujours dans son onglet (avant, il refusait dès qu’on en regardait un autre) ; votre onglet, sa sélection, l’outil en cours, le calque seul et la vue restent tels quels. Si vous êtes au milieu d’un geste, son outil attend un instant. Un calcul de parcours lancé par l’assistant montre sa barre de progression, comme les vôtres.

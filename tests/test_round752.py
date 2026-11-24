@@ -37,6 +37,10 @@ class TestReopen(unittest.TestCase):
         self.w = MainWindow()
         self.w.settings.remove('fichiers/onglets_fermes')
         self.dir = pathlib.Path(tempfile.mkdtemp())
+        from vectordrive.ui import closed_store                                  # round 1148 : onglets gardés
+        import shutil
+        shutil.rmtree(closed_store.folder(), ignore_errors=True)
+        self.addCleanup(shutil.rmtree, closed_store.folder(), True)
 
     def tearDown(self):
         for t in self.w.docs:

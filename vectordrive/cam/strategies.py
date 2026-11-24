@@ -45,6 +45,8 @@ _RAMP_LIMIT = _cv.ContextVar('vectordrive_cam_ramp_limit', default=0.0)    # dis
 _PREVIOUS = _cv.ContextVar('vectordrive_cam_previous', default=None)
 #: poche au nombre de passes limité : sa région d'origine, d'où ses cadres sont tirés (`keep_exteriors`) — pas de la bande
 _FRAME_SRC = _cv.ContextVar('vectordrive_cam_frame_src', default=None)
+#: … et ses vraies parois, à la largeur de sa bande : (bords, largeur) — la finition ne suit qu'elles (`band_walls`)
+_BAND = _cv.ContextVar('vectordrive_cam_band', default=None)
 
 
 def previous_toolpaths() -> list:
@@ -513,7 +515,8 @@ def keep_exteriors(op, reg):
     return True if frames is None else frames
 
 
-def limit_band(op, reg, r: float, step: float, qs: int, tp=None, what: str = 'poche', record: bool = False):
+def limit_band(op, reg, r: float, step: float, qs: int, tp=None, what: str = 'poche', record: bool = False,
+               out: dict | None = None):
     """« Nombre de passes limité » (`vcarve_max_steps`, TypeEdit : Nombre limité de passes) d'un évidement : la région
     réduite à la bande de ses n premières passes depuis le bord — depuis les formes du cadre seulement (les logos) si le
     cadre n'est pas repassé (« pas de passe sur le cadre », gravure en relief), comme la gravure 2,5D (demande du 23/11).
@@ -524,7 +527,31 @@ def limit_band(op, reg, r: float, step: float, qs: int, tp=None, what: str = 'po
     n = int(getattr(op, 'vcarve_max_steps', 0) or 0)
     if n <= 0 or reg.is_empty:
         return reg
-    from shapely.geometry import MultiLineString, MultiPolygon
+    from shapely.geometry import MultiPolygon
+    edges = band_edges(op, reg)
+    if edges is None:
+        return reg
+    laps = n + (n % 2)                                   # tours depuis les deux bords de la bande : un nombre pair
+    stock = max(0.0, float(getattr(op, 'stock', 0.0) or 0.0))
+    width = 2 * (r + stock) + (laps - 1) * step + 1e-4
+    band = reg.intersection(edges.buffer(width, quad_segs=qs)).buffer(0)
+    polys = [p for p in getattr(band, 'geoms', [band]) if p.geom_type == 'Polygon' and p.area > 1e-4]   # sans éclats
+    if not polys or sum(p.area for p in polys) >= reg.area * (1 - 1e-9) - 1e-9:
+        return reg                                       # rien de retiré : la région telle quelle
+    if record:
+        _FRAME_SRC.set(reg)
+        _BAND.set((edges, width))
+    if out is not None:                                  # `cleared_by` : la bande, pour la surépaisseur laissée
+        out.update(edges=edges, width=width)
+    if tp is not None:
+        tp.warnings.append(f'{what} : {n} passe(s) depuis le bord (nombre de passes limité)')
+    return polys[0] if len(polys) == 1 else MultiPolygon(polys)
+
+
+def band_edges(op, reg):
+    """Les bords d'où se comptent les passes d'une poche limitée (`limit_band`) : les contours de la région, sans
+    le contour extérieur du cadre s'il n'est pas repassé (« pas de passe sur le cadre »). None : aucun."""
+    from shapely.geometry import MultiLineString
     frames = frames_of(reg) if getattr(op, 'finish_skip_frame', False) else None
     rings = []
     for poly in getattr(reg, 'geoms', [reg]):
@@ -533,21 +560,21 @@ def limit_band(op, reg, r: float, step: float, qs: int, tp=None, what: str = 'po
         if frames is None or not frames.covers(poly.representative_point()):
             rings.append(poly.exterior)                  # le cadre lui-même n'est pas un bord : sauté
         rings.extend(poly.interiors)
-    if not rings:
-        return reg
-    laps = n + (n % 2)                                   # tours depuis les deux bords de la bande : un nombre pair
-    stock = max(0.0, float(getattr(op, 'stock', 0.0) or 0.0))
-    width = 2 * (r + stock) + (laps - 1) * step + 1e-4
-    edges = MultiLineString([list(x.coords) for x in rings])
-    band = reg.intersection(edges.buffer(width, quad_segs=qs)).buffer(0)
-    polys = [p for p in getattr(band, 'geoms', [band]) if p.geom_type == 'Polygon' and p.area > 1e-4]   # sans éclats
-    if not polys or sum(p.area for p in polys) >= reg.area * (1 - 1e-9) - 1e-9:
-        return reg                                       # rien de retiré : la région telle quelle
-    if record:
-        _FRAME_SRC.set(reg)
-    if tp is not None:
-        tp.warnings.append(f'{what} : {n} passe(s) depuis le bord (nombre de passes limité)')
-    return polys[0] if len(polys) == 1 else MultiPolygon(polys)
+    return MultiLineString([list(x.coords) for x in rings]) if rings else None
+
+
+def band_walls(r: float):
+    """Poche au nombre de passes limité, en cours de calcul : la zone où passe la finition le long de ses vraies
+    parois (le tour au rayon `r` des bords des formes) — pas le long du bord de la bande, qui n'est pas une paroi (son
+    tour, à « largeur − r » des formes, en tomberait hors) ; la limite à mi-chemin des deux. None : poche entière."""
+    band = _BAND.get()
+    if band is None:
+        return None
+    import shapely
+    edges, width = band
+    keep = edges.buffer(max(width / 2, r + 1e-3), quad_segs=16)
+    shapely.prepare(keep)
+    return keep
 
 
 def rings_of(geom, region_on_right: bool, *, exteriors=True) -> list[list]:
@@ -3425,10 +3452,14 @@ def cleared_by(doc, op, tool, tol: float):
         return None
     R = cut_radius(op, tool)
     qs = _quad_segs(max(R, tol), tol)
+    band: dict = {}
     if getattr(op, 'kind', 'poche') == 'poche':           # nombre de passes limité : la bande seulement est vidée
-        reg = limit_band(op, reg, R, pocket_step(op, tool, R), qs)
+        reg = limit_band(op, reg, R, pocket_step(op, tool, R), qs, out=band)
     stock = 0.0 if (op.finish and op.stock > 0) else max(0.0, float(op.stock or 0.0))
     centers = erode(reg, R + stock, qs)
+    if band and op.finish and op.stock > 0:             # poche limitée : sa finition suit les formes, pas le bord de
+        rough = erode(reg, R + float(op.stock), qs)      # la bande, où la surépaisseur reste (demande du 24/11)
+        centers = rough.union(centers.intersection(band['edges'].buffer(band['width'] / 2, quad_segs=qs)))
     fr = 0.0 if tool.kind == 'boule' else floor_radius(op, tool)
     return None if centers.is_empty else centers.buffer(max(fr, 1e-3), quad_segs=qs)
 
@@ -3572,6 +3603,10 @@ def finish_pass(em, op, tool, tp, reg, region_right: bool, zs: list, qs: int, ra
     passe). `ramp` : l'entrée en rampe de l'opération (poche concentrique)."""
     r = cut_radius(op, tool)
     fin = [(p, True) for p in rings_of(erode(reg, r, qs), region_right, exteriors=keep_exteriors(op, reg))]
+    walls = band_walls(r)
+    if walls is not None:                                # poche limitée : le long des formes seulement (demande du 24/11)
+        seg = max(0.02, min(0.2, max(r, 1e-3) / 2))
+        fin = [ch for pts, _closed in fin for ch in clip_chains(pts, walls, seg)]
     deep, flat = [], fin
     if getattr(op, 'finish_shut_levels', False) and len(zs) > 1 and fin and tool.kind not in ('conique', 'boule'):
         opened = opened_by(em.moves, zs[-1], r, qs)
@@ -3647,6 +3682,11 @@ def _pocket_rest(doc, setup, op, tool, tp, em, here, reg, r, step, qs, tol) -> b
         if left.is_empty:
             return 0
         keep = left.buffer(max(max(r, rf) - m, rf / 2), quad_segs=qs)
+        walls = band_walls(r)
+        if walls is not None:                            # poche limitée : le long des formes seulement, pas de la bande
+            keep = keep.intersection(walls)
+            if keep.is_empty:
+                return 0
         shapely.prepare(keep)
         fin = [ch for pts in rings_of(erode(reg, r, qs), not op.climb, exteriors=keep_exteriors(op, reg))
                for ch in clip_chains(pts, keep, seg)]
@@ -3751,9 +3791,11 @@ def pocket_step(op, tool, r: float) -> float:
 
 def _pocket(doc, setup, op, tool, tp, em, here) -> None:
     token = _FRAME_SRC.set(None)                         # la région d'origine d'une poche limitée, le temps du calcul
+    band = _BAND.set(None)
     try:
         _pocket_body(doc, setup, op, tool, tp, em, here)
     finally:
+        _BAND.reset(band)
         _FRAME_SRC.reset(token)
 
 

@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 1.3.0
+# Guide des commandes — VectorDrive 1.7.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -561,6 +561,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Arcs et segments |  | Remplacer les courbes de Bézier par des arcs de cercle tangents et des droites |
 | Approximation |  | Remplacer les suites de petits segments par des courbes lisses (DXF, vectorisation) |
 | Courbe lisse… |  | Remplacer les contours choisis par une courbe lisse qui les approche, sans coin et à courbure continue : les détails au tracé plus court que la longueur de lissage s’effacent ; Maj : l’original reste |
+| Lissage C∞ |  | Lissage C∞ : la forme sous la souris est montrée lissée ; un clic la remplace par sa courbe lisse, sans coin et à courbure continue (toute la sélection si elle en fait partie) ; [ et ] : longueur de lissage ; Tab : netteté ; clic droit sur le bouton : les réglages |
 | Segmentation |  | Remplacer les courbes par des segments de droite |
 
 ### Transformation

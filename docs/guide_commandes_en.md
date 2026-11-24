@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 1.3.0
+# Command guide — VectorDrive 1.7.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -561,6 +561,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Arcs and lines |  | Replace Bézier curves with tangent circular arcs and lines |
 | Approximation |  | Replace runs of small segments with smooth curves (DXF, tracing) |
 | Smooth curve… |  | Replace the chosen contours with a smooth curve that approximates them, with no corner and continuous curvature: details whose path is shorter than the smoothing length fade out; Shift: the original stays |
+| C∞ smoothing |  | C∞ smoothing: the shape under the mouse is shown smoothed; a click replaces it with its smooth curve, with no corner and continuous curvature (the whole selection if it is part of it); [ and ]: smoothing length; Tab: sharpness; right-click on the button: the settings |
 | Segmentation |  | Replace curves with straight segments |
 
 ### Transform

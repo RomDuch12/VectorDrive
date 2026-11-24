@@ -38,6 +38,8 @@ os.environ.setdefault('VECTORDRIVE_WORKSPACES', os.path.join(_dir, 'espaces_de_t
 # session jetable par fenêtre : fermée sans question, comme la fenêtre de tous les jours ; jamais celle de l'utilisateur
 os.environ.setdefault('VECTORDRIVE_SESSION_TEMP', os.path.join(_dir, 'sessions'))
 os.environ.setdefault('VECTORDRIVE_SESSION', os.path.join(_dir, 'session'))
+# onglets gardés à leur fermeture : jamais ceux de l'utilisateur
+os.environ.setdefault('VECTORDRIVE_CLOSED_TABS', os.path.join(_dir, 'onglets_fermes'))
 # bibliotheque (touche B) : jamais celle du poste
 os.environ.setdefault('VECTORDRIVE_BIBLIOTHEQUE', os.path.join(_dir, 'bibliotheque'))
 # carnet de clients du BAT : jamais celui du poste

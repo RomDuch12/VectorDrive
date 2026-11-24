@@ -35,6 +35,8 @@ KEY_URL = 'assistant/adresse_mistral'
 #: les fournisseurs dont on règle l'adresse du serveur → leur clé de réglage (Mistral, Mistral en local)
 URL_KEYS = {'mistral': KEY_URL, 'local': 'assistant/adresse_local'}
 KEY_MODE = 'assistant/mode'
+#: un outil de l'assistant attend au plus autant (s) que l'utilisateur ait fini son geste ou sa commande (24/11)
+BUSY_WAIT_S = 5.0
 #: les modes (demande du 20/11, 21 h 48) : Débutant, clé en main ; Avancé, tous les réglages
 MODES = (('debutant', 'Débutant'), ('avance', 'Avancé'))
 #: des exemples de demandes (mode Débutant, discussion vide)
@@ -431,12 +433,7 @@ class AssistantPanel(QWidget):
         """L'exécution des outils d'une discussion : dans le fil de l'interface, sur l'onglet de la discussion
         seulement (`holder` : [weakref de l'onglet], suivi si l'onglet est remplacé sur place)."""
         def run(fn):
-            def guarded():
-                ref = holder[0]
-                if ref is not None and ref() is not self._current_tab():
-                    from ..agent.protocol import ToolError
-                    raise ToolError('the user is now looking at another drawing tab: this conversation belongs to '
-                                    'its own tab; ask the user to come back to it, then try again')
+            def counted():
                 run_ = getattr(self, '_button_run', None)   # un bouton IA : les pas posés par ses outils, comptés
                 before = getattr(self.win, '_undo_pushes', 0)
                 try:
@@ -444,7 +441,34 @@ class AssistantPanel(QWidget):
                 finally:
                     if run_ is not None and run_ is getattr(self, '_button_run', None):
                         run_['tool_steps'] += getattr(self.win, '_undo_pushes', 0) - before
-            return self.bridge.run(guarded)
+
+            def guarded():
+                from ..agent.protocol import ToolError
+                if getattr(self, '_released', False):    # « Arrêter » : plus aucun outil, l'onglet est rendu
+                    raise ToolError('the user stopped this request: nothing was changed')
+                ref = holder[0]
+                tab = ref() if ref is not None else None
+                visit = getattr(self.win, 'agent_visit', None)
+                if ref is None or visit is None:
+                    return counted()
+                # toujours dans son onglet (demande du 24/11) : affiché, le verrou s'efface le temps de l'outil ;
+                # sinon l'utilisateur travaille dans un autre et l'outil passe dans le sien
+                if tab is None or not any(t is tab for t in getattr(self.win, 'docs', [])):
+                    raise ToolError('the drawing tab of this conversation was closed: nothing was changed')
+                with visit(tab):
+                    return counted()
+
+            import time
+            from ..agent.protocol import ToolError
+            deadline = time.monotonic() + BUSY_WAIT_S
+            while True:                                  # l'utilisateur au travail ailleurs (glisser, commande) :
+                try:                                     # l'outil attend un peu plutôt que d'échouer
+                    return self.bridge.run(guarded)
+                except ToolError as ex:
+                    if 'try again in a moment' not in str(ex) or time.monotonic() > deadline \
+                            or getattr(self, '_released', False) or getattr(self.bridge, 'closed', False):
+                        raise
+                time.sleep(0.1)
         return run
 
     def eventFilter(self, obj, ev):                      # noqa: N802 — nom imposé par Qt
@@ -657,7 +681,8 @@ class AssistantPanel(QWidget):
         stack = self.win._undo
         b = AB.AIButton(id='', label=tr('Votre demande'), scope='tous', control='validation')
         return {'button': b, 'pushes': getattr(self.win, '_undo_pushes', 0), 'tool_steps': 0, 'stack': stack,
-                'mark': stack[-1] if stack else None, 'outside': {}, 'doc': self.win.canvas.doc}
+                'mark': stack[-1] if stack else None, 'outside': {}, 'doc': self.win.canvas.doc,
+                'elsewhere': getattr(self.win, '_undo_pushes_elsewhere', 0)}
 
     def open_options(self, exec_dialog: bool = True):
         """Les options de l'assistant (F10 › Assistant)."""
@@ -871,6 +896,9 @@ class AssistantPanel(QWidget):
             else:
                 self.status.setText(tr('Adresse refusée : https://, ou http:// vers cette machine seulement'))
             return False
+        done = getattr(self.win, 'finish_typing', None)  # un texte en saisie : fini avant la demande et son verrou
+        if done is not None:                             # (pas compté dans les pas de la demande)
+            done()
         self._out = self.view                            # la discussion de cet onglet, même s'il change
         self._line('<b style="color:{2}">{0}</b> <span style="color:{2}">{1}</span>'.format(
             html.escape(tr('Vous :')), html.escape(text).replace('\n', '<br>'), self._colors()['user']), raw=True)
@@ -880,9 +908,11 @@ class AssistantPanel(QWidget):
         if getattr(self, '_button_run', None) is None and self.validate_requests():
             self._button_run = self._request_run()       # Garder ou Défaire à la fin (un bouton IA : le sien)
         self.status.setText(tr('L’assistant réfléchit…'))
+        self._released = False                           # une demande neuve : ses outils permis
         self._thread = threading.Thread(target=self._work, args=(conv, text), daemon=True,
                                         name='vectordrive-assistant')
         self._thread.start()
+        self._hold_tab(True)                             # son onglet tenu jusqu'à la fin (demande du 24/11)
         self.suggest_box.setVisible(False)
         return True
 
@@ -947,6 +977,8 @@ class AssistantPanel(QWidget):
         if conv is not None and self.running:
             conv.stop()
             self.status.setText(tr('Arrêt au prochain pas…'))
+            self._released = True                        # plus aucun outil de cette demande (24/11)
+        self._hold_tab(False)                            # l'onglet rendu tout de suite (même si le fil est mort)
 
     def edit_memory(self, exec_dialog: bool = True):
         """La mémoire de l'assistant, à voir et corriger (elle vaut pour les discussions suivantes). Rend la
@@ -1134,6 +1166,9 @@ class AssistantPanel(QWidget):
         """Lance le bouton IA `bid` : sa demande (plan de travail, tâche, règles, mémoire, contrôle) avec ses outils et
         ses tours ; rend False si elle ne part pas (dit dans la barre du panneau)."""
         from ..agent import ai_buttons as AB
+        done = getattr(self.win, 'finish_typing', None)  # un texte en saisie : fini avant le plan de travail et les
+        if done is not None and not self.running:        # pas comptés du bouton (24/11)
+            done()
         from . import assistant_buttons as UB
         from . import assistant_options as AO
         b = AB.find(self.win.settings, bid)
@@ -1159,7 +1194,8 @@ class AssistantPanel(QWidget):
         # « tool_steps » : les pas posés par ses outils (compté dans _runner) ; Défaire n'annule qu'eux
         self._button_run = {'button': b, 'pushes': getattr(self.win, '_undo_pushes', 0), 'tool_steps': 0,
                             'stack': stack, 'mark': stack[-1] if stack else None,
-                            'outside': UB.outside(self.win, ids), 'doc': self.win.canvas.doc}
+                            'outside': UB.outside(self.win, ids), 'doc': self.win.canvas.doc,
+                            'elsewhere': getattr(self.win, '_undo_pushes_elsewhere', 0)}
         ok = False
         try:
             ok = bool(self.send(UB.compose(b, items, description, memory_allowed='memory' not in AO.without(st))))
@@ -1190,7 +1226,9 @@ class AssistantPanel(QWidget):
             self.status.setText(tr('Attention : {0} objet(s) hors du plan de travail ont changé (Ctrl+Z pour '
                                    'revenir)').format(len(moved)))
         stack, mark = run['stack'], run['mark']
-        only_its = getattr(self.win, '_undo_pushes', 0) - run['pushes'] == steps   # rien d'autre posé pendant
+        # rien d'autre posé pendant (les pas de l'utilisateur dans ses autres onglets ne comptent pas : 24/11)
+        elsewhere = getattr(self.win, '_undo_pushes_elsewhere', 0) - run.get('elsewhere', 0)
+        only_its = getattr(self.win, '_undo_pushes', 0) - run['pushes'] - elsewhere == steps
         if b.control == 'validation' and steps > 0 and only_its and self.win._undo is stack:
             at = -1 if mark is None else next((i for i in range(len(stack) - 1, -1, -1) if stack[i] is mark), None)
             if at is not None:                           # ce qui reste de ses pas (l'outil « undo » en retire)
@@ -1270,6 +1308,7 @@ class AssistantPanel(QWidget):
         for conv in (self.conv, getattr(self, '_running', None)):
             if conv is not None:
                 conv.stop()
+        self._hold_tab(False)
 
     @property
     def running(self) -> bool:
@@ -1454,8 +1493,20 @@ class AssistantPanel(QWidget):
         tip.append(tr('Prix et plafond : Options › Assistant'))
         lab.setToolTip('\n'.join(tip))
 
+    def _hold_tab(self, on: bool) -> None:
+        """L'onglet de la discussion tenu par l'assistant (`on`), ou rendu."""
+        lock = getattr(self.win, 'agent_lock', None)
+        if lock is None:
+            return
+        ref = self._tab[0] if on else None
+        try:
+            lock(ref() if ref is not None else None)
+        except RuntimeError:                             # la fenêtre se ferme : rien à tenir
+            pass
+
     def _on_done(self, message: str) -> None:
         self._thread = None                              # dit en dernier par le fil : la demande est finie
+        self._hold_tab(False)
         try:
             self._busy(False)
             if getattr(self, '_checking', False):        # « Vérifier » : pas d'erreur, la connexion est bonne

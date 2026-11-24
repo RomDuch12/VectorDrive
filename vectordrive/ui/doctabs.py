@@ -32,13 +32,15 @@ class DocTab:
     #: caméra 3D, affichages) ; None : pas encore affiché
     view_state: dict | None = None
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    #: tenu par l'assistant pendant sa demande (🔒 devant le titre)
+    agent_lock: bool = field(default=False, compare=False, repr=False)
 
     def name(self) -> str:
         src = self.path or getattr(self.doc, 'source_path', None)
         return pathlib.Path(src).name if src else tr('Sans titre')
 
     def label(self) -> str:
-        return self.name() + (' *' if self.modified else '')
+        return ('🔒 ' if self.agent_lock else '') + self.name() + (' *' if self.modified else '')
 
     def pristine(self) -> bool:
         """Onglet vide jamais touché (réutilisé par Nouveau / Ouvrir)."""

@@ -141,7 +141,6 @@ class Assistant(unittest.TestCase):
         self.assertEqual(p._runner(holder)(lambda: 'fait'), 'fait')         # ses outils agissent sur le nouveau
 
     def test_tools_stay_on_their_tab(self):
-        from vectordrive.agent.protocol import ToolError
         w, p = self.w, self.p
         self.mark()
         first = w.docs[w.doc_index]
@@ -149,8 +148,10 @@ class Assistant(unittest.TestCase):
         self.assertEqual(run(lambda: 'fait'), 'fait')
         w.new_document()
         app.processEvents()
-        with self.assertRaises(ToolError):
-            run(lambda: 'fait')
+        second = w.docs[w.doc_index]
+        # round 1150 (demande du 24/11) : l'outil passe dans son onglet, l'onglet affiché revient (avant : refus)
+        self.assertIs(run(lambda: w.docs[w.doc_index]), first)
+        self.assertIs(w.docs[w.doc_index], second)
         w.switch_tab(w.docs.index(first))
         self.assertEqual(run(lambda: 'fait'), 'fait')
 

@@ -4372,6 +4372,134 @@ class PunchTool(Tool):
         self.shown = (None, None)
 
 
+class SmoothTool(Tool):
+    """Lissage C∞ à la souris (demande du 24/11 : « Outil lissage c-infini paramétrable ») : la forme sous la souris est
+    montrée lissée, en vert, avec les réglages retenus (`spec` : longueur de lissage, netteté, écart de tracé — ceux de
+    Courbe lisse…) ; un clic la remplace par sa courbe lisse (toute la sélection si la forme cliquée en fait partie).
+    [ et ] : longueur de lissage plus courte, plus longue ; Tab : netteté suivante (1 à 4). L'outil reste jusqu'au clic
+    droit ; chaque clic s'annule à part. `changed(spec)` : la fenêtre retient les réglages ; `apply(objets, spec)` :
+    les lisse, rend leur nombre."""
+    cursor = Qt.CursorShape.CrossCursor
+    #: au plus tant de segments montrés lissés sous la souris (au-delà : le clic seul, le calcul serait trop long)
+    PREVIEW_MAX = 20000
+    #: … ni au-delà de tant de longueurs de lissage le long du tracé
+    SPANS_MAX = 4000
+
+    def __init__(self, canvas, spec: dict | None = None, changed=None, apply=None):
+        super().__init__(canvas)
+        self.spec = dict({'length': 2.0, 'sharpness': 1.0, 'tolerance': 0.01}, **(spec or {}))
+        self.changed, self.apply = changed, apply
+        self.hover = None                                # (position écran, objet visé)
+        self.shown = []                                  # les tracés lissés montrés
+        self._key = None                                 # ce qui a donné `shown` : pas recalculé à chaque mouvement
+        self._say()
+
+    def _say(self) -> None:
+        from ..i18n import tr
+        s = self.spec
+        self.c.measured.emit(tr('Lissage C∞ : longueur {0} mm, netteté {1} — un clic lisse la forme ; [ ] : longueur ; '
+                                'Tab : netteté ; clic droit : quitter').format(f'{s["length"]:g}', f'{s["sharpness"]:g}'))
+
+    @staticmethod
+    def _plain(it) -> bool:
+        """Une forme de premier niveau (pas un groupe, un texte ou une image : rien d'autre n'est touché)."""
+        from ..core.document import Shape
+        return isinstance(it, Shape) and it.path is not None
+
+    def _targets(self, it) -> list:
+        """Les formes que lisserait un clic sur `it` : celles de la sélection s'il en fait partie, sinon lui seul."""
+        if not self._plain(it):
+            return []
+        sel = [x for x in self.c.selection if self._plain(x)]
+        return sel if any(x is it for x in sel) else [it]
+
+    def _too_long(self, path) -> bool:
+        """Trop long à lisser à chaque mouvement : le clic seul (le calcul suit le tracé / la longueur de lissage)."""
+        if path.segment_count() > self.PREVIEW_MAX:
+            return True
+        try:
+            total = sum(c.length() for c in path.contours)
+        except Exception:                                # noqa: BLE001
+            return True
+        return total / max(float(self.spec['length']), 1e-3) > self.SPANS_MAX
+
+    def _look(self) -> None:
+        from ..core import smoothcurve as SC
+        it = self.hover[1] if self.hover is not None else None
+        shapes = [it] if self._targets(it) else []       # la forme survolée seule (la sélection : au clic)
+        key = (tuple(id(x) for x in shapes), tuple(id(x.path) for x in shapes), tuple(sorted(self.spec.items())))
+        if key != self._key:
+            self._key = key
+            if any(self._too_long(x.path) for x in shapes):
+                self.shown = []
+            else:
+                s = self.spec
+                try:
+                    self.shown = [SC.smooth(x.path, s['length'], s['sharpness'], s['tolerance']) for x in shapes]
+                except Exception:                        # noqa: BLE001 — un tracé dégénéré : rien à montrer
+                    self.shown = []
+        self.c.overlay_update()
+
+    def set_spec(self, spec: dict) -> None:
+        self.spec.update(spec)
+        self._say()
+        self._look()
+
+    def move(self, sp, dp, ev):
+        self.hover = (sp, self.c.pick(sp))
+        self._look()
+
+    def press(self, sp, dp, ev):
+        from ..i18n import tr
+        it = self.c.pick(sp)
+        items = self._targets(it)
+        if not items:
+            self.c.measured.emit(tr('Seules les formes se lissent (un groupe : dissociez-le ; un texte : convertissez-le '
+                                    'en courbes)') if it is not None else tr('Aucune forme ici'))
+            return
+        try:
+            n = self.apply(items, dict(self.spec)) if self.apply is not None else 0
+        except Exception as ex:                          # noqa: BLE001 — un tracé dégénéré : dit, l'outil reste
+            self.c.measured.emit(tr('Lissage impossible : {0}').format(ex))
+            n = None
+        if n is not None:
+            self.c.measured.emit(tr('{0} forme(s) lissée(s)').format(n) if n else tr('Rien à lisser ici'))
+        self._key = None
+        self.hover = (sp, self.c.pick(sp))
+        self._look()
+
+    def wants_key(self, ev) -> bool:
+        return ev.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+
+    def key(self, ev):
+        k = ev.key()
+        if k in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            step = -1 if k == Qt.Key.Key_Backtab else 1
+            cur = int(round(min(4.0, max(1.0, float(self.spec['sharpness'])))))
+            self.spec['sharpness'] = float((cur - 1 + step) % 4 + 1)
+        elif k in (Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight):
+            f = 1 / 1.25 if k == Qt.Key.Key_BracketLeft else 1.25
+            self.spec['length'] = max(0.01, round(float(self.spec['length']) * f, 3))
+        else:
+            return False
+        if self.changed is not None:
+            self.changed(dict(self.spec))
+        self._say()
+        if self.hover is not None:                       # l'objet sous la souris, repris (Ctrl+Z a pu le retirer)
+            self.hover = (self.hover[0], self.c.pick(self.hover[0]))
+        self._look()
+        return True
+
+    def paint(self, p):
+        for path in self.shown:
+            self.preview(p, path, '#00a050')
+
+    def cancel(self):
+        self.hover = None
+        self.shown = []
+        self._key = None
+
+
 class KnifeStampTool(Tool):
     """Couteau à la souris (demande du 18/11 soir : « la 1 ere forme sélectionnée devient le pointeur souri et le
     reste tant que click gauche puis click droit retire l'outil ») : le tracé de la forme choisie suit la souris ;
