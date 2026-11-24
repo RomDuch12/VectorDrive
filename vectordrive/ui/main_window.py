@@ -701,10 +701,13 @@ class MainWindow(QMainWindow):
         self.canvas.knife_marks_fn = self.knife_marks
         self.canvas.ask_step_fn = lambda horizontal, start=None: self.ask_arrow_step(horizontal, start=start)
         try:
-            self.canvas.fillet_radius = float(self.settings.value('coins/fillet', 2.0))
+            self.canvas.fillet_radius = abs(float(self.settings.value('coins/fillet', 2.0)))   # congé creusé : son rayon
             self.canvas.chamfer_size = float(self.settings.value('coins/chamfer', 2.0))
         except (TypeError, ValueError):
             pass
+        self.canvas.eraser_radius = max(0.05, self._cad_value('gomme', 'radius', 1.0))     # retenus (round 1145)
+        self.canvas.breakline_size = max(0.0, self._cad_value('ligne_coupure', 'size', 0.0))
+        self.canvas.breakline_ext = max(0.0, self._cad_value('ligne_coupure', 'extension', 0.0))
         self.canvas.rightClicked.connect(self._on_right_click)
         self.apply_mouse_settings()
         self.canvas.point_dialog_fn = lambda hit: self.point_dialog(hit)
@@ -1332,6 +1335,7 @@ class MainWindow(QMainWindow):
         # CAD
         self.tool_group = QActionGroup(self)
         for key, text, ic in (('select', tr('Sélection'), 'select'), ('rect', tr('Rectangle'), 'rect'),
+                              ('circle', tr('Cercle'), 'circle_center'),
                               ('ellipse', tr('Ellipse'), 'ellipse'), ('line', tr('Trait'), 'line'),
                               ('polyline', tr('Polyligne'), 'polyline'), ('polycurve', tr('Polycourbe'), 'polyline'),
                               ('bezier', tr('Bézier'), 'bezier'),
@@ -1571,6 +1575,8 @@ class MainWindow(QMainWindow):
                          ('star', tr('Étoile : glisser du centre vers une pointe (Ctrl : pointe en haut) ; Maj : deux points '
                                      'opposés sur le cercle')),
                          ('rect', tr('Rectangle : glisser d\'un coin à l\'autre ; Ctrl : carré ; Maj : à partir du centre')),
+                         ('circle', tr('Cercle : un clic au centre, glisser jusqu\'au rayon ; F2 : en chiffres ; '
+                                       'clic droit : le diamètre proposé par F2')),
                          ('ellipse', tr('Ellipse : glisser d\'un coin à l\'autre de sa boîte ; Ctrl : cercle ; Maj : centrée '
                                         'sur le premier point')),
                          ('rect3', tr('Rectangle 3 points : deux clics pour un côté (il donne l\'inclinaison), '
@@ -2740,7 +2746,7 @@ class MainWindow(QMainWindow):
         t.setProperty('vd_cad', '2d')
         cad2d = t
         g = t.group(tr('Création'))
-        for k in ('tool_select', 'tool_rect', 'tool_ellipse', 'tool_rect3', 'tool_line', 'tool_polyline', 'tool_polycurve',
+        for k in ('tool_select', 'tool_rect', 'tool_circle', 'tool_ellipse', 'tool_rect3', 'tool_line', 'tool_polyline', 'tool_polycurve',
                   'tool_bezier', 'tool_spline', 'tool_dline', 'tool_breakline', 'tool_polygon', 'tool_polygon_edge',
                   'tool_star',
                   'tool_spiral', 'tool_arc', 'tool_knife_line',
@@ -2749,7 +2755,7 @@ class MainWindow(QMainWindow):
                   'tool_marker', 'tool_shaper', 'tool_blob', 'form_slot', 'form_ring', 'form_sector', 'form_gear',
                   'tool_sym_ox', 'tool_sym_oy', 'tool_sym_both', 'tool_sym_origin', 'sym_draw',
                   'sym_cyclic', 'arrow', 'tangents', 'note', 'point_xy'):
-            g.add(A[k], big=k in ('tool_select', 'tool_rect', 'tool_ellipse'))
+            g.add(A[k], big=k in ('tool_select', 'tool_rect', 'tool_circle', 'tool_ellipse'))
         from PySide6.QtWidgets import QDoubleSpinBox, QSpinBox
         self.sides = QSpinBox()
         self.sides.setRange(3, 64)
@@ -6202,7 +6208,7 @@ class MainWindow(QMainWindow):
             n = self.import_settings(path)
             self.statusBar().showMessage(tr('{0} réglage(s) importé(s)').format(n), 6000)
 
-    DRAG_TOOLS = ('rect', 'ellipse', 'line')
+    DRAG_TOOLS = ('rect', 'ellipse', 'line', 'circle')
 
     def point_by_coordinates(self, values: dict | None = None) -> bool:
         """Point(s) de l'outil de dessin par coordonnées : deux points pour un
@@ -6339,7 +6345,11 @@ class MainWindow(QMainWindow):
         if not on and getattr(self, '_docks_before_cam', None) is not None:
             state, self._docks_before_cam = self._docks_before_cam, None
             if self.dock_paths.isVisible() and not self.dock_paths.isFloating():
-                self.restoreState(state)                 # la disposition d'avant revient (Dimensions compris)
+                cols = getattr(self, 'columns', None)    # la disposition d'avant revient (Dimensions compris),
+                if cols is not None:                     # telle qu'elle était : pas d'onglet refait (round 1143)
+                    cols._quiet(lambda: self.restoreState(state))
+                else:
+                    self.restoreState(state)
         self.dock_cam.setVisible(on)
         self.dock_paths.setVisible(on)
         if self.isVisible() and not getattr(self, '_closing', False):
@@ -6641,7 +6651,8 @@ class MainWindow(QMainWindow):
                 part.show()
                 if part is p:
                     d.hide()
-                self.stage.setCurrentWidget(page)
+                    d._vd_was_hidden = False             # caché le temps du programme au centre : pas fermé, il
+                self.stage.setCurrentWidget(page)        # revient à sa place (pas d'onglet refait, round 1143)
             else:
                 back = getattr(self, '_stage_before', 0)     # le dessin, ou la pièce en 3D : ce qui était montré
                 page = self._program_page
@@ -11274,7 +11285,7 @@ class MainWindow(QMainWindow):
     # --- formes paramétrées (core.forms) ------------------------------------------------
     def _form_kind_of_tool(self) -> str | None:
         return {'rect': 'rect', 'ellipse': 'ellipse', 'polygon': 'polygon', 'star': 'star',
-                'spiral': 'spiral'}.get(self.canvas.tool)
+                'spiral': 'spiral', 'circle': 'circle'}.get(self.canvas.tool)
 
     def _selected_form(self):
         from ..core import forms
@@ -11580,16 +11591,190 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, ev)
 
     def _tool_settings(self, act):
-        """Les réglages de l'outil d'une commande (formes, Cote, Polaire, Contour) : la fonction qui les ouvre ; None."""
+        """Les réglages de l'outil d'une commande (formes, Cote, Polaire, Contour ; demande du 23/11 : Poinçonner,
+        Emporte-pièce, cotes d'arc et à ressaut, Rectangle 3 points, Polygone par côté, Ligne double, Italique,
+        Souligné, Texte, Ligne d'axe) : la fonction qui les ouvre ; None."""
         from .form_dialog import TOOL_KINDS
         key = next((k for k in TOOL_KINDS if self.A.get(k) is act), None)
         if key is not None:
             return lambda _=False, kind=TOOL_KINDS[key]: self.tool_form_dialog(kind)
-        for k, fn in (('tool_dim', self.dim_options), ('snap_polar', self.polar_step_dialog),
-                      ('tool_boundary', self.boundary_gap_dialog)):
+        for k, fn in self._settings_of().items():
             if self.A.get(k) is act:
                 return lambda _=False, f=fn: f()
         return None
+
+    def _settings_of(self) -> dict:
+        """{commande : la fonction qui ouvre ses réglages} hors des formes (`form_dialog.TOOL_KINDS`)."""
+        return {'tool_dim': self.dim_options, 'tool_dim_arc': self.dim_options, 'tool_dim_jogged': self.dim_options,
+                'snap_polar': self.polar_step_dialog, 'tool_boundary': self.boundary_gap_dialog,
+                'punch': self.punch_settings, 'tool_punchout': self.punch_settings,
+                'tool_rect3': lambda: self.tool_form_dialog('rect'),
+                'tool_polygon_edge': lambda: self.tool_form_dialog('polygon'),
+                'tool_dline': self.dline_settings,
+                'text_italic': self.text_style_defaults, 'text_underline': self.text_style_defaults,
+                'tool_text': lambda: self.options_dialog(page='Dessin'),
+                'tool_center_line': lambda: self.options_dialog(page='Dessin'),
+                'tool_eraser': self.brush_settings, 'tool_blob': self.brush_settings,
+                'tool_fillet2': lambda: self.corner_settings('fillet'),
+                'tool_chamfer2': lambda: self.corner_settings('chamfer'),
+                'tool_breakline': self.breakline_settings, 'tool_tan_circle': self.tan_circle_settings,
+                'node_simplify': self.simplify_settings, 'sym_cyclic': self.cyclic_settings}
+
+    def _cad_value(self, key: str, name: str, default: float) -> float:
+        """Un nombre des réglages retenus `cad/<key>` (ceux de `_ask`) ; `default` s'il manque ou est illisible."""
+        v = self.settings.value(f'cad/{key}', None)
+        try:
+            return float(v.get(name, default)) if isinstance(v, dict) else float(default)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def brush_settings(self, params: dict | None = None):
+        """Clic droit sur Gomme ou Pinceau à aplat : leur rayon (aussi [ et ] pendant l'outil), retenu ; rend les
+        réglages ou None."""
+        r = max(0.05, float(getattr(self.canvas, 'eraser_radius', 1.0) or 1.0))
+        self.settings.setValue('cad/gomme', {'radius': r})                 # celui de [ et ] proposé
+        p = self._ask('gomme', tr('Gomme et pinceau à aplat'), [('radius', float, r, tr('Rayon (mm)'))], params=params)
+        if p is None:
+            return None
+        out = {'radius': max(0.05, abs(float(p['radius'])))}
+        self.settings.setValue('cad/gomme', out)
+        self.canvas.eraser_radius = out['radius']
+        return out
+
+    def corner_settings(self, kind: str, value: float | None = None):
+        """Clic droit sur Raccord ou Chanfrein entre deux traits : le rayon des congés ou la taille des chanfreins,
+        retenus comme par Congés / Chanfreins, sans rien changer au dessin ; rend la valeur ou None."""
+        if value is None:
+            from .dialogs import CornerDialog
+            try:
+                cur = float(self.settings.value(f'coins/{kind}', 2.0))
+            except (TypeError, ValueError):
+                cur = 2.0
+            dlg = CornerDialog(self, kind, cur)
+            if not dlg.exec():
+                return None
+            value = dlg.value()
+        value = float(value)
+        if abs(value) < 1e-9:
+            return None
+        self.settings.setValue(f'coins/{kind}', value)
+        if kind == 'fillet':
+            self.canvas.fillet_radius = abs(value)
+        else:
+            self.canvas.chamfer_size = abs(value)
+        return value
+
+    def breakline_settings(self, params: dict | None = None):
+        """Clic droit sur Ligne de coupure : hauteur du zigzag et débord du trait, retenus ; rend les réglages ou
+        None."""
+        p = self._ask('ligne_coupure', tr('Ligne de coupure'),
+                      [('size', float, self._cad_value('ligne_coupure', 'size', 0.0),
+                        tr('Hauteur du zigzag (mm, 0 = un sixième de la longueur)')),
+                       ('extension', float, self._cad_value('ligne_coupure', 'extension', 0.0),
+                        tr('Débord au-delà des deux clics (mm)'))], params=params)
+        if p is None:
+            return None
+        out = {'size': max(0.0, float(p['size'])), 'extension': max(0.0, float(p['extension']))}
+        self.settings.setValue('cad/ligne_coupure', out)
+        self.canvas.breakline_size, self.canvas.breakline_ext = out['size'], out['extension']
+        return out
+
+    def tan_circle_settings(self, radius: float | None = None):
+        """Clic droit sur Cercle tangent : le rayon proposé à l'outil, sans le prendre ; rend le rayon ou None."""
+        if radius is None:
+            from PySide6.QtWidgets import QInputDialog
+            radius, ok = QInputDialog.getDouble(self, tr('Cercle tangent'),
+                                                tr('Rayon (mm) — 0 : cercle tangent à trois objets'),
+                                                float(self.settings.value('dessin/cercle_tangent', 5.0) or 0.0),
+                                                0.0, 100000.0, 3)
+            if not ok:
+                return None
+        radius = max(0.0, float(radius))
+        self.settings.setValue('dessin/cercle_tangent', radius)
+        self.canvas.tan_circle_radius = radius
+        return radius
+
+    def simplify_settings(self, params: dict | None = None):
+        """Clic droit sur Simplifier : sa précision et l'angle vif (celui d'Approximation aussi), retenus ; rend les
+        réglages ou None."""
+        s = self.settings
+        try:
+            cur = {'precision': float(s.value('simplifier/precision', 0.05)),
+                   'corner': float(s.value('approximation/angle', 35.0))}
+        except (TypeError, ValueError):
+            cur = {'precision': 0.05, 'corner': 35.0}
+        s.setValue('cad/simplifier_reglages', cur)
+        p = self._ask('simplifier_reglages', tr('Simplifier'),
+                      [('precision', float, cur['precision'], tr('Précision (mm)')),
+                       ('corner', float, cur['corner'], tr('Angle vif au-delà de (°)'))], params=params)
+        if p is None:
+            return None
+        out = {'precision': max(1e-4, abs(float(p['precision']))), 'corner': min(180.0, max(0.0, float(p['corner'])))}
+        s.setValue('simplifier/precision', out['precision'])
+        s.setValue('approximation/angle', out['corner'])
+        s.setValue('cad/simplifier', {'precision': out['precision']})     # proposée aussi par Ctrl+Simplifier
+        return out
+
+    def cyclic_settings(self, copies: int | None = None):
+        """Clic droit sur Symétrie cyclique : le nombre de copies (celui du ruban), sans l'allumer ; rend le nombre
+        ou None."""
+        if copies is None:
+            from PySide6.QtWidgets import QInputDialog
+            copies, ok = QInputDialog.getInt(self, tr('Symétrie cyclique'),
+                                             tr('Symétrie cyclique : nombre de copies autour du centre'),
+                                             self.cyclic_n.value(), self.cyclic_n.minimum(), self.cyclic_n.maximum())
+            if not ok:
+                return None
+        self.cyclic_n.setValue(int(copies))                                # retenu par le compteur du ruban
+        return self.cyclic_n.value()
+
+    def punch_settings(self, params: dict | None = None):
+        """Clic droit sur Poinçonner ou Emporte-pièce : les réglages de l'emporte-pièce, sans prendre l'outil (celui en
+        cours les suit)."""
+        return self.punchout_options(params, take=False)
+
+    def dline_settings(self, cur: dict | None = None):
+        """Clic droit sur Ligne double : ses réglages (largeurs, coins, bouts), retenus pour l'outil ; rend les réglages
+        ou None."""
+        import json
+        if cur is None:
+            cur = getattr(self.canvas, 'dline', None)
+            if not isinstance(cur, dict) or not cur:
+                try:
+                    cur = json.loads(str(self.settings.value('ligne_double/reglages', '') or ''))
+                except ValueError:
+                    cur = {}
+            o = self.dline_dialog(cur if isinstance(cur, dict) else {})
+        else:
+            o = cur
+        if not isinstance(o, dict) or not o:
+            return None
+        self.settings.setValue('ligne_double/reglages', json.dumps(o))
+        self.canvas.dline = o
+        return o
+
+    def text_style_defaults(self, params: dict | None = None):
+        """Clic droit sur Italique ou Souligné : ce qu'ils posent (angle de l'italique, position et épaisseur du
+        souligné), sans texte sélectionné ; rend les réglages ou None."""
+        from ..core import text as TX
+        last = self.settings.value('cad/text_style', None)
+        last = dict(last) if isinstance(last, dict) else {}
+        italic = self._text_style_default('italic')
+        under = self._text_style_default('underline')
+        pos, thick = (under['pos'], under['thick']) if isinstance(under, dict) else (TX.UNDERLINE_POS,
+                                                                                      TX.UNDERLINE_THICK)
+        spec = [('italic', float, float(italic), tr('Italique : angle (°)')),
+                ('pos', float, float(pos), tr('Souligné : distance sous la ligne de base (% de la hauteur)')),
+                ('thick', float, float(thick), tr('Souligné : épaisseur (% de la hauteur)'))]
+        if params is None:
+            self.settings.setValue('cad/text_style', {**last, **{n: d for n, _t, d, _l in spec}})
+        p = self._ask('text_style', tr('Italique et souligné : ce que posent les boutons'), spec, params=params)
+        if p is None:
+            return None
+        out = {'italic': max(0.5, min(TX.ITALIC_MAX, float(p['italic']))),
+               'pos': max(-300.0, min(300.0, float(p['pos']))), 'thick': max(0.5, min(100.0, float(p['thick'])))}
+        self.settings.setValue('cad/text_style', {**last, **out})
+        return out
 
     def _digit_row(self, ev) -> bool:
         """Ctrl + une touche de la rangée des chiffres, quelle que soit la
@@ -13482,7 +13667,8 @@ class MainWindow(QMainWindow):
     #: palettes de TypeEdit : action → (titre, commandes de VectorDrive qui y répondent)
     PALETTES = {
         'palette_shapes': ('Formes géométriques', (
-            'tool_rect', 'tool_ellipse', 'tool_polygon', 'tool_star', 'tool_spiral', 'tool_line', 'tool_polyline',
+            'tool_rect', 'tool_circle', 'tool_ellipse', 'tool_polygon', 'tool_star', 'tool_spiral', 'tool_line',
+            'tool_polyline',
             'tool_polycurve', 'tool_bezier', 'tool_arc', 'tool_circle3', 'tool_tan_circle', 'tool_marker', 'tool_axis_h', 'tool_axis_v',
             'tangent_arc')),
         'palette_effects': ('Effets spéciaux', (
@@ -17444,7 +17630,8 @@ class MainWindow(QMainWindow):
             f'{worst:.3f}'.replace('.', ','), sum(a.segment_count() for a in after)), 10000)
         return worst
 
-    PUNCHOUT_DEFAULT = {'kind': 'segment', 'length': 5.0, 'width': 10.0, 'height': 5.0, 'diameter': 5.0, 'angle': 0.0}
+    PUNCHOUT_DEFAULT = {'kind': 'segment', 'length': 5.0, 'width': 10.0, 'height': 5.0, 'diameter': 5.0, 'angle': 0.0,
+                        'open_closed': False}
 
     def punchout_spec(self) -> dict:
         """Les réglages retenus de l'emporte-pièce (forme et tailles)."""
@@ -17455,6 +17642,8 @@ class MainWindow(QMainWindow):
             for k, v in last.items():
                 if k == 'kind' and v in PT.KINDS:
                     out[k] = v
+                elif k == 'open_closed':                 # (un .ini rend 'true' / 'false')
+                    out[k] = v if isinstance(v, bool) else str(v).strip().lower() in ('1', 'true', 'yes', 'oui')
                 elif k in out and k != 'kind':
                     try:
                         out[k] = float(v)
@@ -17613,8 +17802,9 @@ class MainWindow(QMainWindow):
         self._on_doc_changed()
         return n
 
-    def punchout_options(self, params: dict | None = None):
-        """Les réglages de l'emporte-pièce ; ils valent aussi pour l'outil en cours, et le prennent en main."""
+    def punchout_options(self, params: dict | None = None, take: bool = True):
+        """Les réglages de l'emporte-pièce ; ils valent aussi pour l'outil en cours, et le prennent en main (`take`
+        faux : clic droit sur Poinçonner ou Emporte-pièce, l'outil n'est pas pris)."""
         cur = self.punchout_spec()
         kinds = [('segment', tr('Segment : une longueur du contour')), ('rectangle', tr('Rectangle')),
                  ('cercle', tr('Cercle'))]
@@ -17627,7 +17817,9 @@ class MainWindow(QMainWindow):
                 ('width', float, cur['width'], tr('Rectangle : largeur (mm)')),
                 ('height', float, cur['height'], tr('Rectangle : hauteur (mm)')),
                 ('angle', float, cur['angle'], tr('Rectangle : angle (°)')),
-                ('diameter', float, cur['diameter'], tr('Cercle : diamètre (mm)'))]
+                ('diameter', float, cur['diameter'], tr('Cercle : diamètre (mm)')),
+                ('open_closed', bool, bool(cur['open_closed']),
+                 tr('Sur un contour fermé : l’ouvrir (sinon il reste fermé, la forme soustraite)'))]
         self.settings.setValue('cad/emporte_piece', cur)         # la fenêtre part des réglages en cours
         p = self._ask('emporte_piece', tr('Emporte-pièce'), spec, choices={'kind': kinds}, params=params)
         if p is None:
@@ -17638,7 +17830,7 @@ class MainWindow(QMainWindow):
             got['stamp'] = self.last_stamp()
         if self.canvas.tool == 'punchout':
             self.canvas.tool_obj.set_spec(got)
-        else:
+        elif take:
             self._punchout_plain = True                  # la forme choisie ici, pas la sélection
             try:
                 self.set_tool('punchout')

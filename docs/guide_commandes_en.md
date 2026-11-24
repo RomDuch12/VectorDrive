@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 0.999.0
+# Command guide — VectorDrive 1.3.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -212,6 +212,7 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 |---|---|---|
 | Selection | Esc |  |
 | Rectangle |  | Rectangle: drag from one corner to the other; Ctrl: square; Shift: from the centre |
+| Circle |  | Circle: click the centre, drag to the radius; F2: in figures; right-click: the diameter F2 suggests |
 | Ellipse |  | Ellipse: drag from one corner of its box to the other; Ctrl: circle; Shift: centred on the first point |
 | Rectangle 3 points |  | Rectangle 3 points: two clicks for one side (it gives the tilt), a third for the other side; corners of the default rectangle |
 | Line |  |  |

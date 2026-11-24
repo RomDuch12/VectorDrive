@@ -9,7 +9,8 @@ Trois formes :
   (son côté de fermeture compte comme les autres). La coupe est exacte : les courbes restent des courbes ;
 - **rectangle** et **cercle** : tout ce que la forme couvre, posée sur le point cliqué, est retiré — les traits sont
   coupés exactement à son bord ; les surfaces pleines sont évidées par une opération booléenne (leurs courbes sont
-  alors retracées).
+  alors retracées). Réglage « Sur un contour fermé : l'ouvrir » : un contour fermé non rempli est coupé comme un
+  trait, ce qui reste est ouvert (sinon, la soustraction le garde fermé).
 
 Un reste plus court que `TINY` n'est pas gardé."""
 from __future__ import annotations
@@ -210,14 +211,17 @@ def _boxes_apart(a: Path, b: Path) -> bool:
     return not ab or not bb or ab[2] < bb[0] or ab[0] > bb[2] or ab[3] < bb[1] or ab[1] > bb[3]
 
 
-def punch_region(path: Path, shape: Path, filled: bool) -> Path | None:
+def punch_region(path: Path, shape: Path, filled: bool, open_closed: bool = False) -> Path | None:
     """Le tracé moins ce que couvre la forme ; None si rien ne change (le tracé n'est alors pas réécrit). Traits
     ouverts : coupés au bord, ils restent ouverts ; contours fermés non remplis : la soustraction, ils restent fermés
     (demande du 18/11 soir : « conserve respectivement des contours ouverts et fermés ») — seulement si la forme
-    touche leur tracé ; surfaces : évidées, seulement si la forme en couvre une partie."""
+    touche leur tracé ; `open_closed` (réglage, demande du 23/11) : ils sont coupés comme des traits et restent
+    ouverts ; surfaces : évidées, seulement si la forme en couvre une partie."""
     from . import pathops, punch
     if _boxes_apart(path, shape):
         return None
+    if not filled and open_closed:                       # tout coupé au bord de la forme : les fermés s'ouvrent
+        return punch.cut_strokes(path, shape, False)
     if not filled:
         out, changed = [], False
         opened = [c for c in path.contours if not c.closed]

@@ -4,7 +4,9 @@
   (ou ancrer) et « fermer ». Un clic droit sur la barre, ou sur l'onglet du panneau quand plusieurs partagent une
   colonne, donne les mêmes fonctions, plus « Colonne de gauche » / « Colonne de droite ».
 - Un panneau envoyé dans une colonne y prend son onglet, dans le groupe d'onglets de la colonne — jamais avec un
-  panneau rangé à part ; sa colonne est retenue. Le groupe d'onglets est toujours en bas de la colonne : les panneaux
+  panneau rangé à part ; sa colonne est retenue. Un panneau masqué, montré par son bouton, sa commande ou le menu de Qt,
+  y prend aussi son onglet : il n'est jamais empilé avec un autre, sauf « Au-dessus de » / « Au-dessous de » choisi
+  (demande du 23/11). Le groupe d'onglets est toujours en bas de la colonne : les panneaux
   rangés hors des onglets s'empilent au-dessus de lui (demande du 19/11).
 - « En onglet avec › » un autre panneau de sa colonne (Dimensions (F2) et Calques, par exemple), « Sortir des
   onglets » : deux panneaux partagent un onglet, ou non ; retenu pour les lancements suivants. D'office, Dimensions
@@ -175,6 +177,7 @@ class Columns(QObject):
         # coin bas droit le redimensionne
         dock._vd_grip = QSizeGrip(dock)
         dock._vd_grip.setVisible(False)
+        dock._vd_was_hidden = dock.isHidden()            # masqué : montré plus tard, il prendra son onglet
         dock.installEventFilter(self)
         dock.visibilityChanged.connect(lambda _v: self.sync())
         dock.dockLocationChanged.connect(lambda _a, d=dock: self._located(d))
@@ -726,6 +729,30 @@ class Columns(QObject):
         except RuntimeError:
             return None
 
+    def _join_group(self, dock) -> bool:
+        """Un panneau masqué vient d'être montré hors de nos fonctions (son bouton, sa commande, le menu de Qt) : son
+        onglet dans le groupe d'onglets de sa colonne, comme par l'œil de la fenêtre de la colonne — jamais empilé avec
+        un autre panneau (demande du 23/11). Laissé où il est : détaché, rangé à part (« Au-dessus de »,
+        « Au-dessous de », sorti des onglets, Dimensions au-dessus de Calques), déjà en onglet, ou seul groupe de sa
+        colonne ; déjà en onglet, il est mis devant. Rend vrai s'il a été mis en onglet."""
+        try:
+            if self._busy or self._settling or dock.isHidden() or dock.isFloating() or not self.win.isVisible():
+                return False
+        except RuntimeError:                             # panneau ou fenêtre détruits entre-temps
+            return False
+        side = self.side(dock)
+        if side is None or dock is getattr(self.win, 'dock_program_text', None) or dock.objectName() in self.placed():
+            return False
+        if self.win.tabifiedDockWidgets(dock):           # déjà dans des onglets : mis devant, puisque montré
+            self._quiet(dock.raise_)
+            return False
+        group = self.main_group(side, without=dock)
+        if not group:
+            return False
+        self._quiet(lambda: (self.win.tabifyDockWidget(group[0], dock), dock.raise_()))
+        self.settle(side)                                # le groupe d'onglets toujours en bas
+        return dock in self.win.tabifiedDockWidgets(group[0])
+
     def show_in(self, dock, side: str, on: bool) -> None:
         """L'œil de la fenêtre d'une colonne : `dock` montré dans la colonne `side` (la FAO ouverte pour ses
         panneaux), ou retiré (fermé)."""
@@ -1007,6 +1034,16 @@ class Columns(QObject):
         if isinstance(obj, QDockWidget):
             if t in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._place_grip(obj)                    # la poignée reste dans le coin
+            if t == QEvent.Type.HideToParent and obj.isHidden() and not obj.isWindow():
+                # fermé ancré, fenêtre montrée ou non (pas la fenêtre réduite ; pas détaché : Qt masque aussi un
+                # panneau qu'on repose à la souris, ou qu'on ancre de nouveau, pendant qu'il est encore une fenêtre)
+                obj._vd_was_hidden = True
+            elif t == QEvent.Type.Show and getattr(obj, '_vd_was_hidden', False):
+                obj._vd_was_hidden = False
+                if not (self._busy or self._settling):   # montré par nos fonctions : déjà à sa place
+                    QTimer.singleShot(0, lambda d=obj: self._join_group(d))
+            elif t == QEvent.Type.ShowToParent and not obj.isVisible():
+                obj._vd_was_hidden = False               # montré fenêtre cachée (disposition du lancement) : laissé
             return False
         if t == QEvent.Type.Paint and isinstance(obj, QTabBar) and not self._dress_due \
                 and any(obj.tabIcon(i).isNull() for i in range(obj.count())) and self.tab_mode() == 'court':

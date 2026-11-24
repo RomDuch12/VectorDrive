@@ -78,7 +78,8 @@ LABELS = {
     'raster_turn': 'Passe croisée, tournée de (°, 0 : aucune)', 'spiral_outward': 'De l’intérieur vers l’extérieur',
     'parallel_slices': 'Tranches parallèles au profil (0 : par cotes de Z)',
     'follow_profile': 'Suivre le profil 3D (sinon l’outil remonte au-dessus de ce qui est usiné)',
-    'vcarve_max_steps': 'Nombre de passes limité (depuis le bord, 0 : toutes)',
+    'vcarve_max_steps': 'Nombre de passes limité (depuis le bord, ou autour des logos si pas de passe sur le cadre ; '
+                        '0 : toutes)',
     'vcarve_step': 'Passe en Z de la gravure (mm, 0 : en une fois)',
     'vcarve_walls': 'Passes sur les flancs avant le fond (sans : comme TypeEdit)',
     'vcarve_finish': 'Passe de finition : la surépaisseur XY usinée à l’avance de finition',
@@ -530,6 +531,7 @@ KIND_FIELDS = {
                 'corner_round', 'offset_add'},
     'poche': {'pass_order', 'link_passes', 'link_previous', 'rest_previous',
               'climb', 'stock', 'stock_z', 'finish', 'finish_skip_frame', 'finish_shut_levels', 'contour_ref',
+              'vcarve_max_steps',
               'pocket_mode',
               'pocket_spiral',
               'ramp_helix',

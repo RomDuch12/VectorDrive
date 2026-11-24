@@ -43,6 +43,8 @@ _DRAWING_ORDER = _cv.ContextVar('vectordrive_cam_drawing_order', default=False)
 _RAMP_LIMIT = _cv.ContextVar('vectordrive_cam_ramp_limit', default=0.0)    # distance maxi de la rampe (TE, page 653)
 #: parcours des opérations d'avant, pour une opération « liée au parcours précédent » (sinon None)
 _PREVIOUS = _cv.ContextVar('vectordrive_cam_previous', default=None)
+#: poche au nombre de passes limité : sa région d'origine, d'où ses cadres sont tirés (`keep_exteriors`) — pas de la bande
+_FRAME_SRC = _cv.ContextVar('vectordrive_cam_frame_src', default=None)
 
 
 def previous_toolpaths() -> list:
@@ -506,8 +508,46 @@ def keep_exteriors(op, reg):
     cadres à ne pas repasser (« pas de passe sur le cadre », gravure en relief)."""
     if not getattr(op, 'finish_skip_frame', False):
         return True
-    frames = frames_of(reg)
+    src = _FRAME_SRC.get()                               # poche limitée : les cadres de sa région d'origine
+    frames = frames_of(reg if src is None else src)
     return True if frames is None else frames
+
+
+def limit_band(op, reg, r: float, step: float, qs: int, tp=None, what: str = 'poche', record: bool = False):
+    """« Nombre de passes limité » (`vcarve_max_steps`, TypeEdit : Nombre limité de passes) d'un évidement : la région
+    réduite à la bande de ses n premières passes depuis le bord — depuis les formes du cadre seulement (les logos) si le
+    cadre n'est pas repassé (« pas de passe sur le cadre », gravure en relief), comme la gravure 2,5D (demande du 23/11).
+    Les passes décalées depuis le bord de la bande tombent sur celles des formes : n tours pour n pair, n + 1 pour n
+    impair (un pas de plus : jamais de crête au milieu), au pas `step` (`r` : rayon de coupe). `record` (la poche
+    elle-même, sous `_pocket` seulement) : la région d'origine retenue pour les cadres de la finition (`_FRAME_SRC`,
+    remis par `_pocket`). Rend la région, telle quelle si rien n'est limité."""
+    n = int(getattr(op, 'vcarve_max_steps', 0) or 0)
+    if n <= 0 or reg.is_empty:
+        return reg
+    from shapely.geometry import MultiLineString, MultiPolygon
+    frames = frames_of(reg) if getattr(op, 'finish_skip_frame', False) else None
+    rings = []
+    for poly in getattr(reg, 'geoms', [reg]):
+        if poly.is_empty or poly.geom_type != 'Polygon':
+            continue
+        if frames is None or not frames.covers(poly.representative_point()):
+            rings.append(poly.exterior)                  # le cadre lui-même n'est pas un bord : sauté
+        rings.extend(poly.interiors)
+    if not rings:
+        return reg
+    laps = n + (n % 2)                                   # tours depuis les deux bords de la bande : un nombre pair
+    stock = max(0.0, float(getattr(op, 'stock', 0.0) or 0.0))
+    width = 2 * (r + stock) + (laps - 1) * step + 1e-4
+    edges = MultiLineString([list(x.coords) for x in rings])
+    band = reg.intersection(edges.buffer(width, quad_segs=qs)).buffer(0)
+    polys = [p for p in getattr(band, 'geoms', [band]) if p.geom_type == 'Polygon' and p.area > 1e-4]   # sans éclats
+    if not polys or sum(p.area for p in polys) >= reg.area * (1 - 1e-9) - 1e-9:
+        return reg                                       # rien de retiré : la région telle quelle
+    if record:
+        _FRAME_SRC.set(reg)
+    if tp is not None:
+        tp.warnings.append(f'{what} : {n} passe(s) depuis le bord (nombre de passes limité)')
+    return polys[0] if len(polys) == 1 else MultiPolygon(polys)
 
 
 def rings_of(geom, region_on_right: bool, *, exteriors=True) -> list[list]:
@@ -3385,6 +3425,8 @@ def cleared_by(doc, op, tool, tol: float):
         return None
     R = cut_radius(op, tool)
     qs = _quad_segs(max(R, tol), tol)
+    if getattr(op, 'kind', 'poche') == 'poche':           # nombre de passes limité : la bande seulement est vidée
+        reg = limit_band(op, reg, R, pocket_step(op, tool, R), qs)
     stock = 0.0 if (op.finish and op.stock > 0) else max(0.0, float(op.stock or 0.0))
     centers = erode(reg, R + stock, qs)
     fr = 0.0 if tool.kind == 'boule' else floor_radius(op, tool)
@@ -3697,7 +3739,25 @@ def _pocket_rest(doc, setup, op, tool, tp, em, here, reg, r, step, qs, tol) -> b
     return True
 
 
+def pocket_step(op, tool, r: float) -> float:
+    """Distance entre les passes d'une poche (`r` : rayon de coupe)."""
+    width = 2 * r if tool.kind in ('conique', 'boule') and r > 0 else tool.diameter   # largeur qui coupe vraiment
+    step = max(0.05, (getattr(op, 'stepover_mm', 0.0) or 0.0) or (tool.stepover or 0.4) * width)
+    if tool.kind == 'conique' and 0 < tool.angle < 180 and not getattr(op, 'stepover_mm', 0.0):
+        # seule la pointe touche le fond : pas assez serré pour des crêtes d'au plus 0,02 mm
+        step = min(step, max(0.01, 2 * (tool.tip / 2 + 0.02 * math.tan(math.radians(tool.angle) / 2))))
+    return step
+
+
 def _pocket(doc, setup, op, tool, tp, em, here) -> None:
+    token = _FRAME_SRC.set(None)                         # la région d'origine d'une poche limitée, le temps du calcul
+    try:
+        _pocket_body(doc, setup, op, tool, tp, em, here)
+    finally:
+        _FRAME_SRC.reset(token)
+
+
+def _pocket_body(doc, setup, op, tool, tp, em, here) -> None:
     geoms = [g for it in source_items(doc, op) if (g := item_geometry(it))]
     tol = setup.tolerance
     reg = region(geoms, tol)
@@ -3705,12 +3765,11 @@ def _pocket(doc, setup, op, tool, tp, em, here) -> None:
         tp.warnings.append('poche : aucun contour fermé')
         return
     r = cut_radius(op, tool)
-    width = 2 * r if tool.kind in ('conique', 'boule') and r > 0 else tool.diameter   # largeur qui coupe vraiment
-    step = max(0.05, (getattr(op, 'stepover_mm', 0.0) or 0.0) or (tool.stepover or 0.4) * width)
-    if tool.kind == 'conique' and 0 < tool.angle < 180 and not getattr(op, 'stepover_mm', 0.0):
-        # seule la pointe touche le fond : pas assez serré pour des crêtes d'au plus 0,02 mm
-        step = min(step, max(0.01, 2 * (tool.tip / 2 + 0.02 * math.tan(math.radians(tool.angle) / 2))))
+    step = pocket_step(op, tool, r)
     qs = _quad_segs(max(r, tol), tol)
+    full = reg
+    reg = limit_band(op, reg, r, step, qs, tp, record=True)   # nombre de passes limité : autour des logos (demande du 23/11)
+    limited = reg is not full
     if getattr(op, 'rest_previous', False) and _pocket_rest(doc, setup, op, tool, tp, em, here, reg, r, step, qs, tol):
         return
     from ..core import workers
@@ -3808,8 +3867,8 @@ def _pocket(doc, setup, op, tool, tp, em, here) -> None:
             with progress.span(gi / len(groups), (gi + 1) / len(groups)):
                 mill_rings(em, order, zs, allowed, ramp_angle_of(op) if op.ramp else None, inside=inside,
                            helix=float(getattr(op, 'ramp_helix', 0.0) or 0.0), only=zi, link_angle=link)
-    tp.cycles = shape_cycles(doc, op, 'poche', abs(op.depth), op.step_down or tool.step_down,
-                             int(round((tool.stepover or 0.4) * 100)))
+    tp.cycles = [] if limited else shape_cycles(doc, op, 'poche', abs(op.depth), op.step_down or tool.step_down,
+                                                int(round((tool.stepover or 0.4) * 100)))
     if op.finish and op.stock > 0:
         finish_pass(em, op, tool, tp, reg, region_right, zs, qs, ramp=True)
 

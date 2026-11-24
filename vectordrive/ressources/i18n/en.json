@@ -8162,5 +8162,12 @@
  "Dans le groupe « {0} »": "In the group “{0}”",
  "Taille et place d’origine": "Original size and place",
  "Tout le ruban d’origine…": "Whole ribbon as originally…",
- "Réglages de « {0} »…": "“{0}” settings…"
+ "Réglages de « {0} »…": "“{0}” settings…",
+ "Cercle : un clic au centre, glisser jusqu'au rayon ; F2 : en chiffres ; clic droit : le diamètre proposé par F2": "Circle: click the centre, drag to the radius; F2: in figures; right-click: the diameter F2 suggests",
+ "Italique : angle (°)": "Italic: angle (°)",
+ "Italique et souligné : ce que posent les boutons": "Italic and underline: what the buttons apply",
+ "Sur un contour fermé : l’ouvrir (sinon il reste fermé, la forme soustraite)": "On a closed contour: open it (otherwise it stays closed, the shape subtracted)",
+ "Gomme et pinceau à aplat": "Eraser and fill brush",
+ "Hauteur du zigzag (mm, 0 = un sixième de la longueur)": "Zigzag height (mm, 0 = a sixth of the length)",
+ "Débord au-delà des deux clics (mm)": "Overshoot beyond the two clicks (mm)"
 }

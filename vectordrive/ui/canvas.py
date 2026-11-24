@@ -2091,7 +2091,8 @@ class Canvas(QWidget):
             shape, _pc = self.punch_preview(dp, spec)
             if shape is not None:
                 for s in self._punch_targets(among, skip):
-                    new = PT.punch_region(s.path, shape, bool(getattr(s, 'filled', False)))
+                    new = PT.punch_region(s.path, shape, bool(getattr(s, 'filled', False)),
+                                          open_closed=bool(spec.get('open_closed', False)))
                     if new is not None:
                         changes.append((s, new))
         if not changes:
@@ -2853,7 +2854,7 @@ class Canvas(QWidget):
             spec = self._draft_spec(d)
             path = self._draft_path(d) if spec is None else spec.build()
             if spec is not None:
-                self.commit_form(spec)               # rectangle, ellipse : paramètres gardés
+                self.commit_form(spec)               # rectangle, cercle, ellipse : paramètres gardés
             elif path:
                 self.commit_shape(path)              # symétries, annulation, sélection
             else:
@@ -2925,12 +2926,17 @@ class Canvas(QWidget):
         return forms.TYPES[kind]()
 
     def _draft_spec(self, d):
-        """Rectangle ou ellipse tracé, en forme paramétrée ; None sinon."""
-        if d['tool'] not in ('rect', 'ellipse'):
+        """Rectangle, cercle ou ellipse tracé, en forme paramétrée ; None sinon."""
+        if d['tool'] not in ('rect', 'ellipse', 'circle'):
             return None
         path = self._draft_path(d)
         if path is None:
             return None
+        if d['tool'] == 'circle':                        # le centre au premier point, le rayon jusqu'au second
+            spec = self.form_default('circle')
+            spec.cx, spec.cy = d['a']
+            spec.diameter = 2 * math.hypot(d['b'][0] - d['a'][0], d['b'][1] - d['a'][1])
+            return spec
         x0, y0, x1, y1 = path.bbox()
         spec = self.form_default(d['tool'])
         spec.cx, spec.cy, spec.width, spec.height = (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0
@@ -2962,6 +2968,8 @@ class Canvas(QWidget):
         if abs(w) < 1e-6 and abs(h) < 1e-6:
             return None
         t = d['tool']
+        if t == 'circle':                           # cercle : du centre au rayon
+            return Path([geom.circle((ax, ay), math.hypot(w, h))])
         if t in ('rect', 'ellipse'):
             if ctrl and not from_center:           # carré / cercle
                 s = max(abs(w), abs(h))

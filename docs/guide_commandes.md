@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 0.999.0
+# Guide des commandes — VectorDrive 1.3.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -212,6 +212,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 |---|---|---|
 | Sélection | Esc |  |
 | Rectangle |  | Rectangle : glisser d'un coin à l'autre ; Ctrl : carré ; Maj : à partir du centre |
+| Cercle |  | Cercle : un clic au centre, glisser jusqu'au rayon ; F2 : en chiffres ; clic droit : le diamètre proposé par F2 |
 | Ellipse |  | Ellipse : glisser d'un coin à l'autre de sa boîte ; Ctrl : cercle ; Maj : centrée sur le premier point |
 | Rectangle 3 points |  | Rectangle 3 points : deux clics pour un côté (il donne l'inclinaison), un troisième pour l'autre côté ; coins du rectangle par défaut |
 | Trait |  |  |

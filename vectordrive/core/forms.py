@@ -1,5 +1,5 @@
 """Formes géométriques paramétrées, éditables après coup (comme les objets
-éditables de TypeEdit) : rectangle, ellipse, polygone, étoile, spirale,
+éditables de TypeEdit) : rectangle, cercle, ellipse, polygone, étoile, spirale,
 flèche, arc par sa corde, oblong, anneau, secteur de couronne.
 
 Une forme garde ses paramètres de construction dans `Shape.extra['forme']`
@@ -62,6 +62,18 @@ class Ellipse:
 
     def build(self) -> Path:
         return Path([geom.ellipse((self.cx, self.cy), abs(self.width) / 2, abs(self.height) / 2, self.angle)])
+
+
+@dataclass
+class Circle:
+    """Cercle par son centre et son diamètre (outil Cercle, demande du 23/11)."""
+    kind: str = 'circle'
+    cx: float = 0.0
+    cy: float = 0.0
+    diameter: float = 20.0
+
+    def build(self) -> Path:
+        return Path([geom.circle((self.cx, self.cy), abs(self.diameter) / 2)])
 
 
 @dataclass
@@ -424,9 +436,9 @@ class Gear:
         return Path(cs)
 
 
-TYPES = {'rect': Rect, 'ellipse': Ellipse, 'polygon': Polygon, 'star': Star, 'spiral': Spiral, 'arrow': Arrow,
+TYPES = {'rect': Rect, 'circle': Circle, 'ellipse': Ellipse, 'polygon': Polygon, 'star': Star, 'spiral': Spiral, 'arrow': Arrow,
          'chord_arc': ChordArc, 'marker': Marker, 'slot': Slot, 'ring': Ring, 'sector': Sector, 'gear': Gear}
-TITLES = {'rect': 'Rectangle', 'ellipse': 'Ellipse', 'polygon': 'Polygone', 'star': 'Étoile', 'spiral': 'Spirale',
+TITLES = {'rect': 'Rectangle', 'circle': 'Cercle', 'ellipse': 'Ellipse', 'polygon': 'Polygone', 'star': 'Étoile', 'spiral': 'Spirale',
           'arrow': 'Flèche', 'chord_arc': 'Arc par sa corde', 'marker': 'Marqueur', 'slot': 'Oblong (boutonnière)',
           'ring': 'Anneau', 'sector': 'Secteur de couronne', 'gear': 'Engrenage'}
 
@@ -437,6 +449,7 @@ LABELS = {
     'x0': ('Départ X (mm)', -1e6, 1e6), 'y0': ('Départ Y (mm)', -1e6, 1e6),
     'x1': ('Arrivée X (mm)', -1e6, 1e6), 'y1': ('Arrivée Y (mm)', -1e6, 1e6),
     'width': ('Largeur (mm)', 0.001, 1e6), 'height': ('Hauteur (mm)', 0.001, 1e6),
+    'diameter': ('Diamètre (mm)', 0.001, 1e6),
     'corner': ('Coins', None, None), 'radius': ('Rayon / chanfrein (mm)', 0.0, 1e6),
     'angle': ('Angle (°)', -360.0, 360.0), 'sides': ('Nombre de côtés', 3, 1000),
     'size': ('Taille (mm)', 0.001, 1e6), 'size_mode': ('La taille est', None, None),
@@ -542,9 +555,10 @@ def transformed(d: dict, m, new_path: Path) -> dict | None:
             spec.cx, spec.cy = m.apply((spec.cx, spec.cy))
         else:
             spec.x, spec.y = m.apply((spec.x, spec.y))
-        spec.angle = (rot - spec.angle) if mirror else (spec.angle + rot)
-        spec.angle = (spec.angle + 180.0) % 360.0 - 180.0
-        for name in ('width', 'height', 'radius', 'size', 'rounding', 'r_out', 'r_in', 'length', 'module', 'bore',
+        if hasattr(spec, 'angle'):                       # (le cercle n'en a pas)
+            spec.angle = (rot - spec.angle) if mirror else (spec.angle + rot)
+            spec.angle = (spec.angle + 180.0) % 360.0 - 180.0
+        for name in ('width', 'height', 'diameter', 'radius', 'size', 'rounding', 'r_out', 'r_in', 'length', 'module', 'bore',
                      'head_length',
                      'head_width', 'shaft_width'):
             if hasattr(spec, name):

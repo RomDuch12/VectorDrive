@@ -651,12 +651,13 @@ class ZoomTool(Tool):
 
 class BreakLineTool(ArcTool):
     """Ligne de coupure : deux clics, le symbole de rupture entre eux
-    (hauteur `canvas.breakline_size`, 0 : un sixième de la longueur)."""
+    (hauteur `canvas.breakline_size`, 0 : un sixième de la longueur ; débord `canvas.breakline_ext`)."""
     NEED = 2
 
     def _contour(self, a, b):
         from ..core.cadtools import break_line
-        return break_line(a, b, float(getattr(self.c, 'breakline_size', 0.0) or 0.0))
+        return break_line(a, b, float(getattr(self.c, 'breakline_size', 0.0) or 0.0),
+                          float(getattr(self.c, 'breakline_ext', 0.0) or 0.0))
 
     def press(self, sp, dp, ev):
         self.pts.append(dp)

@@ -276,7 +276,7 @@ class Operation:
     prism_rule: int = 1113           # lettres prismatiques : 1113, le relief garde l'outil hors des formes ; 882, le trajet relevé dans TE13
     #                                  (le toit taillé dans la lettre) ; avant, le contour décalé de la pointe à chaque niveau
     vcarve_edges_only: bool = False  # gravure 2,5D : bords et tirés d'angle seulement (finition TypeEdit)
-    vcarve_max_steps: int = 0       # gravure 2,5D : seules les n passes les plus proches du bord (0 : toutes)
+    vcarve_max_steps: int = 0       # gravure 2,5D, poche : seules les n passes les plus proches du bord (0 : toutes)
     vcarve_mode: str = 'passes'     # gravure 2,5D : 'passes' (décalages), 'axe' (ligne médiane, intaille optimisée), 'axe_ar' (intaille standard : un flanc à l'aller, l'autre au retour)
                                     # ou 'contour' (contour 2D au fond, sans remontées d'angle, puis vidage)
     vcarve_offset: float = 0.0      # contour 2D : décalage XY du contour (mm, + vers l'intérieur de la forme)

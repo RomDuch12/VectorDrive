@@ -7392,3 +7392,23 @@ Ces versions avaient été publiées sans relecture indépendante. Cette relectu
 ### v0.999.0 — Essais du clic droit sur les outils du ruban
 
 - Les essais du clic droit sur l’outil Étoile et sur l’outil Cote passent par le menu du bouton (réglages en tête), comme le ruban depuis la 0.998.0 ; aucun changement pour l’utilisateur.
+### v1.0.0 — Un panneau montré prend toujours son onglet
+
+- Un panneau masqué, montré par son bouton, sa commande ou le menu des panneaux (Assistant IA, Reconnaître une police, Couleur, Défaire / Refaire, ceux des plugins…), prend son onglet dans le groupe d’onglets de sa colonne et passe devant ; il ne s’empile plus sous les autres panneaux.
+- Restent à part ceux que vous avez rangés « Au-dessus de » / « Au-dessous de » un autre ou sortis des onglets, Dimensions au-dessus de Calques si vous l’avez choisi, et les panneaux détachés.
+- Le programme Datron affiché au centre, puis rendu à sa colonne, et le panneau FAO fermé rendent la disposition telle qu’elle était.
+### v1.1.0 — Outil Cercle ; Poinçonner : ouvrir le contour ; réglages au clic droit
+
+- **Outil Cercle**, juste avant Ellipse dans le ruban (aussi en mode simple) : un clic au centre, glisser jusqu’au rayon ; F2 : en chiffres (centre, diamètre). Le cercle reste une forme réglable (double-clic) ; le clic droit sur l’outil règle le diamètre que propose F2.
+- **Poinçonner, Emporte-pièce** : nouveau réglage « Sur un contour fermé : l’ouvrir » — la partie couverte est retirée et le contour reste ouvert, au lieu de lui soustraire la forme. D’office, rien ne change.
+- **Clic droit sur un outil du ruban** : les réglages de Poinçonner et d’Emporte-pièce (sans prendre l’outil), des cotes d’arc et à ressaut, du Rectangle 3 points, du Polygone par côté, de la Ligne double, d’Italique et de Souligné (ce que posent les boutons), du Texte et de la Ligne d’axe (Options › Dessin).
+### v1.2.0 — Encore des réglages au clic droit sur les outils du ruban
+
+- **Gomme, Pinceau à aplat** : leur rayon (celui que changent aussi [ et ]), retenu d’un lancement à l’autre.
+- **Raccord, Chanfrein entre deux traits** : le rayon des congés, la taille des chanfreins, sans rien changer au dessin.
+- **Ligne de coupure** : la hauteur du zigzag et, nouveau, le débord du trait au-delà des deux clics ; retenus.
+- **Cercle tangent** : le rayon proposé, sans prendre l’outil. **Simplifier** : la précision et l’angle vif (celui d’Approximation aussi). **Symétrie cyclique** : le nombre de copies, sans l’allumer.
+### v1.3.0 — Poche : nombre de passes limité, autour des logos
+
+- **Poche** (concentrique, en spirale ou en balayage) : nouveau champ « Nombre de passes limité », comme la gravure 2,5D — seules les n premières passes depuis le bord sont faites, le reste n’est pas vidé. Avec « Finition : pas de passe sur le cadre » (gravure en relief), elles sont comptées **autour des logos** seulement : l’évidement se limite à une bande autour des formes, le cadre n’est pas suivi. Un nombre impair donne un tour de plus (les tours se font depuis les deux bords de la bande : jamais de crête au milieu). 0 (d’office) : tout est vidé, comme avant.
+- Une poche « seulement le reste » placée après une poche limitée vide ce que celle-ci a laissé.

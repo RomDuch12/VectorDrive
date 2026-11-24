@@ -519,6 +519,15 @@ def _circle2(p):
     p.drawPoint(QPointF(49, 15))
 
 
+def _circle_center(p):
+    """Cercle : le cercle, son centre et un rayon."""
+    p.drawEllipse(QRectF(8, 8, 48, 48))
+    _accent(p, 3)
+    p.drawLine(QPointF(32, 32), QPointF(55, 32))
+    _accent(p, 7)
+    p.drawPoint(QPointF(32, 32))
+
+
 def _text(p):
     f = p.font()
     f.setPixelSize(44)
@@ -2218,7 +2227,7 @@ ICONS = {
     'difference': _bool('difference'), 'xor': _bool('xor'), 'offset': _offset, 'shadow': _shadow, 'envelope': _envelope, 'bend_path': _bend_path, 'stamp': _stamp, 'trim': _trim, 'punch': _punch, 'double_line': _double_line, 'dashes': _dashes, 'tan_circle': _tan_circle, 'text_path': _text_path, 'measure_radius': _measure_radius,
     'fill_toggle': _fill_toggle, 'measure_angle': _measure_angle, 'text_merge': _text_merge, 'xline': _xline, 'center_line': _center_line, 'dim_arc': _dim_arc, 'fx_scallop': _fx_scallop, 'match_props': _match_props, 'compare': _compare,
     'sym_ox': _sym_ox, 'sym_oy': _sym_oy, 'sym_both': _sym_both, 'sym_origin': _sym_origin, 'compare_next': _compare_next, 'compare_prev': _compare_prev, 'compare_close': _compare_close, 'marker': _marker, 'command_search': _command_search, 'news': _news, 'explode': _explode, 'remove_contours': _remove_contours, 'sym_draw': _sym_draw, 'bbox_frame': _bbox_frame, 'blend': _blend, 'blend_curve': _blend_curve, 'gdt': _gdt, 'dim_inspect': _dim_inspect, 'dim_space': _dim_space, 'dim_jogged': _dim_jogged,
-    'dim_jog_line': _dim_jog_line, 'coil': _coil, 'thread': _thread, 'hole3d': _hole3d, 'pipe': _pipe, 'rib': _rib, 'boss': _boss, 'wrap_emboss': _wrap_emboss, 'frame': _frame, 'lip': _lip, 'snap_fit': _snap_fit, 'rest_pad': _rest_pad, 'bent_sheet': _bent_sheet, 'sheet_tray': _sheet_tray, 'sheet_fold': _sheet_fold, 'oops': _oops, 'change_point': _change_point, 'arc_center': _arc_center, 'circle2': _circle2, 'polygon_edge': _polygon_edge, 'ellipse_axis': _ellipse_axis, 'rect3': _rect3, 'draft_analysis': _draft_analysis, 'perforate': _perforate, 'scale3d': _scale3d, 'cells': _cells,
+    'dim_jog_line': _dim_jog_line, 'coil': _coil, 'thread': _thread, 'hole3d': _hole3d, 'pipe': _pipe, 'rib': _rib, 'boss': _boss, 'wrap_emboss': _wrap_emboss, 'frame': _frame, 'lip': _lip, 'snap_fit': _snap_fit, 'rest_pad': _rest_pad, 'bent_sheet': _bent_sheet, 'sheet_tray': _sheet_tray, 'sheet_fold': _sheet_fold, 'oops': _oops, 'change_point': _change_point, 'arc_center': _arc_center, 'circle2': _circle2, 'circle_center': _circle_center, 'polygon_edge': _polygon_edge, 'ellipse_axis': _ellipse_axis, 'rect3': _rect3, 'draft_analysis': _draft_analysis, 'perforate': _perforate, 'scale3d': _scale3d, 'cells': _cells,
     'bounding': _bounding, 'mirror_axis': _mirror_axis, 'text_columns': _text_columns, **{k: _node_icon(k) for k in ('node_line', 'node_curve', 'node_smooth', 'node_symmetric', 'node_align_h', 'node_align_v')}, 'same_w': _same_size('w'), 'same_h': _same_size('h'), 'same_both': _same_size('both'), 'remove_loops': _remove_loops, 'extend': _extend,
     'normalize': _normalize, 'stroke': _stroke, 'fillet': _fillet, 'chamfer': _chamfer,
     'node_delete': _node_delete, 'break': _break, 'join': _join, 'to_curves': _to_curves,

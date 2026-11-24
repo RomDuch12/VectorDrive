@@ -15,7 +15,7 @@ from ..core import forms as F
 from ..i18n import tr
 
 #: action d'outil → type de forme
-TOOL_KINDS = {'tool_rect': 'rect', 'tool_ellipse': 'ellipse', 'tool_polygon': 'polygon', 'tool_star': 'star',
+TOOL_KINDS = {'tool_rect': 'rect', 'tool_circle': 'circle', 'tool_ellipse': 'ellipse', 'tool_polygon': 'polygon', 'tool_star': 'star',
               'tool_spiral': 'spiral', 'arrow': 'arrow', 'chord_arc': 'chord_arc', 'tool_marker': 'marker',
               'form_slot': 'slot', 'form_ring': 'ring', 'form_sector': 'sector', 'form_gear': 'gear'}
 #: champs de placement (pas dans les réglages par défaut d'un outil)
