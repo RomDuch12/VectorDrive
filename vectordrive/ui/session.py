@@ -150,7 +150,7 @@ def snapshot(win) -> dict:
         keep_doc = t.modified or not t.path or not pathlib.Path(t.path).exists()
         entry = {'path': t.path, 'modified': bool(t.modified), 'view': list(t.view) if t.view else None,
                  'source': getattr(t.doc, 'source_path', None) or None, 'file': None, 'paths': None,
-                 'current': i == win.doc_index, 'uid': t.uid}
+                 'current': i == win.doc_index, 'uid': t.uid, 'title': t.title, 'pinned': bool(t.pinned)}
         cp = getattr(win, 'cam_panel', None)
         if cp is not None and t.toolpaths:                 # ce qu'on savait de leur calcul : gardé avec eux
             entry['cam'] = cp.memo_of(t.doc)
@@ -284,7 +284,7 @@ def restore(win, folder) -> int:
     index = load_index(folder)
     if not index or not index.get('docs'):
         return 0
-    restored, missing, current = 0, [], 0
+    restored, missing, current = 0, [], None
     for e in index['docs']:
         doc, path = None, e.get('path')
         try:
@@ -303,6 +303,7 @@ def restore(win, folder) -> int:
             missing.append(path or e.get('file') or '?')
             continue
         t = win.docs[win.doc_index]
+        t.title, t.pinned = str(e.get('title') or ''), bool(e.get('pinned'))     # son nom donné, son épingle
         if e.get('view') and len(e['view']) == 3:
             win.canvas.scale, win.canvas.ox, win.canvas.oy = e['view']
             win.canvas.viewChanged.emit()
@@ -319,10 +320,12 @@ def restore(win, folder) -> int:
                 pass
         t.view = (win.canvas.scale, win.canvas.ox, win.canvas.oy)
         if e.get('current'):
-            current = win.doc_index
+            current = t
         restored += 1
     if restored:
-        win.switch_tab(current)
+        win._rank_pinned()                               # les épinglés à gauche (un dessin introuvable entre eux)
+        win.switch_tab(next((k for k, x in enumerate(win.docs) if x is current), 0))
+        win._title()                                     # le nom donné : dans le titre de la fenêtre aussi
     if index.get('ribbon'):
         from ..i18n import tr
         r = win.ribbon

@@ -3066,6 +3066,8 @@ class MainWindow(QMainWindow):
         self.doc_bar.closeRequested.connect(lambda i: self.close_tab(i))
         self.doc_bar.tabSelected.connect(self.switch_tab)
         self.doc_bar.tabMoved.connect(self._tab_moved)
+        self.doc_bar.renameRequested.connect(lambda i: self._rename_later(i))
+        self.doc_bar.released.connect(self._tabs_released)
         self.doc_bar.menuRequested.connect(self.doc_tab_menu)
         r.set_doc_bar(self.doc_bar)
         lay.addWidget(r)
@@ -3245,7 +3247,10 @@ class MainWindow(QMainWindow):
         return QPointF(self.canvas.width() / 2, self.canvas.height() / 2)
 
     def _title(self) -> None:
+        tab = self.docs[self.doc_index] if 0 <= self.doc_index < len(self.docs) else None
         name = pathlib.Path(self.path).name if self.path else tr('Sans titre')
+        if tab is not None and tab.title:                # le nom donné à l'onglet (« Renommer… »)
+            name = tab.title
         self.setWindowTitle(f'{name}{" *" if self.modified else ""} — VectorDrive {__version__}')
         self._sync_tabs()
 
@@ -5122,6 +5127,13 @@ class MainWindow(QMainWindow):
         src = act.src if isinstance(act, RelayAction) else act
         return next((k for k, a in self.A.items() if a is src), None)
 
+    def _origin_key(self, act) -> str | None:
+        """La commande de VectorDrive d'où vient un bouton Mode de la disposition TypeEdit 13 (« Texte » : l'outil
+        Texte ; « Duplication » : Dupliquer) — au clic droit, ses réglages d'outil, ses favoris, les onglets à soi
+        (round 1155) ; None pour tout autre bouton."""
+        k = act.property('vd_te_cmd') if act is not None else None
+        return str(k) if k and str(k) in self.A else None
+
     def _save_custom(self, tabs: list, message: str) -> None:
         from .ribbon_editor import save_all
         save_all(self.settings, tabs)
@@ -5255,7 +5267,8 @@ class MainWindow(QMainWindow):
             self._button_keys = None
             k = self._action_key(act)
         if k is None and act.property('vd_ribbon_id'):
-            k = str(act.property('vd_ribbon_id'))        # boutons Mode et Retour de la disposition TypeEdit 13
+            k = str(act.property('vd_ribbon_id'))        # boutons Mode et Retour de la disposition TypeEdit 13, et
+            #                                              ceux de son onglet « VectorDrive » (round 1155)
         elif k is None and id(src) not in keys[2]:
             k = self._action_key(act)                    # une commande neuve à la place d'une autre (même nombre)
             if k is not None:
@@ -5593,9 +5606,11 @@ class MainWindow(QMainWindow):
         return True
 
     def _ribbon_button_menu(self, button, pos, exec_menu: bool = True, settings=None):
-        """Clic droit sur un bouton du ruban (ou des favoris) : les réglages de l'outil (`settings`, s'il en a), sa
-        taille et sa place dans le ruban (round 1141), la commande dans les favoris (barre du haut) ou retirée,
-        ajoutée à un onglet à soi (ou à un nouveau), retirée de l'onglet à soi où elle est."""
+        """Clic droit sur un bouton du ruban (ou des favoris, ou de la barre d'accès rapide de TypeEdit 13) : les
+        réglages de l'outil (`settings`, s'il en a), sa taille et sa place dans le ruban (round 1141), la commande
+        dans les favoris (barre du haut) ou retirée, ajoutée à un onglet à soi (ou à un nouveau), retirée de
+        l'onglet à soi où elle est. Un bouton Mode de TypeEdit 13 : favoris et onglets à soi par sa commande de
+        VectorDrive (round 1155) ; pas de mode simple (un bouton Mode est toujours montré)."""
         from .ribbon_editor import load_all
         m = QMenu(self)
         if settings is not None:                         # un outil qui a ses réglages : eux d'abord (round 1141)
@@ -5606,12 +5621,14 @@ class MainWindow(QMainWindow):
         if not self._is_favorite_button(button) and self._in_ribbon(button):
             self._button_place_menu(m, button)           # sa taille et sa place dans le ruban (round 1141)
         key = self._action_key(button.defaultAction())
+        origin = self._origin_key(button.defaultAction()) if key is None else None
         if key is not None and key not in ('ui_mode', 'view_toggle'):     # d'un mode à l'autre
             from . import modes
             simple = modes.in_simple(key, self.settings, self._plugin_action_keys())
             m.addAction(tr('Réserver au mode expert') if simple else tr('Montrer aussi en mode simple'),
                         lambda _=False, k=key, to=not simple: self.move_button_mode(k, to))
             m.addSeparator()
+        key = key or origin                              # bouton Mode : la commande d'où il vient (round 1155)
         if key is not None:
             if self._is_favorite_button(button):         # un bouton des favoris : libellés, agencement (15/11)
                 from . import fav_bar
@@ -5783,6 +5800,8 @@ class MainWindow(QMainWindow):
                     a.setProperty('vd_family_cmd', bkey)     # la commande écartée : dans l'onglet, ou au clic s'il n'y en a pas
                 a.triggered.connect(lambda _=False, k=key, b=base: self.show_te_context(k, b))
                 a.setProperty('vd_ribbon_id', f'te_mode:{cmd}')
+                if bkey in A:
+                    a.setProperty('vd_te_cmd', bkey)         # au clic droit : ses réglages, ses favoris (round 1155)
                 self._te_actions.append(a)
                 modes[cmd] = a
             return modes[cmd]
@@ -5873,6 +5892,7 @@ class MainWindow(QMainWindow):
         # les onglets de VectorDrive, chacun en menu
         page = r.insert_tab(pos, 'VectorDrive')
         g = page.group(tr('Onglets de VectorDrive'))
+        named: dict = {}
         for title, groups in vd_menus:
             m = QMenu(self)
             for gt, acts in groups:
@@ -5881,6 +5901,11 @@ class MainWindow(QMainWindow):
                     m.addAction(a)
             a = QAction(icon('ribbon'), title, self)
             a.setMenu(m)
+            # son identifiant (taille et place au clic droit, round 1155) : la première commande de son onglet — le
+            # même d'une langue et d'un lancement à l'autre
+            first = next((k for k in (self._action_key(x) for _gt, acts in groups for x in acts) if k), title)
+            named[first] = named.get(first, 0) + 1
+            a.setProperty('vd_ribbon_id', f'te_onglet:{first}' + (f'#{named[first]}' if named[first] > 1 else ''))
             self._te_actions.append(a)
             g.add(a)
         vd_tab = r.widget(pos)
@@ -6071,7 +6096,8 @@ class MainWindow(QMainWindow):
 
     # --- réglages d'un poste à l'autre ---------------------------------------------------------------
     #: réglages propres au poste, jamais exportés ni importés
-    LOCAL_KEYS = ('fichiers/recents', 'fichiers/onglets_fermes', 'fichiers/dossier_', 'session/', 'fenetre/')
+    LOCAL_KEYS = ('fichiers/recents', 'fichiers/onglets_fermes', 'fichiers/a_rouvrir', 'fichiers/dossier_',
+                  'session/', 'fenetre/')
 
     def batch_dialog(self, exec_dialog: bool = True):
         from .batch_dialog import BatchDialog
@@ -7631,8 +7657,44 @@ class MainWindow(QMainWindow):
             dock.raise_()
         return w
 
+    def _snap_keep(self) -> None:
+        """L'état des accrochages (actifs ou non, points accrochés, repérage, polaire) retenu pour le prochain
+        lancement, au moment où il change — jamais pendant le lancement (rien n'a changé), ni si F10 › Dessin
+        « Reprendre les accrochages de la dernière fois » est décoché (demande du 24/11)."""
+        if not getattr(self, '_snap_kept', False) or getattr(self, '_agent_visit', 0):
+            return                                       # (ni une bascule faite par l'assistant : il ne règle rien)
+        from .options import value as option
+        st, sn = self.settings, self.canvas.snap
+        if not option(st, 'accrochage/retenir'):
+            return
+        st.setValue('accrochage/actif', bool(sn.enabled))
+        st.setValue('accrochage/modes', ' '.join(sorted(sn.modes)) or 'aucun')
+        st.setValue('accrochage/reperage', bool(sn.tracking))
+        st.setValue('accrochage/polaire', bool(sn.polar))
+
+    def _snap_restore(self) -> None:
+        """Au lancement : les accrochages comme on les a laissés à la fermeture (commandes cochées, panneau F3 et
+        plan de travail d'accord), si F10 › Dessin le veut ; ce qui n'a jamais été retenu garde son état d'office.
+        Rien n'est écrit ici : `_snap_keep` ne retient qu'ensuite."""
+        from .options import value as option
+        from .snap_window import MODES
+        st = self.settings
+        if option(st, 'accrochage/retenir'):
+            kept = st.value('accrochage/modes')
+            if kept is not None:                         # 'aucun' : tout décoché
+                names = kept if isinstance(kept, (list, tuple)) else str(kept).split()
+                for k in MODES:
+                    self.A[f'snap_{k}'].setChecked(k in names)
+            for key, name in (('accrochage/reperage', 'snap_tracking'), ('accrochage/polaire', 'snap_polar'),
+                              ('accrochage/actif', 'snap')):     # l'accrochage en dernier : un repérage l'allume
+                v = st.value(key)
+                if v is not None:
+                    self.A[name].setChecked(v in (True, 'true', 1, '1'))
+        self._snap_kept = True
+
     def _toggle_snap(self, on: bool) -> None:
         self.canvas.snap.enabled = on
+        self._snap_keep()
         if not on:
             self.canvas._snap_hit = None
         self._snap_status()
@@ -7715,6 +7777,7 @@ class MainWindow(QMainWindow):
         """Repérage polaire (Maj+F12) ; l'activer allume aussi l'accrochage."""
         sn = self.canvas.snap
         sn.polar = bool(on)
+        self._snap_keep()
         try:
             sn.polar_step = float(self.settings.value('accrochage/pas_polaire', 15.0))
         except (TypeError, ValueError):
@@ -7755,6 +7818,7 @@ class MainWindow(QMainWindow):
         """Repérage d'accrochage (F11) ; l'activer allume aussi l'accrochage."""
         sn = self.canvas.snap
         sn.tracking = bool(on)
+        self._snap_keep()
         sn.clear_tracking()
         if on and not self.A['snap'].isChecked():
             self.A['snap'].setChecked(True)
@@ -7763,6 +7827,7 @@ class MainWindow(QMainWindow):
 
     def _snap_mode(self, kind: str, on: bool) -> None:
         (self.canvas.snap.modes.add if on else self.canvas.snap.modes.discard)(kind)
+        self._snap_keep()
         self._snap_status()
 
     def _cycle_snap(self, d: int) -> None:
@@ -7821,6 +7886,10 @@ class MainWindow(QMainWindow):
         dec = option(st, 'options/decimales')
         for sb in self.dims.fields.values():
             sb.setDecimals(dec)
+        if getattr(self, '_snap_started', False):      # F10 › OK (pas le lancement)
+            self._snap_keep()
+            if getattr(self, '_snap_window', None) is not None:
+                self._snap_window.sync()
         if not getattr(self, '_snap_started', False):  # au lancement seulement : F10 › OK ne le rallume pas
             self._snap_started = True
             if str(st.value('options/accrochage_986', '') or '') != '1':   # actif d'office : une fois, même laissé éteint
@@ -7834,6 +7903,7 @@ class MainWindow(QMainWindow):
                 st.setValue('symboles/textes_vivants_1000', '1')
             if option(st, 'options/accrochage') and not self.A['snap'].isChecked():
                 self.A['snap'].setChecked(True)
+            self._snap_restore()                         # … puis l'état laissé à la fermeture (demande du 24/11)
         tabs = bool(option(st, 'vue/onglets_calques'))     # F10 › Affichage : ouverts ou fermés tout de suite
         if self.A['layer_tabs'].isChecked() != tabs:
             self.A['layer_tabs'].setChecked(tabs)
@@ -7917,7 +7987,8 @@ class MainWindow(QMainWindow):
         if value(st, 'options/ouvrir_dernier'):
             recent = [p for p in self._recent() if pathlib.Path(p).exists()]
             if recent:
-                QTimer.singleShot(0, lambda: self.session_dir is None and self.open_path(recent[0]))
+                QTimer.singleShot(0, lambda: self.session_dir is None and self.tab_of(recent[0]) < 0
+                                  and self.open_path(recent[0]))     # (déjà rouvert, onglet gardé : rien de plus)
 
     def duplicate_dialog(self) -> None:
         from .dialogs import DuplicateDialog
@@ -8767,6 +8838,68 @@ class MainWindow(QMainWindow):
             closed_store.forget(uid)
         self._kept_now = []
 
+    #: réglage : les onglets gardés à la fermeture de la fenêtre (sans session), à rouvrir au prochain lancement
+    REOPEN_KEY = 'fichiers/a_rouvrir'
+
+    def _pending_reopen(self) -> list[str]:
+        v = self.settings.value(self.REOPEN_KEY, [])
+        if isinstance(v, str):
+            v = [v]
+        return [str(u) for u in (v or []) if u]
+
+    def _remember_reopen(self) -> None:
+        """La fenêtre se ferme sans session : les onglets gardés à l'instant (`_confirm_discard`) sont notés, pour
+        revenir d'eux-mêmes au prochain lancement (`reopen_kept`) — pas ceux qu'on avait fermés un par un."""
+        now = list(getattr(self, '_kept_now', None) or ())
+        uids = [u for u in self._pending_reopen() if u not in now] + now
+        if uids:
+            self.settings.setValue(self.REOPEN_KEY, uids)
+
+    def reopen_kept(self) -> int:
+        """Au lancement (demande du 24/11 : « enregistrement silencieux qui réapparaît à la réouverture, avec
+        l'étoile ») : les onglets gardés à la fermeture de la dernière fenêtre sans session reviennent d'eux-mêmes,
+        toujours non enregistrés, avec leur nom, leur épingle et leurs parcours. Chacun reste en sûreté dans les
+        onglets gardés, sous son identifiant, jusqu'à son enregistrement ou sa fermeture ; chaque identifiant quitte la
+        liste juste avant sa tentative (un plantage ne la rejoue pas). Un dessin illisible est sauté, et laissé dans
+        « Rouvrir un onglet fermé » ; un fichier déjà ouvert : relu dans son onglet s'il y est intact, sauté s'il y
+        est modifié. Rend le nombre d'onglets rouverts."""
+        from . import closed_store
+        from .doctabs import same_file
+        self.settings.sync()                             # la liste écrite par la fenêtre fermée à l'instant
+        n = skipped = 0
+        for uid in self._pending_reopen():
+            left = [u for u in self._pending_reopen() if u != uid]
+            if left:
+                self.settings.setValue(self.REOPEN_KEY, left)
+            else:
+                self.settings.remove(self.REOPEN_KEY)
+            self.settings.sync()
+            try:
+                k = next((x for x in closed_store.entries() if x.uid == uid), None)
+            except OSError:
+                k = None
+            if k is None:                                # rouvert ou oublié entre-temps
+                continue
+            at = None
+            if k.path:                                   # pas deux onglets d'un même fichier
+                self._store_current()
+                at = next((j for j, t in enumerate(self.docs) if same_file(t.path, k.path)), None)
+                if at is not None and self.docs[at].modified:
+                    skipped += 1                         # ouvert et modifié : la copie gardée attend dans le dossier
+                    continue
+            try:
+                ok = bool(self.reopen_tab(k, at=at, keep=True))
+            except Exception:                            # noqa: BLE001 — un onglet abîmé n'empêche pas les autres
+                ok = False
+            n += ok
+            skipped += not ok
+        if n or skipped:
+            msg = tr('{0} onglet(s) non enregistré(s) rouvert(s), tel(s) qu’à la fermeture').format(n)
+            if skipped:
+                msg += tr(' — {0} laissé(s) dans « Rouvrir un onglet fermé »').format(skipped)
+            self.statusBar().showMessage(msg, 8000)
+        return n
+
     # --- onglets gardés à la fermeture (demande du 24/11, « à la manière de npp ») ------------------------------------
     def _keeps_closed(self) -> bool:
         """Option : un onglet modifié ou jamais enregistré se ferme sans question, gardé pour être rouvert."""
@@ -8831,6 +8964,9 @@ class MainWindow(QMainWindow):
         m.addAction(icon('new'), tr('Nouveau'), self.new_document)
         if 0 <= i < len(self.docs):
             m.addAction(icon('duplicate'), tr('Dupliquer'), self.duplicate_tab)
+            pinned = self.docs[self.doc_index].pinned
+            m.addAction(tr('Renommer…'), lambda _=False: self.rename_tab())
+            m.addAction(tr('Détacher l’épingle') if pinned else tr('Épingler'), lambda _=False: self.pin_tab())
             r = m.addAction(icon('open'), tr('Recharger depuis le disque'), self.reload_tab)
             r.setEnabled(bool(self.path) and pathlib.Path(self.path).is_file())
             src = self.path or getattr(self.canvas.doc, 'source_path', None) or ''
@@ -8842,6 +8978,7 @@ class MainWindow(QMainWindow):
             m.addAction(icon('saveas'), tr('Enregistrer sous…'), self.save_as)
             m.addSeparator()
             f = m.addAction(tr('Fermer'), lambda: self.close_tab(self.doc_index))
+            f.setEnabled(not pinned)                     # épinglé : retirer d'abord l'épingle
             if self.agent_tab_locked():                  # tenu par l'assistant : ni rechargé ni fermé
                 r.setEnabled(False)
                 f.setEnabled(False)
@@ -8914,9 +9051,12 @@ class MainWindow(QMainWindow):
         when[tab.uid] = stamp
         self._closed_unsaved = ([tab] + list(getattr(self, '_closed_unsaved', [])))[:self.CLOSED_UNSAVED_MAX]
 
-    def reopen_tab(self, entry=None) -> bool:
+    def reopen_tab(self, entry=None, *, at: int | None = None, keep: bool = False) -> bool:
         """Rouvre un onglet fermé (`entry` : un élément de `closed_tabs`, par défaut le dernier fermé).
-        Un fichier disparu est retiré de la liste, et dit."""
+        Un fichier disparu est retiré de la liste, et dit. Pour un onglet gardé sur le disque — `at` : dans cet
+        onglet ; `keep` (réouverture d'elle-même au lancement) : l'onglet reprend l'identifiant de l'entrée, qui reste
+        dans le dossier (masquée tant qu'il est ouvert, remplacée à sa fermeture, oubliée à son enregistrement), et
+        une entrée illisible n'est pas effacée."""
         if entry is None:
             items = self.closed_tabs()
             if not items:
@@ -8934,11 +9074,14 @@ class MainWindow(QMainWindow):
             try:
                 doc, tps = closed_store.load(entry)
             except Exception as ex:                      # noqa: BLE001 — dessin abîmé : retiré de la liste, et dit
-                closed_store.drop(entry)
+                if not keep:
+                    closed_store.drop(entry)
                 self.statusBar().showMessage(tr('Onglet gardé illisible : {0}').format(ex), 8000)
                 return False
-            self._open_in_tab(doc, entry.path, modified=True)
-            closed_store.drop(entry)                     # ouvert : plus à rendre
+            self._open_in_tab(doc, entry.path, modified=True, at=at, uid=entry.uid if keep else None)
+            self._dress_tab(entry.custom, entry.pinned)  # son nom donné, son épingle
+            if not keep:
+                closed_store.drop(entry)                 # ouvert : plus à rendre
             if entry.path:                               # le fichier tel qu'il était lu avant : un autre enregistrement
                 key = os.path.normcase(os.path.abspath(entry.path))      # depuis sera signalé à « Enregistrer »
                 stamps = self.__dict__.setdefault('_file_stamps', {})
@@ -8955,6 +9098,7 @@ class MainWindow(QMainWindow):
             return True
         self._closed_unsaved = [t for t in getattr(self, '_closed_unsaved', []) if t is not entry]
         self._open_in_tab(entry.doc, None, modified=True)
+        self._dress_tab(entry.title)
         return True
 
     def _reopen_menu(self, parent):
@@ -9006,7 +9150,10 @@ class MainWindow(QMainWindow):
             if src3d:                                        # elle garde sa pièce 3D (prises, surfaces posées)
                 doc.extra[model3d.SOURCE_KEY] = src3d
         doc.source_path = None
+        named = self.docs[self.doc_index].title if 0 <= self.doc_index < len(self.docs) else ''
         self._open_in_tab(doc, None)
+        if named:                                        # la copie d'un onglet nommé : son nom, « (copie) »
+            self.docs[self.doc_index].title = tr('{0} (copie)').format(named)
         self.modified = True
         self._title()
         self.statusBar().showMessage(tr('Copie du dessin dans un nouvel onglet'), 4000)
@@ -9635,15 +9782,19 @@ class MainWindow(QMainWindow):
         cp = getattr(self, 'cam_panel', None)
         t.toolpaths = list(cp.toolpaths) if cp is not None else []
 
-    def _open_in_tab(self, doc, path: str | None, *, modified: bool = False, at: int | None = None) -> int:
+    def _open_in_tab(self, doc, path: str | None, *, modified: bool = False, at: int | None = None,
+                     uid: str | None = None) -> int:
         """`doc` dans l'onglet `at`, sinon dans un nouvel onglet — ou dans
         l'onglet affiché s'il est vide et intact ; rend l'indice de l'onglet."""
         from .doctabs import DocTab
         self.finish_typing()
         self._store_current()
         tab = DocTab(doc, path, modified)
+        if uid:                                          # rouvert des onglets gardés : sous le même identifiant
+            tab.uid = uid
         if at is not None and 0 <= at < len(self.docs) and self.docs[at] is not self.agent_tab():
             i = at
+            tab.title, tab.pinned = self.docs[i].title, self.docs[i].pinned     # relu : son nom, son épingle restent
             self.docs[i] = tab
         elif 0 <= self.doc_index < len(self.docs) and self.docs[self.doc_index].pristine() \
                 and self.docs[self.doc_index] is not self.agent_tab():     # (l'onglet tenu n'est pas remplacé)
@@ -9686,7 +9837,94 @@ class MainWindow(QMainWindow):
         cur = self.docs[self.doc_index]
         self.docs.insert(dst, self.docs.pop(src))
         self.doc_index = self.docs.index(cur)
+        if self._rank_pinned():                          # un épinglé ne passe pas après un autre, ni l'inverse : remis
+            self._tabs_resync = True                     # à son rang (les titres suivent la liste)
         self._sync_tabs()
+
+    def _tabs_released(self) -> None:
+        """Souris relâchée sur la barre des onglets : après un déplacement refusé (épingle), la barre — qui ne
+        change pas d'onglet courant tant qu'on en traîne un — est remise d'accord avec la liste."""
+        if self.__dict__.pop('_tabs_resync', False):
+            self._sync_tabs()
+
+    def _rank_pinned(self) -> bool:
+        """Les onglets épinglés à gauche des autres, chacun gardant son rang parmi les siens ; rend vrai si l'ordre
+        a changé (l'onglet affiché reste le même)."""
+        order = sorted(self.docs, key=lambda t: not t.pinned)            # tri stable
+        if all(a is b for a, b in zip(order, self.docs)):
+            return False
+        cur = self.docs[self.doc_index] if 0 <= self.doc_index < len(self.docs) else None
+        self.docs[:] = order
+        if cur is not None:
+            self.doc_index = next(k for k, t in enumerate(self.docs) if t is cur)
+        return True
+
+    def _dress_tab(self, title: str = '', pinned: bool = False) -> None:
+        """L'onglet affiché, qui vient d'être rouvert, reprend son nom donné et son épingle."""
+        t = self.docs[self.doc_index]
+        t.title, t.pinned = str(title or ''), bool(pinned)
+        if t.pinned:
+            self._rank_pinned()
+        self._title()
+
+    @staticmethod
+    def _file_stem(title: str) -> str:
+        """Un nom d'onglet → un nom de fichier permis (Windows refuse \\ / : * ? " < > | et les caractères de
+        commande)."""
+        return ''.join('_' if c in '\\/:*?"<>|' or ord(c) < 32 else c for c in title).strip(' .')
+
+    def _rename_later(self, i: int) -> None:
+        """Double clic (gauche) sur l'onglet `i` : son nom est demandé une fois le clic traité par la barre. L'onglet
+        lui-même est retenu, pas son indice : fermé ou déplacé entre-temps, rien d'autre n'est renommé."""
+        if not 0 <= i < len(self.docs):
+            return
+        tab = self.docs[i]
+
+        def ask():
+            k = next((n for n, t in enumerate(self.docs) if t is tab), -1)
+            if k >= 0:
+                self.rename_tab(k)
+        QTimer.singleShot(0, ask)
+
+    def rename_tab(self, i: int | None = None, name: str | None = None) -> bool:
+        """Donne un nom à l'onglet `i` (l'affiché par défaut), même à un dessin jamais enregistré (demande du
+        24/11) : montré dans l'onglet et le titre de la fenêtre à la place de « Sans titre » ou du nom du fichier ;
+        aucun fichier n'est écrit ni renommé. « Enregistrer sous » le propose comme nom de fichier, puis l'onglet
+        prend le nom du fichier. Un nom vide rend le nom d'origine. `name` : le nom, donné d'avance (essais) ; sinon
+        il est demandé. Rend False si renoncé."""
+        i = self.doc_index if i is None else i
+        if not 0 <= i < len(self.docs):
+            return False
+        self._store_current()
+        tab = self.docs[i]
+        if name is None:
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, tr('Renommer l’onglet'),
+                                            tr('Nom de l’onglet (vide : le nom d’origine) :'), text=tab.name())
+            if not ok:
+                return False
+        name = ' '.join(str(name).split())[:120]         # sur une ligne, sans blancs autour
+        tab.title = '' if name == tab.file_name() else name
+        self._title()
+        self.statusBar().showMessage((tr('Onglet nommé « {0} » (aucun fichier n’est renommé)') if tab.title
+                                      else tr('L’onglet reprend son nom d’origine : « {0} »')).format(tab.name()), 5000)
+        return True
+
+    def pin_tab(self, i: int | None = None, on: bool | None = None) -> bool:
+        """Épingle l'onglet `i` (l'affiché par défaut) ou retire son épingle (`on` : l'état voulu, sinon l'inverse) :
+        📌 devant son nom, rangé à gauche des autres — il y reste, même déplacé à la souris —, et pas fermé par
+        mégarde (la croix, le clic du milieu et Ctrl+F4 disent qu'il faut d'abord retirer l'épingle). Rend l'état
+        obtenu."""
+        i = self.doc_index if i is None else i
+        if not 0 <= i < len(self.docs):
+            return False
+        tab = self.docs[i]
+        tab.pinned = (not tab.pinned) if on is None else bool(on)
+        self._rank_pinned()
+        self._sync_tabs()
+        self.statusBar().showMessage((tr('Onglet épinglé : « {0} »') if tab.pinned
+                                      else tr('Épingle retirée : « {0} »')).format(tab.name()), 4000)
+        return tab.pinned
 
     def close_tab(self, i: int | None = None, *, answer: str | None = None) -> bool:
         """Ferme l'onglet `i` (l'affiché par défaut) ; un dessin modifié est
@@ -9697,6 +9935,10 @@ class MainWindow(QMainWindow):
             return False
         if self.docs[i] is self.agent_tab():             # tenu par l'assistant : rendu à la fin de sa demande
             self._agent_refused()
+            return False
+        if self.docs[i].pinned:                          # épinglé : pas fermé par mégarde
+            self.statusBar().showMessage(tr('Onglet épinglé : retirez d’abord son épingle (clic droit sur l’onglet, '
+                                            '« Détacher l’épingle ») pour le fermer.'), 6000)
             return False
         self.finish_typing()
         self._store_current()
@@ -10427,7 +10669,11 @@ class MainWindow(QMainWindow):
         pairs = self.save_filters()
         filters = [name for name, _exts in pairs]
         start = self._last_dir('enregistrer')
-        if self.path:
+        tab = self.docs[self.doc_index] if 0 <= self.doc_index < len(self.docs) else None
+        given = self._file_stem(tab.title) if tab is not None else ''
+        if given:                                        # le nom donné à l'onglet : proposé comme nom de fichier
+            start = str(pathlib.Path(start) / given)
+        elif self.path:
             start = str(pathlib.Path(start) / pathlib.Path(self.path).name)
         low = (self.path or '').lower()
         current = next((name for name, exts in pairs if low.endswith(exts)), filters[0])
@@ -10438,6 +10684,9 @@ class MainWindow(QMainWindow):
             self._remember_dir('enregistrer', path)
             if self._write(path):
                 self.path = path
+                if tab is not None:
+                    tab.title = ''                       # l'onglet prend le nom du fichier
+                self._title()
 
     def _write(self, path: str) -> bool:
         """Enregistre en VDZ, ou dans un autre format — VND, DXF, SVG, PDF… — avec un compagnon .vdz si des données
@@ -10501,6 +10750,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 10000)
         self._add_recent(path)
         self._stamp_file(path)
+        if 0 <= self.doc_index < len(self.docs):         # enregistré : sa copie gardée (rouverte au lancement) est
+            from . import closed_store                   # périmée, elle ne reviendra pas
+            closed_store.forget(self.docs[self.doc_index].uid)
         return True
 
     # --- fichier modifié par un tiers ----------------------------------------------------------
@@ -10731,7 +10983,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue('impression/selection_mode', mode)
         # la feuille tournée selon la sélection, dans les deux cas : à l'échelle 1, une sélection en largeur tient
         # sur une feuille couchée — en hauteur elle était réduite pour rien
-        override = {'selection': True, 'plaque': False, 'echelle': mode, 'position': 'centre', 'orientation': 'auto'}
+        override = {'selection': True, 'plaque': False, 'echelle': mode, 'position': 'centre', 'orientation': 'auto',
+                    'couleurs': self._print_colors()}
         if mode == 'ajuster':
             override.update(format='A4', marge=self.PRINT_FIT_MARGIN)
         return self.print_dialog(exec_dialog=exec_dialog, printer=printer, what='dessin', override=override)
@@ -10748,6 +11001,8 @@ class MainWindow(QMainWindow):
             last = {}
         if not last or not isinstance(last, dict):
             last = self._print_seed()
+        elif 'couleurs' not in last:                     # retenue d'avant la case (24/11) : celle de F10
+            last['couleurs'] = self._print_colors()
         if params is None:
             dlg = PrintDialog(self, self.canvas.doc, self.canvas.selection, last if isinstance(last, dict) else {})
             ok = dlg.exec()
@@ -10812,13 +11067,25 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 10000)
         return True
 
+    def _print_colors(self) -> bool:
+        """En couleurs ? Le dernier choix de la fenêtre Imprimer, sinon F10 › Impression (demande du 24/11)."""
+        import json
+        from .options import value
+        try:
+            last = json.loads(str(self.settings.value('impression/fenetre', '') or '{}'))
+        except ValueError:
+            last = {}
+        if isinstance(last, dict) and 'couleurs' in last:
+            return bool(last['couleurs'])
+        return bool(value(self.settings, 'impression/couleurs'))
+
     def _print_seed(self) -> dict:
         """La fenêtre Imprimer, la première fois : ce que vous aviez réglé dans F10 › Impression (feuille, orientation,
         marge, plaque, échelle ; « Imprimer (Ctrl+P), la première fois »), le reste d'office."""
         from . import printing
         from .options import value
         o = printing.print_options(self.settings)
-        seed = {k: o[k] for k in ('format', 'orientation', 'marge', 'plaque')
+        seed = {k: o[k] for k in ('format', 'orientation', 'marge', 'plaque', 'couleurs')
                 if self.settings.contains(f'impression/{k}')}
         if self.settings.contains('impression/echelle'):
             e = str(o.get('echelle') or '1')
@@ -11025,18 +11292,37 @@ class MainWindow(QMainWindow):
                 setattr(info, f.name, str(v))
         if self.canvas.doc.plate and not info.material:
             info.material = self.canvas.doc.plate.material
-        info.fill = bool(self.canvas.show_fill)          # coloriage : comme à l'écran (Remplissage, Ctrl+9)
+        if self.settings.value('bat/fill') is None:      # coloriage : comme à l'écran (Remplissage, Ctrl+9) tant
+            info.fill = bool(self.canvas.show_fill)      # qu'aucun BAT n'est validé ; ensuite, le dernier choix
         dlg = BatDialog(self, self.canvas.doc, info, items=list(self.canvas.selection))
         self._bat_print = False
         if not dlg.exec():
             return None
         self._bat_print = bool(getattr(dlg, 'print_requested', False))
         info = dlg.result_info()
-        dlg.remember_logos()
+        errors = dlg.remember_logos()                    # … et copiés dans « Logos BAT » de la bibliothèque interne
+        if errors:                                       # copie impossible : dite, le BAT se fait quand même
+            self.statusBar().showMessage(tr('Logo non copié dans la bibliothèque : {0}').format(' ; '.join(errors)),
+                                         8000)
+        if dlg.logos_copied:                             # un logo copié : la Bibliothèque le montre, après le BAT
+            QTimer.singleShot(0, self, self._logos_kept)
         for f in dataclasses.fields(info):
             if f.name not in ('date', 'notes'):
                 self.settings.setValue(f'bat/{f.name}', getattr(info, f.name))
         return info
+
+    def _logos_kept(self) -> None:
+        """« Logos BAT » créé ou complété : le panneau Bibliothèque le montre — le dossier affiché relu s'il est
+        dans la bibliothèque interne, sinon l'arbre seul refait (la ligne du dossier affiché retrouvée)."""
+        from .symbols import is_below, library_root
+        panel = self.symbols
+        shown = getattr(panel, '_folder', None)
+        if shown is not None and is_below(shown, library_root()):
+            panel.refresh()
+        else:
+            panel._fill_tree()
+            if shown is not None:
+                panel.select_in_tree(shown)
 
     def closeEvent(self, ev) -> None:
         box = getattr(self, '_font_editor_box', None)
@@ -11064,6 +11350,8 @@ class MainWindow(QMainWindow):
                     return
         if saved or self._confirm_discard():
             self._closing = True
+            if not saved:                                # sans session : les onglets gardés à l'instant reviendront
+                self._remember_reopen()                  # d'eux-mêmes au prochain lancement
             tabs = getattr(self, 'workspaces', None)
             for i in range(tabs.count() - 1, 0, -1) if tabs is not None else ():
                 self.close_workspace(i)                 # logiciels encastrés arrêtés
@@ -11367,6 +11655,8 @@ class MainWindow(QMainWindow):
             self._forget_kept_now()
             QMessageBox.critical(self, tr('Mises à jour'), str(ex))
             return
+        if self.session_dir is None:                     # gardés pour la mise à jour : rouverts au redémarrage
+            self._remember_reopen()
         if portable.is_portable():
             portable.launch_portable_update(path)          # remplace le dossier, puis relance
         else:
@@ -11675,7 +11965,8 @@ class MainWindow(QMainWindow):
         return None
 
     def f2(self):
-        """F2 (TypeEdit) : repère ou geste en cours à la souris → en chiffres ; tracé en cours → les coordonnées de ses
+        """F2 (TypeEdit) : repère ou geste en cours à la souris → en chiffres ; forme en cours de tracé à la souris →
+        son formulaire, à sa position et à sa taille de l'instant ; tracé en cours → les coordonnées de ses
         points ; forme sélectionnée → ses paramètres ; outil de forme → la forme par ses paramètres ; sinon les dimensions.
         F2 suivant, le focus dans les dimensions : la case « Conserver les proportions » cochée ou décochée."""
         ruler = getattr(self.canvas, 'ruler_dragging', None)
@@ -11685,6 +11976,9 @@ class MainWindow(QMainWindow):
         gesture = self.canvas.take_gesture()
         if gesture is not None:
             return self._f2_gesture(gesture)
+        draft = self.canvas.take_draft()
+        if draft is not None:                            # forme en cours de tracé (bouton tenu) : finie en chiffres
+            return self.create_form(draft.kind, seed=draft)
         dims = getattr(self, 'dims', None)
         if dims is not None and dims.has_focus():
             dims.keep.toggle()
@@ -11840,13 +12134,16 @@ class MainWindow(QMainWindow):
         c.copy_selection(m) if self._shift_held() else c.transform_selection(m)
         c.rot_mode, c.pivot = keep, pivot
 
-    def create_form(self, kind: str, *, exec_dialog: bool = True, spec=None):
-        """Nouvelle forme par ses paramètres (au centre de la vue) ; rend la
+    def create_form(self, kind: str, *, exec_dialog: bool = True, spec=None, seed=None):
+        """Nouvelle forme par ses paramètres (au centre de la vue ; `seed` : la forme commencée à la souris, F2
+        pendant son tracé — le formulaire s'ouvre sur elle, à sa place) ; rend la
         forme posée (ou la fenêtre, sans l'ouvrir, si `exec_dialog` est faux)."""
         from . import form_dialog as FD
-        s = spec or FD.defaults(self.settings, kind)
+        s = spec or seed or FD.defaults(self.settings, kind)
         x, y = self._view_center()
-        if hasattr(s, 'cx'):
+        if seed is not None and spec is None:
+            pass                                         # commencée à la souris : elle garde sa place
+        elif hasattr(s, 'cx'):
             s.cx, s.cy = x, y
         elif hasattr(s, 'x'):
             s.x, s.y = x, y
@@ -11854,15 +12151,40 @@ class MainWindow(QMainWindow):
             s.x0, s.y0, s.x1, s.y1 = x - 20, y, x + 20, y
         if spec is None:
             dlg = FD.FormDialog(self, s)
+            if seed is not None:                         # la place est donnée par la souris : la taille d'abord
+                dlg.first = next((n for n in dlg.widgets if n not in FD.PLACEMENT), None)
             if not exec_dialog:
                 return dlg
+            shown = dlg.value()                          # telle que montrée (arrondie par les champs)
             if not dlg.exec():
                 return None
             s = dlg.value()
-            FD.save_defaults(self.settings, s)
+            if seed is not None:
+                s = self._form_from_draft(shown, s)
+            else:
+                FD.save_defaults(self.settings, s)
         sh = self.canvas.commit_form(s)
         self.set_tool('select')
         return sh
+
+    def _form_from_draft(self, seed, got):
+        """La forme validée après F2 pendant son tracé (`seed` : la forme commencée, `got` : celle du formulaire).
+        Rectangle, ellipse : tant que le centre n'a pas été retapé, le coin cliqué reste en place quand la taille
+        change (le formulaire compte depuis le centre). Réglages retenus de l'outil : seulement les champs changés
+        dans le formulaire — ni la taille ni l'angle laissés par la souris."""
+        from ..core import forms as F
+        from . import form_dialog as FD
+        anchor = getattr(self.canvas, 'draft_anchor', None)
+        if anchor is not None and hasattr(got, 'width') and (got.cx, got.cy) == (seed.cx, seed.cy) \
+                and not getattr(got, 'angle', 0.0):
+            ax, ay, sx, sy = anchor
+            got.cx, got.cy = ax + sx * got.width / 2, ay + sy * got.height / 2
+        was, now = F.to_dict(seed), F.to_dict(got)
+        changed = {k: v for k, v in now.items() if k not in FD.PLACEMENT and was.get(k) != v}
+        if changed:
+            keep = F.to_dict(FD.defaults(self.settings, got.kind))
+            FD.save_defaults(self.settings, F.from_dict({**keep, **changed}))
+        return got
 
     def edit_form(self, item, *, exec_dialog: bool = True, spec=None):
         """Paramètres d'une forme posée (aperçu en direct, annulable) ; rend
@@ -11958,13 +12280,16 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QToolButton
         if isinstance(obj, QToolButton) and obj.defaultAction() is not None \
                 and obj.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:   # le sien (colonnes)
-            if self._is_favorite_button(obj):            # un bouton des favoris : les retirer, entre autres
-                self._ribbon_button_menu(obj, ev.globalPos())
+            bar = obj.parentWidget()
+            quick = bar is not None and bar is getattr(self, 'te_quickbar', None)
+            if self._is_favorite_button(obj) and not quick:              # un bouton des favoris : les retirer,
+                self._ribbon_button_menu(obj, ev.globalPos())            # entre autres
                 return True
             settings = self._tool_settings(obj.defaultAction())
-            if self._in_ribbon(obj):                     # tout bouton du ruban : le menu, avec sa taille et sa place
+            if quick or self._in_ribbon(obj):            # tout bouton du ruban : le menu, avec sa taille et sa place
                 self._ribbon_button_menu(obj, ev.globalPos(), settings=settings)   # (round 1141) ; les réglages
-                return True                                                          # d'un outil en tête
+                return True                              # d'un outil en tête ; la barre d'accès rapide de TypeEdit 13
+                #                                          aussi (round 1155), sans taille ni place (pas le ruban)
             if settings is not None:                     # hors du ruban (barres) : les réglages de l'outil
                 settings()
                 return True
@@ -11973,8 +12298,12 @@ class MainWindow(QMainWindow):
     def _tool_settings(self, act):
         """Les réglages de l'outil d'une commande (formes, Cote, Polaire, Contour ; demande du 23/11 : Poinçonner,
         Emporte-pièce, cotes d'arc et à ressaut, Rectangle 3 points, Polygone par côté, Ligne double, Italique,
-        Souligné, Texte, Ligne d'axe) : la fonction qui les ouvre ; None."""
+        Souligné, Texte, Ligne d'axe) : la fonction qui les ouvre ; None. Un bouton Mode de TypeEdit 13 : ceux de sa
+        commande de VectorDrive (round 1155)."""
         from .form_dialog import TOOL_KINDS
+        k = self._origin_key(act)
+        if k is not None:
+            act = self.A[k]
         key = next((k for k in TOOL_KINDS if self.A.get(k) is act), None)
         if key is not None:
             return lambda _=False, kind=TOOL_KINDS[key]: self.tool_form_dialog(kind)

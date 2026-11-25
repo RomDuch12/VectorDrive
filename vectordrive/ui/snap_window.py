@@ -126,3 +126,4 @@ class SnapWindow(QWidget):
     def _radius(self, v: int) -> None:
         self.win.canvas.snap_px = int(v)
         self.win.settings.setValue('accrochage/rayon', int(v))
+        self.win.settings.setValue('options/tolerance', int(v))    # F10 › Dessin : le même réglage, relu au lancement

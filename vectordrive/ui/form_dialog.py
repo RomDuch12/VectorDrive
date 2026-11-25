@@ -90,6 +90,15 @@ class FormDialog(QDialog):
         bb.rejected.connect(self.reject)
         form.addRow(bb)
 
+    def showEvent(self, ev) -> None:                     # noqa: N802 (API Qt)
+        super().showEvent(ev)
+        if not ev.spontaneous():                         # à l'ouverture (pas au retour d'une fenêtre réduite)
+            from .fields import focus_first
+            names = list(self.widgets)                   # le premier champ, sélectionné : la frappe le remplace
+            k = names.index(self.first) if getattr(self, 'first', None) in self.widgets else 0
+            focus_first([self.widgets[n] for n in names[k:] + names[:k]])   # (`first` : la taille d'abord — F2
+            #                                                                 pendant un tracé, la place est donnée)
+
     def value(self):
         """Forme d'après le formulaire."""
         s = copy.deepcopy(self.spec)

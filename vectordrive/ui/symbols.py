@@ -55,6 +55,21 @@ def toggle_favorite(settings, path, key: str = FAV_KEY) -> bool:
     return True
 
 
+def favorite_split(settings, key: str = FAV_KEY, exts=()) -> tuple[list, list]:
+    """(dossiers, fichiers) favoris, dans l'ordre d'ajout. Un favori d'un partage n'est pas lu (hors d'atteinte, il
+    figerait la fenêtre) : avec une extension de `exts` c'est un fichier, sinon un dossier."""
+    exts = tuple(e.lower() for e in exts)
+    dirs, files = [], []
+    for p in favorite_paths(settings, key):
+        if is_remote(p):
+            (files if p.suffix.lower() in exts else dirs).append(p)
+        elif p.is_dir():
+            dirs.append(p)
+        elif p.is_file():
+            files.append(p)
+    return dirs, files
+
+
 def recent_files(settings) -> list[pathlib.Path]:
     """Derniers fichiers posés qui existent encore."""
     v = settings.value(RECENT_KEY, []) if settings is not None else []
@@ -89,6 +104,91 @@ def library_root() -> pathlib.Path:
         return pathlib.Path(forced)
     base = portable.app_dir() or portable.data_dir()
     return base / 'bibliotheque'
+
+
+#: dossiers de la bibliothèque interne : les logos employés dans un BAT, les fichiers qu'on y garde (clic droit)
+LOGOS_DIR = 'Logos BAT'
+KEPT_DIR = 'Favoris'
+
+
+def logo_library() -> pathlib.Path:
+    """Dossier « Logos BAT » de la bibliothèque interne : chaque logo d'un BAT validé y est copié une fois, pour
+    les fois suivantes (pas créé ici)."""
+    return library_root() / LOGOS_DIR
+
+
+def internal_favorites() -> pathlib.Path:
+    """Dossier « Favoris » de la bibliothèque interne : les fichiers qu'on y copie pour les garder (pas créé
+    ici)."""
+    return library_root() / KEPT_DIR
+
+
+def logo_exts() -> tuple:
+    """Extensions des fichiers qui servent de logo à un BAT : les images, puis les dessins que VectorDrive lit."""
+    from ..io import proof
+    return tuple(e.lstrip('*') for e in proof.logo_filter().split())
+
+
+def is_below(path, folder) -> bool:
+    """`path` est-il `folder`, ou dans `folder` ? (comparaison des chemins : le disque n'est pas lu)"""
+    import os
+    try:
+        pathlib.Path(os.path.abspath(path)).relative_to(os.path.abspath(folder))
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def same_content(a, b) -> bool:
+    """Les deux fichiers ont-ils le même contenu ? (faux aussi si l'un ne se lit pas)"""
+    import os
+    try:
+        sa, sb = os.stat(a), os.stat(b)
+        if sa.st_size != sb.st_size:
+            return False
+        if sa.st_mtime == sb.st_mtime:                   # même taille, même date (la copie la garde) : le même
+            return True
+        with open(a, 'rb') as fa, open(b, 'rb') as fb:
+            while True:
+                x, y = fa.read(1 << 16), fb.read(1 << 16)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def keep_copy(src, folder, made: list | None = None) -> pathlib.Path | None:
+    """`src` gardé une fois dans `folder` (créé au besoin), sous son nom : déjà dans ce dossier, il n'est pas
+    recopié ; un fichier de même nom et de même contenu y est déjà sa copie (pas de doublon) ; de même nom mais
+    d'un autre contenu : « nom (2) »… Rend la copie (ajoutée à `made` si elle vient d'être faite) ; None : `src`
+    n'est pas un fichier. OSError : copie impossible."""
+    import shutil
+    src, folder = pathlib.Path(src), pathlib.Path(folder)
+    if not src.is_file():
+        return None
+    if is_below(src, folder):
+        return src
+    folder.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        dst = folder / (src.name if n == 1 else f'{src.stem} ({n}){src.suffix}')
+        if not dst.exists():
+            break
+        if dst.is_file() and same_content(src, dst):
+            return dst
+        n += 1
+    tmp = dst.with_name(dst.name + '.tmp')               # copie entière ou rien (disque plein, partage coupé)
+    try:
+        shutil.copy2(src, tmp)
+        tmp.replace(dst)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    if made is not None:
+        made.append(dst)
+    return dst
 
 
 def default_roots() -> list[pathlib.Path]:
@@ -820,6 +920,7 @@ class SymbolPanel(QWidget):
     SIZE_MAX = THUMB_MAX
     SEARCH_HINT = 'Rechercher (nom des fichiers, textes des symboles et des VND)…'
     SHOW_EXT = False                             # nom des fichiers avec son extension
+    LOGOS_SHOWN = True                           # « Logos BAT » et « Favoris » internes : aussi les images (logos)
 
     def __init__(self, settings, parent=None, big: bool = False):
         super().__init__(parent)
@@ -948,6 +1049,8 @@ class SymbolPanel(QWidget):
 
     # --- dossiers -----------------------------------------------------------
     def _fill_tree(self) -> None:
+        old = self._favorites_item()
+        fav_open = old is not None and old.isExpanded()  # « Favoris » déplié le reste, l'arbre refait
         self.tree.clear()
         rec = QTreeWidgetItem(['★ ' + tr('Récents')])
         rec.setData(0, Qt.ItemDataRole.UserRole, RECENTS)
@@ -957,6 +1060,8 @@ class SymbolPanel(QWidget):
         fav.setData(0, Qt.ItemDataRole.UserRole, FAVORITES)
         fav.setToolTip(0, tr('Fichiers et dossiers retenus (clic droit › Ajouter aux favoris)'))
         self.tree.addTopLevelItem(fav)
+        self._fill_favorites()
+        fav.setExpanded(fav_open)
         for r in self.roots:
             it = QTreeWidgetItem([r.name or str(r)])
             it.setData(0, Qt.ItemDataRole.UserRole, str(r))
@@ -964,18 +1069,71 @@ class SymbolPanel(QWidget):
             self.tree.addTopLevelItem(it)
             self._add_placeholder(it, r)
 
+    def _favorites_item(self):
+        return next((self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
+                     if self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == FAVORITES), None)
+
+    def _fill_favorites(self) -> None:
+        """Les dossiers favoris sous « Favoris », chacun dépliable en arborescence (ses sous-dossiers lus au
+        dépliage ; un partage n'est pas lu ici : hors d'atteinte, il ne fige rien). Les mêmes dossiers qu'avant :
+        l'arbre reste tel quel (ce qui est déplié le reste)."""
+        node = self._favorites_item()
+        if node is None:
+            return
+        dirs = [str(p) for p in favorite_split(self.settings, self.FAV, type(self).EXTS)[0]]
+        for k in reversed(range(node.childCount())):     # les absents retirés ; les autres restent (dépliés,
+            if node.child(k).data(0, Qt.ItemDataRole.UserRole) not in dirs:      # ligne choisie gardée)
+                node.takeChild(k)
+        for k, d in enumerate(dirs):                     # les nouveaux insérés à leur rang (ordre d'ajout)
+            if k < node.childCount() and node.child(k).data(0, Qt.ItemDataRole.UserRole) == d:
+                continue
+            p = pathlib.Path(d)
+            ch = QTreeWidgetItem([p.name or d])
+            ch.setData(0, Qt.ItemDataRole.UserRole, d)
+            ch.setToolTip(0, d)
+            node.insertChild(k, ch)
+            self._add_placeholder(ch, p)
+
+    def _is_file(self, p: pathlib.Path) -> bool:
+        """`p` est-il un fichier ? Sur un partage : d'après son extension, sans le lire (hors d'atteinte, il figerait
+        la fenêtre)."""
+        if is_remote(p):
+            return p.suffix.lower() in tuple(self.EXTS) + tuple(type(self).EXTS)
+        return p.is_file()
+
+    def _is_dir(self, p: pathlib.Path) -> bool:
+        return not self._is_file(p) if is_remote(p) else p.is_dir()
+
     def _add_placeholder(self, it: QTreeWidgetItem, path: pathlib.Path) -> None:
+        if is_remote(path):                              # un partage : pas lu ici (vu au dépliage)
+            it.addChild(QTreeWidgetItem(['…']))
+            return
         try:
             if any(p.is_dir() for p in path.iterdir()):
                 it.addChild(QTreeWidgetItem(['…']))
         except OSError:
             pass
 
+    def _subfolders(self, path: pathlib.Path) -> list:
+        """Les sous-dossiers de `path`, par nom ; un partage : lus dans le fil de calcul (Annuler s'il tarde) ; un
+        dossier disparu ou illisible (favori d'une clé débranchée) : aucun, sans erreur."""
+        if is_remote(path):
+            from .progress import Cancelled, run
+            try:
+                listed = run(self, tr('Lecture de {0}').format(path.name or str(path)), list_dir, path, ())
+            except (Cancelled, Exception):               # noqa: BLE001 — partage absent : rien à déplier
+                listed = None
+            return list(listed[1]) if listed else []
+        try:
+            return sorted((p for p in path.iterdir() if p.is_dir()), key=lambda p: p.name.lower())
+        except OSError:
+            return []
+
     def _expand(self, it: QTreeWidgetItem) -> None:
         if it.childCount() == 1 and it.child(0).text(0) == '…':
             it.takeChild(0)
             path = pathlib.Path(it.data(0, Qt.ItemDataRole.UserRole))
-            for d in sorted((p for p in path.iterdir() if p.is_dir()), key=lambda p: p.name.lower()):
+            for d in self._subfolders(path):
                 ch = QTreeWidgetItem([d.name])
                 ch.setData(0, Qt.ItemDataRole.UserRole, str(d))
                 it.addChild(ch)
@@ -1018,10 +1176,10 @@ class SymbolPanel(QWidget):
         self._unreadable = False
         self._recents_shown = False
         self._favs_shown = True
-        favs = favorite_paths(self.settings, self.FAV)
-        files = [p for p in favs if p.is_file()]
-        self.show_files(files, {str(f): '' for f in files}, folders=[p for p in favs if p.is_dir()])
-        self.where.setText(tr('Favoris') + f' ({len(favs)})')
+        dirs, files = favorite_split(self.settings, self.FAV, type(self).EXTS)     # (un partage : sans le lire)
+        self._fill_favorites()                           # l'arbre suit (favori d'une autre fenêtre, dossier parti)
+        self.show_files(files, {str(f): '' for f in files}, folders=dirs)
+        self.where.setText(tr('Favoris') + f' ({len(dirs) + len(files)})')
 
     def show_recents(self) -> None:
         """Les derniers fichiers posés, le plus récent d'abord."""
@@ -1040,16 +1198,17 @@ class SymbolPanel(QWidget):
         """Le dossier comme dans l'explorateur : son dossier parent (..), ses
         sous-dossiers, puis ses fichiers ; « Sous-dossiers » coché : aussi les
         fichiers de ses sous-dossiers, à la suite."""
+        exts = self._exts_of(path)
         if is_remote(path):                              # réseau : lu dans le fil de calcul (Annuler s'il tarde)
             from .progress import Cancelled, run
             try:
-                listed = run(self, tr('Lecture de {0}').format(path.name or str(path)), list_dir, path, self.EXTS)
+                listed = run(self, tr('Lecture de {0}').format(path.name or str(path)), list_dir, path, exts)
             except Cancelled:
                 listed = None
             except Exception:                            # noqa: BLE001 — partage absent : dossier vide
                 listed = None
         else:
-            listed = list_dir(path, self.EXTS)
+            listed = list_dir(path, exts)
         if listed is None:
             self._folder = None                          # illisible : plus de dossier visé (ajouter la sélection),
             self._unreadable = True                      # pas même celui de l'arbre
@@ -1077,12 +1236,19 @@ class SymbolPanel(QWidget):
         found: list = []
         try:
             run(self, tr('Lecture des sous-dossiers de {0}').format(path.name or str(path)), walk_files,
-                path, self.EXTS, None, max(0, limit), True, found, None, getattr(self, '_stats', None))
+                path, self._exts_of(path), None, max(0, limit), True, found, None, getattr(self, '_stats', None))
             stopped = False
         except Cancelled:
             stopped = True
         found.sort(key=lambda q: [x.lower() for x in q.relative_to(path).parts])
         return found, stopped
+
+    def _exts_of(self, path) -> tuple:
+        """Les fichiers montrés dans le dossier `path` : dans « Logos BAT » et « Favoris » de la bibliothèque
+        interne, aussi les images et les autres dessins qui servent de logo."""
+        if self.LOGOS_SHOWN and (is_below(path, logo_library()) or is_below(path, internal_favorites())):
+            return tuple(self.EXTS) + tuple(e for e in logo_exts() if e not in self.EXTS)
+        return tuple(self.EXTS)
 
     def sorted_files(self, files) -> list:
         """Fichiers dans l'ordre de la liste : symboles d'abord, puis par nom."""
@@ -1108,10 +1274,42 @@ class SymbolPanel(QWidget):
         rel = path.resolve().relative_to(r.resolve()).parts
         return ' › '.join([r.name or str(r)] + list(rel))
 
+    def _descend(self, it: QTreeWidgetItem, path) -> bool:
+        """`path` choisi sous la ligne `it` de l'arbre, dépliée jusqu'à lui ; faux : il n'est pas dans son dossier
+        (chemins comparés sans lire le disque)."""
+        base = str(it.data(0, Qt.ItemDataRole.UserRole) or '')
+        if not base or base.startswith('::'):
+            return False
+        try:
+            parts = pathlib.Path(path).relative_to(base).parts
+        except ValueError:
+            return False
+        for part in parts:
+            it.setExpanded(True)
+            self._expand(it)
+            it = next((it.child(k) for k in range(it.childCount())
+                       if it.child(k).text(0).lower() == part.lower()), None)
+            if it is None:
+                return True                              # (sous-dossier pas montré : la ligne choisie reste)
+        self.tree.blockSignals(True)
+        self.tree.setCurrentItem(it)
+        self.tree.blockSignals(False)
+        return True
+
     def select_in_tree(self, path: pathlib.Path) -> None:
-        """Le dossier choisi dans l'arbre (ses parents dépliés)."""
+        """Le dossier choisi dans l'arbre (ses parents dépliés) : dans la branche de la ligne déjà choisie s'il
+        en vient (un dossier favori déplié sous « Favoris » y reste), sinon sous sa bibliothèque, sinon sous son
+        dossier favori."""
+        cur = self.tree.currentItem()
+        if cur is not None and self._descend(cur, path):
+            return
         r = self._root_of(path)
-        if r is None:
+        if r is None:                                    # hors des bibliothèques : sous son dossier favori
+            node = self._favorites_item()
+            for k in range(node.childCount() if node is not None else 0):
+                if self._descend(node.child(k), path):
+                    node.setExpanded(True)
+                    break
             return
         it = next((self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
                    if pathlib.Path(self.tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole)) == r), None)
@@ -1165,6 +1363,9 @@ class SymbolPanel(QWidget):
         path = pathlib.Path(it.data(Qt.ItemDataRole.UserRole))
         if it.data(ROLE_KIND) in ('dir', 'up'):
             self.preview.setPixmap(it.icon().pixmap(64, 64))
+            if is_remote(path):                          # un partage : son nom, sans compter son contenu
+                self.file_info.setText(path.name or str(path))
+                return
             try:
                 n = sum(1 for p in path.iterdir() if p.suffix.lower() in self.EXTS)
                 d = sum(1 for p in path.iterdir() if p.is_dir())
@@ -1173,10 +1374,13 @@ class SymbolPanel(QWidget):
             self.file_info.setText(f'{path.name}\n' + tr('{0} fichier(s), {1} dossier(s)').format(n, d))
             return
         side = max(120, min(self.preview.width(), self.preview.height()) - 8)
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0
+        if is_remote(path):                              # un partage : la date lue avec son dossier, sinon 0
+            mtime = known_stat(getattr(self, '_stats', None), path)[0]
+        else:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = 0
         exact = _PREVIEWS.get((str(path), side, mtime))
         near = exact if exact is not None else _PREVIEWS.nearest(str(path), side, mtime)[0]
         if near is None and it.data(ROLE_KIND) is None and not it.icon().isNull() \
@@ -1387,8 +1591,8 @@ class SymbolPanel(QWidget):
                 it.setSelected(True)
         paths = self.selected_paths(widget) if (widget is self.tree or self.list.selectedItems()) else []
         m = QMenu(self)
-        files = [p for p in paths if p.is_file()]
-        if widget is self.list and len(paths) == 1 and paths[0].is_dir():
+        files = [p for p in paths if self._is_file(p)]
+        if widget is self.list and len(paths) == 1 and self._is_dir(paths[0]):
             m.addAction(tr('Ouvrir'), lambda: self.show_folder(paths[0]))
         if widget is self.list and files:
             m.addAction(tr('Insérer dans le dessin'), lambda: [self.insertRequested.emit(str(f)) for f in files])
@@ -1410,8 +1614,10 @@ class SymbolPanel(QWidget):
             fav = any(str(f).lower() == str(paths[0]).lower() for f in favorite_paths(self.settings, self.FAV))
             m.addAction('☆ ' + (tr('Retirer des favoris') if fav else tr('Ajouter aux favoris')),
                         lambda: self.toggle_favorites(paths))
+        if files and not all(is_below(f, internal_favorites()) for f in files):
+            m.addAction(tr('Copier dans la bibliothèque interne'), lambda: self.copy_to_library(files))
         m.addAction(tr('Importer des fichiers ici…'), lambda: self.import_files())
-        here = paths[0] if len(paths) == 1 and paths[0].is_dir() else self.target_folder()
+        here = paths[0] if len(paths) == 1 and self._is_dir(paths[0]) else self.target_folder()
         m.addAction(tr('Ajouter la sélection du dessin ici…'), lambda: self.addSelectionRequested.emit(here))
         m.addAction(tr('Enregistrer la sélection sous…'), self.saveRequested.emit)
         m.addAction(tr('Ouvrir dans l\'explorateur'), self.reveal)
@@ -1422,10 +1628,44 @@ class SymbolPanel(QWidget):
         return m
 
     def toggle_favorites(self, paths) -> None:
-        for p in paths:
-            toggle_favorite(self.settings, p, self.FAV)
+        added = {str(pathlib.Path(p)) for p in paths if toggle_favorite(self.settings, p, self.FAV)}
+        self._fill_favorites()
+        node = self._favorites_item()
+        if node is not None and any(node.child(k).data(0, Qt.ItemDataRole.UserRole) in added
+                                    for k in range(node.childCount())):
+            node.setExpanded(True)                       # un dossier ajouté : montré sous « Favoris »
         if getattr(self, '_favs_shown', False):
             self.show_favorites()
+
+    def copy_to_library(self, files) -> list:
+        """Les fichiers copiés une fois dans le dossier « Favoris » de la bibliothèque interne : ils y restent même
+        si l'original bouge ; même nom et même contenu déjà là : pas de doublon ; même nom, autre contenu : « nom
+        (2) ». Rend les copies."""
+        folder = internal_favorites()
+        new_folder = not folder.is_dir()
+        done, errors = [], []
+        for f in files:
+            try:
+                kept = keep_copy(f, folder)
+            except OSError as ex:
+                errors.append(f'{pathlib.Path(f).name} : {ex}')
+                if not folder.is_dir():                  # le dossier ne se crée pas : inutile d'insister
+                    break
+                continue
+            if kept is not None:
+                done.append(kept)
+        if errors:                                       # une seule boîte pour toute la sélection
+            QMessageBox.warning(self, tr('Bibliothèque'), '\n'.join(errors))
+        shown = getattr(self, '_folder', None)
+        if done and shown is not None and is_below(shown, folder):
+            self.refresh()                               # (ce dossier est affiché : son contenu relu)
+        elif done and new_folder:
+            self._fill_tree()                            # le dossier neuf se voit dans l'arbre
+            if shown is not None:
+                self.select_in_tree(shown)
+        self.where.setText(tr('{0} fichier(s) copié(s) dans la bibliothèque interne (dossier « Favoris »)')
+                           .format(len(done)))
+        return done
 
     def reveal(self) -> None:
         from PySide6.QtCore import QUrl as _U
@@ -1555,7 +1795,7 @@ class SymbolPanel(QWidget):
             it = self._pending.pop(0)
             try:
                 f = pathlib.Path(it.data(Qt.ItemDataRole.UserRole))
-                if f.suffix.lower() == '.smb' and self.list.thumb <= 96:
+                if f.suffix.lower() == '.smb' and self.list.thumb <= 96 and not is_remote(f):
                     dib = smb.thumbnail_dib(f.read_bytes())       # petite vignette : celle du fichier, instantanée
                     if dib:
                         self._set_icon(it, dib_to_qimage(dib))
@@ -1603,10 +1843,13 @@ class SymbolPanel(QWidget):
             self._jobs = []
             self._times: list = []
         size = self.list.thumb
-        try:
-            key = (str(f), size, f.stat().st_mtime)
-        except OSError:
-            key = (str(f), size, 0)
+        if is_remote(f):                                 # un partage : lu par le fil des vignettes seulement
+            key = (str(f), size, known_stat(getattr(self, '_stats', None), f)[0])
+        else:
+            try:
+                key = (str(f), size, f.stat().st_mtime)
+            except OSError:
+                key = (str(f), size, 0)
         cached = _PREVIEWS.get(key)
         if cached is not None:
             self._set_icon(it, cached)

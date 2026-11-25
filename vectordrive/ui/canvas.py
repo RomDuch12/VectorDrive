@@ -2802,6 +2802,8 @@ class Canvas(QWidget):
             self.tool_obj.release(ev.position(), self.snap_doc(ev.position(), self._tool_exclude()), ev)
             self.update()
             return
+        if not d and self.tool != 'select':              # glisser pris par F2 (take_draft) : le pointeur de l'outil
+            return                                       # reste
         self.unsetCursor()
         if not d:
             return
@@ -2869,6 +2871,40 @@ class Canvas(QWidget):
         self._drag = None
         self.update()
         return d
+
+    def take_draft(self):
+        """Le tracé d'une forme en cours à la souris (rectangle, ellipse, cercle ; polygone, étoile, spirale), qu'on
+        interrompt pour le finir en chiffres (F2) : rend la forme commencée — sa position et sa taille à cet instant
+        (Ctrl, Maj comme le tracé), le reste aux réglages retenus de l'outil ; sans taille encore : la forme retenue,
+        au point du clic. None : aucun tracé de forme en cours. Le glisser est abandonné (aperçu effacé, relâcher le
+        bouton ne pose plus rien)."""
+        d, take = self._drag, getattr(self.tool_obj, 'take_draft', None)
+        self.draft_anchor = None                         # rectangle, ellipse : le coin cliqué et le sens du glisser
+        if d is not None and d.get('kind') == 'draw' and d['tool'] in ('rect', 'ellipse', 'circle'):
+            self._drag = None
+            kind, at, spec = d['tool'], d['a'], self._draft_spec(d)
+            mods = d.get('mods') or Qt.KeyboardModifier.NoModifier
+            if kind != 'circle' and spec is not None and not (mods & Qt.KeyboardModifier.ShiftModifier):
+                (ax, ay), (bx, by) = d['a'], d['b']      # (Maj : tracé depuis le centre, qui reste le centre)
+                self.draft_anchor = (ax, ay, 1.0 if bx >= ax else -1.0, 1.0 if by >= ay else -1.0)
+        elif take is not None:
+            got = take()                                 # polygone, étoile, spirale : l'outil rend son glisser
+            if got is None:
+                return None
+            kind, at, spec = got
+        else:
+            return None
+        keep = self.form_default(kind)
+        if spec is None:                                 # pas encore de taille : la forme retenue, au point du clic
+            spec = keep
+            spec.cx, spec.cy = at
+        else:
+            for name in ('width', 'height'):             # un côté sans longueur : celui retenu
+                if getattr(spec, name, 1.0) < 1e-6:
+                    setattr(spec, name, getattr(keep, name))
+        self._snap_hit = None
+        self.update()
+        return spec
 
     # --- points par coordonnées --------------------------------------------------------
     class _Click:

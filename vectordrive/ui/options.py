@@ -113,10 +113,16 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Temps pendant lequel le bouton reste appuyé sur une forme avant qu’un glisser la déplace (0,25 s par '
               'défaut) : un clic qui bouge un peu ne déplace rien par mégarde'),
         F('options/grille', 'Pas de la grille d\'accrochage', 5.0, 0.01, 1000, ' mm'),
-        I('options/tolerance', 'Tolérance d\'accrochage', 8, 2, 40, ' px'),
+        I('options/tolerance', 'Tolérance d\'accrochage', 8, 2, 50, ' px',
+          tip='Le rayon d’attraction de la fenêtre des accrochages (F3) : le même réglage'),
         I('options/surbrillance', 'Épaisseur de la surbrillance de la sélection', 2, 1, 12, ' px',
           tip='Épaisseur du trait des objets sélectionnés (2 px par défaut)'),
-        B('options/accrochage', 'Accrochage actif au démarrage', True),
+        B('options/accrochage', 'Accrochage actif au démarrage', True,
+          tip='La première fois ; ensuite, avec « Reprendre les accrochages de la dernière fois », l’accrochage '
+              'revient comme on l’a laissé'),
+        B('accrochage/retenir', 'Reprendre les accrochages de la dernière fois', True,
+          tip='Au lancement, les accrochages reviennent comme à la fermeture : actifs ou non, points accrochés, '
+              'repérage et repérage polaire. Décoché : ceux d’office à chaque lancement'),
         Opt('texte/police', 'Police par défaut', 'font', 'Arial'),
         F('texte/hauteur', 'Hauteur de texte par défaut', 5.0, 0.05, 2000, ' mm'),
         I('polices/propositions', 'Reconnaissance de police : nombre de propositions', 5, 1, 50,
@@ -337,6 +343,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
           [('centre', 'Centré'), ('coin', 'En bas à gauche, à la marge')]),
         F('impression/marge', 'Marge', 10.0, 0, 60, ' mm', 1),
         B('impression/plaque', 'Imprimer la plaque (pointillés)', True),
+        B('impression/couleurs', 'En couleurs (celles des outils, comme « Couleurs » à l’écran)', False,
+          tip='Décoché : tout en noir. La fenêtre Imprimer (Ctrl+P) a la même case, qui retient votre dernier choix'),
         B('impression/selection', 'Seulement la sélection, s\'il y en a une', False),
         B('impression/apercu', 'Aperçu avant d\'imprimer', True,
           tip='La feuille telle qu\'elle sortira (format, orientation, échelle) ; le bouton de l\'aperçu imprime'),

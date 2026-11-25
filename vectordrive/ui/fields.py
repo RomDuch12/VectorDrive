@@ -135,6 +135,22 @@ def move_field(w, forward: bool = True) -> bool:
     return True
 
 
+def focus_first(widgets) -> None:
+    """À l'ouverture d'un formulaire (F2, réglages d'une commande) : le focus au premier champ modifiable de
+    `widgets`, sa valeur entièrement sélectionnée — F2, la valeur, Entrée, sans rien effacer ni sélectionner à la
+    souris (demande du 24/11) ; une liste ou une case prend le focus, sans sélection."""
+    for w in widgets:
+        if not w.isEnabled() or w.isHidden() or w.focusPolicy() == Qt.FocusPolicy.NoFocus:
+            continue
+        value = isinstance(w, (QAbstractSpinBox, QLineEdit))
+        if value and w.isReadOnly():
+            continue
+        w.setFocus(Qt.FocusReason.OtherFocusReason)
+        if value:
+            w.selectAll()                                # (un champ numérique : sans son suffixe, comme Tab)
+        return
+
+
 class NumericInputFilter(QObject):
     """Filtre d'événements de l'application (voir le module)."""
 

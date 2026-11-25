@@ -51,6 +51,7 @@ class TestFill(unittest.TestCase):
         from vectordrive.ui.main_window import MainWindow
         w = MainWindow()
         try:
+            w.settings.remove('bat/fill')                                  # round 1153 : tant qu'aucun BAT n'est validé
             w.A['fill'].setChecked(True)
             seen = []
 

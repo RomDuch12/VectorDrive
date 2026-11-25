@@ -19,11 +19,12 @@ os.environ['VECTORDRIVE_KEYS_MEMORY'] = '1'
 
 def seed_settings(path) -> None:
     """Fichier de réglages d'essais : l'accrochage, actif d'office depuis le round 986, y reste éteint (les essais d'avant
-    l'attendent ; ceux qui le veulent l'allument)."""
+    l'attendent ; ceux qui le veulent l'allument) ; les accrochages laissés par une fenêtre ne sont pas repris par la
+    suivante (round 1153 : les essais partagent ce fichier et attendent l'état d'office)."""
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
-            f.write('[options]\naccrochage=false\naccrochage_986=1\n')
+            f.write('[options]\naccrochage=false\naccrochage_986=1\n[accrochage]\nretenir=false\n')
 
 
 seed_settings(os.environ['VECTORDRIVE_SETTINGS'])

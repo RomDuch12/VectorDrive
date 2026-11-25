@@ -69,6 +69,7 @@ class TestOptions(unittest.TestCase):
     def tearDown(self):
         for key in list(options.BY_KEY):
             self.w.settings.remove(key)
+        self.w.settings.setValue('accrochage/retenir', False)     # la graine des essais (round 1153)
         self.w.modified = False
         self.w.close()
 

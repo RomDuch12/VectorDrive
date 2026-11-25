@@ -49,7 +49,9 @@ def reduced() -> float | None:
 
 #: réglages de F10 › Impression (dessin) : clé → valeur par défaut
 PRINT_DEFAULTS = {'format': 'A4', 'orientation': 'auto', 'echelle': '1', 'position': 'centre', 'marge': 10.0,
-                  'plaque': True, 'selection': False, 'reduire': True, 'mosaique': False}
+                  'plaque': True, 'selection': False, 'reduire': True, 'mosaique': False, 'couleurs': False}
+#: une couleur d'outil plus claire que cela (luminance) ne se verrait pas sur le papier blanc : imprimée foncée
+PAPER_LIGHT = 0.85
 PAGE_IDS = {'A4': QPageSize.PageSizeId.A4, 'A3': QPageSize.PageSizeId.A3, 'A5': QPageSize.PageSizeId.A5,
             'Letter': QPageSize.PageSizeId.Letter, 'A6': QPageSize.PageSizeId.A6, 'A2': QPageSize.PageSizeId.A2,
             'A1': QPageSize.PageSizeId.A1}
@@ -128,7 +130,10 @@ def print_options(settings) -> dict:
 
 
 def setup_printer(printer: QPrinter, opts: dict) -> None:
-    """Format et orientation de la feuille selon les réglages (avant la boîte d'impression)."""
+    """Format et orientation de la feuille selon les réglages (avant la boîte d'impression) ; en couleurs :
+    l'imprimante en couleur (un pilote en niveaux de gris d'office imprimerait en gris)."""
+    if opts.get('couleurs'):
+        printer.setColorMode(QPrinter.ColorMode.Color)
     if opts.get('format') in PAGE_IDS:
         printer.setPageSize(QPageSize(PAGE_IDS[opts['format']]))
     if opts.get('orientation') in ('portrait', 'paysage'):
@@ -141,8 +146,8 @@ def print_drawing(doc, printer: QPrinter, opts: dict | None = None, items=None) 
     `opts` (print_options) : échelle (« 1 », « 2 », « 0.5 »…, « ajuster » ou « conseillee »), orientation
     (« auto » : selon le dessin), position (« centre » ou « coin » : en bas à gauche à la marge), marge (mm),
     plaque, réduire (un dessin plus grand que la feuille est réduit), `quoi` ('plaque' : la plaque et ce qu'elle
-    contient, coupé à son bord ; 'calques' : `items` avec la plaque) ; `items` : seulement ces objets.
-    Renvoie le format de la feuille (mm)."""
+    contient, coupé à son bord ; 'calques' : `items` avec la plaque), couleurs (vrai : à la couleur de leur outil,
+    sinon en noir) ; `items` : seulement ces objets. Renvoie le format de la feuille (mm)."""
     from ..cam.fixture import shown
     doc, items = shown(doc, items)                       # plaque de reprise posée : pas imprimée (question 43)
     o = dict(PRINT_DEFAULTS, **(opts or {}))
@@ -181,7 +186,7 @@ def print_drawing(doc, printer: QPrinter, opts: dict | None = None, items=None) 
         if cut is not None:                              # feuille de la mosaïque : sa part du dessin seulement
             from PySide6.QtCore import QRectF
             p.setClipRect(QRectF(cut[0], cut[1], max(0.0, cut[2] - cut[0]), max(0.0, cut[3] - cut[1])))
-        _paint_drawing(p, doc, leaves_src, show_plate, k)
+        _paint_drawing(p, doc, leaves_src, show_plate, k, colors=bool(o.get('couleurs')))
         p.restore()
         if zone is not None:
             _tile_marks(p, printer, pw, ph, m, label)
@@ -213,7 +218,19 @@ def mosaic_tiles(bb, k: float, m: float, aw: float, ah: float) -> list:
     return out
 
 
-def _paint_drawing(p: QPainter, doc, leaves_src, show_plate: bool, k: float) -> None:
+def print_color(doc, leaf) -> QColor:
+    """La couleur imprimée d'un objet « en couleurs » : celle de son outil (ou la sienne), comme à l'écran mais sans
+    le thème ; trop claire pour le papier blanc (luminance perçue : blanc, jaune, cyan pâle) : foncée, reconnaissable."""
+    c = QColor(str(doc.item_color(leaf) or ''))
+    if not c.isValid():
+        return QColor('black')
+    if 0.2126 * c.redF() + 0.7152 * c.greenF() + 0.0722 * c.blueF() > PAPER_LIGHT:
+        return c.darker(200)
+    return c
+
+
+def _paint_drawing(p: QPainter, doc, leaves_src, show_plate: bool, k: float, colors: bool = False) -> None:
+    """Le dessin : en noir, ou en couleurs (`colors` : la couleur de l'outil de chaque objet, ses aplats aussi)."""
     pen = QPen(QColor('black'), 0.1 / k)
     if show_plate:
         pl = doc.plate
@@ -226,8 +243,9 @@ def _paint_drawing(p: QPainter, doc, leaves_src, show_plate: bool, k: float) -> 
             continue
         q = to_qpath(path)
         q.setFillRule(Qt.FillRule.OddEvenFill)
-        p.setPen(pen)
-        p.setBrush(QColor('black') if getattr(leaf, 'filled', False) or leaf.__class__.__name__ == 'Text'
+        ink = print_color(doc, leaf) if colors else QColor('black')
+        p.setPen(QPen(ink, pen.widthF()) if colors else pen)
+        p.setBrush(ink if getattr(leaf, 'filled', False) or leaf.__class__.__name__ == 'Text'
                    else Qt.BrushStyle.NoBrush)
         p.drawPath(q)
 

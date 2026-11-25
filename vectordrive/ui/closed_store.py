@@ -36,7 +36,8 @@ def folder() -> pathlib.Path:
 class Kept:
     """Un onglet gardé : `uid` (celui de l'onglet), `file` (son dessin, dans le dossier), `paths` (ses parcours, ou
     None), `cam` (ce qu'on savait de leur calcul), `path` (le fichier dont il vient, ou None : jamais enregistré),
-    `source` (le fichier importé), `title`, `when` (heure de fermeture)."""
+    `source` (le fichier importé), `title` (le nom montré), `custom` (le nom donné à l'onglet par « Renommer… », ou
+    ''), `pinned` (épinglé), `when` (heure de fermeture)."""
 
     def __init__(self, d: dict, where: pathlib.Path):
         self.uid = str(d.get('uid') or '')
@@ -46,6 +47,8 @@ class Kept:
         self.path = d.get('path') or None
         self.source = d.get('source') or None
         self.title = str(d.get('title') or '')
+        self.custom = str(d.get('custom') or '')
+        self.pinned = bool(d.get('pinned'))
         self.when = float(d.get('when') or 0.0)
         st = d.get('stamp')
         self.stamp = tuple(st) if isinstance(st, (list, tuple)) and len(st) == 2 else None
@@ -60,7 +63,7 @@ class Kept:
     def as_dict(self) -> dict:
         return {'uid': self.uid, 'file': self.file, 'paths': self.paths, 'cam': self.cam, 'path': self.path,
                 'source': self.source, 'title': self.title, 'when': self.when,
-                'stamp': list(self.stamp) if self.stamp else None}
+                'stamp': list(self.stamp) if self.stamp else None, 'custom': self.custom, 'pinned': self.pinned}
 
     def __repr__(self) -> str:                           # noqa: D105
         return f'Kept({self.name()!r})'
@@ -142,7 +145,8 @@ def keep(tab, title: str = '', where: pathlib.Path | None = None, paths: bytes |
         when = max([time.time()] + [float(e.get('when') or 0.0) + 1e-3 for e in old])
         k = Kept({'uid': tab.uid, 'file': name, 'paths': pname, 'cam': cam, 'path': tab.path,
                   'source': getattr(tab.doc, 'source_path', None) or None, 'title': title, 'when': when,
-                  'stamp': list(stamp) if stamp else None}, d)
+                  'stamp': list(stamp) if stamp else None, 'custom': getattr(tab, 'title', ''),
+                  'pinned': bool(getattr(tab, 'pinned', False))}, d)
         lst = [k.as_dict()] + old
         _write(d, lst[:MAX])
         used = {n for e in lst[:MAX] for n in _files_of(e)}

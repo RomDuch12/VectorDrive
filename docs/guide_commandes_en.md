@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 1.7.0
+# Command guide — VectorDrive 1.15.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 

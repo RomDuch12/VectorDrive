@@ -453,6 +453,12 @@ class ParamsDialog(QDialog):
             self.fields[name] = ed
         _buttons(self, form)
 
+    def showEvent(self, ev) -> None:                     # noqa: N802 (API Qt)
+        super().showEvent(ev)
+        if not ev.spontaneous():                         # à l'ouverture (pas au retour d'une fenêtre réduite)
+            from .fields import focus_first
+            focus_first(self.fields.values())            # le premier champ, sélectionné : la frappe le remplace
+
     def result_params(self):
         from PySide6.QtWidgets import QComboBox, QLineEdit, QSpinBox
         for name, ed in self.fields.items():

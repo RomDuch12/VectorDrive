@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
@@ -57,6 +57,7 @@ class BatDialog(QDialog):
             ('material', 'Matière'), ('bat_number', 'BAT n°'), ('author', 'Établi par'), ('date', 'Date'),
             ('company', 'Entreprise (en-tête)'))
     LOGOS_KEY = 'bat/logos'                              # les logos déjà employés
+    COPIES_KEY = 'bat/logos_copies'                      # {logo d'origine : nom de sa copie de « Logos BAT »}, en JSON
     LOGOS_MAX = 12
     PRESETS_KEY = 'bat/presets'                          # préréglages de l'utilisateur : {nom: réglages}, en JSON
 
@@ -463,7 +464,7 @@ class BatDialog(QDialog):
                 pick(box, values[key] or '')
         for key, box in (('logo', self.logo), ('watermark_logo', self.watermark_logo)):
             if key in values:
-                v = str(values[key] or '')
+                v = self.stored_logo(str(values[key] or ''))             # (l'original disparu : sa copie gardée)
                 pick(box, v, pathlib.Path(v).name)
         for key, spin in (('scale', self.scale), ('enlarge_below', self.enlarge_below), ('margin', self.margin),
                           ('decimals', self.decimals), ('image_dpi', self.image_dpi),
@@ -546,13 +547,59 @@ class BatDialog(QDialog):
             v = [v] if v else []
         return [str(x) for x in (v or [])]
 
-    def _logo_combo(self, current: str) -> QComboBox:
-        import pathlib
+    def _logo_copies(self) -> dict:
+        """{logo d'origine (chemin normalisé) : nom de sa copie dans « Logos BAT »}, pour les derniers employés."""
+        import json
+        s = getattr(self.parent(), 'settings', None)
+        try:
+            d = json.loads(str(s.value(self.COPIES_KEY, '') or '{}')) if s is not None else {}
+        except ValueError:
+            d = {}
+        return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+
+    def stored_logo(self, path: str) -> str:
+        """Le fichier à employer pour le logo `path` : lui-même tant qu'il est là, sur un disque du poste ; disparu
+        (déplacé, renommé), ou sur un partage (pas lu : hors d'atteinte, il figerait la fenêtre) : sa copie de
+        « Logos BAT », si elle existe."""
+        import os
+        from .symbols import is_remote, logo_library
+        if not path or path == '?' or (not is_remote(path) and os.path.isfile(path)):
+            return path
+        name = self._logo_copies().get(os.path.normcase(path))
+        kept = logo_library() / name if name else None
+        return str(kept) if kept is not None and kept.is_file() else path
+
+    def logo_choices(self, current: str = '') -> list:
+        """Les logos proposés : celui en cours, les derniers employés (un original disparu remplacé par sa copie),
+        puis les autres logos gardés dans « Logos BAT » — jamais l'original et sa copie à la fois."""
+        import os
+        from .symbols import logo_exts, logo_library
         paths = self._recent_logos()
         if current and current not in paths:
             paths.insert(0, current)
-        c = self._combo([('', tr('Aucun'))] + [(p, pathlib.Path(p).name) for p in paths]
+        copies = self._logo_copies()
+        out, seen, same = [], set(), set()
+        for p in paths:
+            same.add(str(copies.get(os.path.normcase(p), '')).lower())      # sa copie : pas proposée en plus
+            p = self.stored_logo(p)
+            if os.path.normcase(p) not in seen:
+                seen.add(os.path.normcase(p))
+                out.append(p)
+        exts = logo_exts()
+        try:
+            kept = sorted((f for f in logo_library().iterdir() if f.suffix.lower() in exts and f.is_file()),
+                          key=lambda f: f.name.lower())
+        except OSError:                                  # pas encore de logo gardé
+            kept = []
+        return out + [str(f) for f in kept if os.path.normcase(str(f)) not in seen and f.name.lower() not in same]
+
+    def _logo_combo(self, current: str) -> QComboBox:
+        import pathlib
+        current = self.stored_logo(current)
+        c = self._combo([('', tr('Aucun'))] + [(p, pathlib.Path(p).name) for p in self.logo_choices(current)]
                         + [('?', tr('Choisir un fichier…'))], current or '')
+        for k in range(1, c.count() - 1):                # (deux logos de même nom : la bulle dit lequel)
+            c.setItemData(k, c.itemData(k), Qt.ItemDataRole.ToolTipRole)
         c.activated.connect(lambda index, box=c: self._pick_logo(box, index))
         return c
 
@@ -572,13 +619,36 @@ class BatDialog(QDialog):
             box.insertItem(k, pathlib.Path(path).name, path)
         box.setCurrentIndex(max(0, k))
 
-    def remember_logos(self) -> None:
-        """Les logos employés reviennent dans les listes des prochains BAT."""
+    def remember_logos(self) -> list:
+        """Les logos employés reviennent dans les listes des prochains BAT, et chacun est copié une fois dans
+        « Logos BAT » de la bibliothèque interne : il reste disponible même si l'original bouge. Rend les erreurs de
+        copie (jamais levées : le BAT se fait) ; `logos_copied` : le nombre de copies faites cette fois."""
+        import json
+        import os
+        import pathlib
+        from .symbols import keep_copy, logo_library
+        self.logos_copied = 0
         s = getattr(self.parent(), 'settings', None)
         if s is None:
-            return
+            return []
         used = [v for v in (self.info.logo, self.info.logo2, getattr(self.info, 'watermark_logo', '')) if v]
-        s.setValue(self.LOGOS_KEY, (used + [p for p in self._recent_logos() if p not in used])[:self.LOGOS_MAX])
+        used = list(dict.fromkeys(used))                 # (le même logo en en-tête et en filigrane : une fois)
+        recent = (used + [p for p in self._recent_logos() if p not in used])[:self.LOGOS_MAX]
+        s.setValue(self.LOGOS_KEY, recent)
+        copies, errors, made = self._logo_copies(), [], []
+        folder = logo_library()
+        for p in used:
+            try:
+                kept = keep_copy(p, folder, made)
+            except OSError as ex:
+                errors.append(f'{pathlib.Path(p).name} ({ex})')
+                continue
+            if kept is not None and os.path.normcase(str(kept)) != os.path.normcase(p):
+                copies[os.path.normcase(p)] = kept.name
+        keys = {os.path.normcase(p) for p in recent}     # (seuls les derniers employés ont besoin de leur copie)
+        s.setValue(self.COPIES_KEY, json.dumps({k: v for k, v in copies.items() if k in keys}, ensure_ascii=False))
+        self.logos_copied = len(made)
+        return errors
 
     def request_print(self) -> None:
         self.print_requested = True

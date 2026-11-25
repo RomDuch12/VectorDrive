@@ -279,6 +279,7 @@ class FileBrowserPanel(SymbolPanel):
     DEEP_KEY = 'navigateur/sous_dossiers'
     SIZE_MAX = 512
     SHOW_EXT = True
+    LOGOS_SHOWN = False                          # (le filtre des formats décide seul de ce qui est montré)
     SEARCH_HINT = ('Filtrer le dossier affiché (mots, * et ?) — Entrée : chercher aussi dans les sous-dossiers '
                    '(ou aller au chemin tapé)…')
 
@@ -1221,7 +1222,7 @@ class FileBrowserPanel(SymbolPanel):
             if a.text() in drop:
                 m.removeAction(a)
         self._bibli_action(m, widget)
-        files = [p for p in self.selected_paths(widget) if p.is_file()] if widget is self.list else []
+        files = [p for p in self.selected_paths(widget) if self._is_file(p)] if widget is self.list else []
         if files:
             first = m.actions()[0] if m.actions() else None
             a = m.addAction(tr('Ouvrir'))
@@ -1243,7 +1244,7 @@ class FileBrowserPanel(SymbolPanel):
         paths = self.selected_paths(widget) if (widget is self.tree or self.list.selectedItems()) else []
         paths = [p for p in paths if str(p) not in (QUICK, BIBLI) and not str(p).startswith('::')]
         sys_keys = getattr(self, '_sys_keys', set())
-        if not paths or any(_key(p) in sys_keys for p in paths) or not all(p.is_dir() for p in paths):
+        if not paths or any(_key(p) in sys_keys for p in paths) or not all(self._is_dir(p) for p in paths):
             return                                       # (Bureau, Documents, lecteurs : déjà montrés d'office)
         inside = all(self.in_bibli(p) for p in paths)
         a = QAction(icon('library'), tr('Retirer de la bibli') if inside else tr('Ajouter à la bibli'), m)

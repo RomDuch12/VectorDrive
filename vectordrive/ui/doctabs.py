@@ -34,17 +34,27 @@ class DocTab:
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     #: tenu par l'assistant pendant sa demande (🔒 devant le titre)
     agent_lock: bool = field(default=False, compare=False, repr=False)
+    #: nom donné à l'onglet (« Renommer… »), montré à la place du nom du fichier ou de « Sans titre » jusqu'au prochain
+    #: « Enregistrer sous » ; '' : le nom d'origine. Aucun fichier n'est écrit ni renommé
+    title: str = ''
+    #: épinglé (📌 devant le nom) : rangé à gauche des autres, pas fermé par mégarde
+    pinned: bool = False
 
-    def name(self) -> str:
+    def file_name(self) -> str:
+        """Le nom d'origine : celui du fichier (ou du fichier importé), sinon « Sans titre »."""
         src = self.path or getattr(self.doc, 'source_path', None)
         return pathlib.Path(src).name if src else tr('Sans titre')
 
+    def name(self) -> str:
+        return self.title or self.file_name()
+
     def label(self) -> str:
-        return ('🔒 ' if self.agent_lock else '') + self.name() + (' *' if self.modified else '')
+        return ('🔒 ' if self.agent_lock else '') + ('📌 ' if self.pinned else '') + self.name() \
+            + (' *' if self.modified else '')
 
     def pristine(self) -> bool:
-        """Onglet vide jamais touché (réutilisé par Nouveau / Ouvrir)."""
-        if self.modified or self.path or getattr(self.doc, 'source_path', None):
+        """Onglet vide jamais touché (réutilisé par Nouveau / Ouvrir) ; un onglet nommé ou épinglé ne l'est pas."""
+        if self.modified or self.path or self.title or self.pinned or getattr(self.doc, 'source_path', None):
             return False
         return not any(L.items for L in getattr(self.doc, 'layers', []))
 
@@ -58,11 +68,29 @@ def same_file(a: str | None, b: str | None) -> bool:
         return str(a).lower() == str(b).lower()
 
 
+class _Tabs(QTabBar):
+    """La barre de Qt, qui dit en plus quand la souris est relâchée — une fois son déplacement d'onglet terminé."""
+    released = Signal()
+
+    def mouseReleaseEvent(self, ev) -> None:                         # noqa: N802 (API Qt)
+        super().mouseReleaseEvent(ev)
+        self.released.emit()
+
+    def mouseDoubleClickEvent(self, ev) -> None:                     # noqa: N802 (API Qt)
+        if ev.button() != Qt.MouseButton.LeftButton:                 # milieu, droit : deux clics, pas un double clic
+            self.mousePressEvent(ev)
+            return
+        super().mouseDoubleClickEvent(ev)
+
+
 class DocTabBar(QWidget):
     """Barre des onglets de documents : onglets fermables et déplaçables,
     « + » pour un nouveau dessin, clic du milieu pour fermer, double-clic
-    à côté des onglets pour un nouveau dessin."""
+    à côté des onglets pour un nouveau dessin, double-clic sur un onglet
+    pour le renommer."""
     newRequested = Signal()
+    renameRequested = Signal(int)                # double-clic sur un onglet
+    released = Signal()                          # souris relâchée sur la barre (déplacement d'onglet terminé)
     closeRequested = Signal(int)
     tabSelected = Signal(int)
     tabMoved = Signal(int, int)
@@ -74,7 +102,7 @@ class DocTabBar(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 0)
         lay.setSpacing(2)
-        self.tabs = QTabBar(self)
+        self.tabs = _Tabs(self)
         self.tabs.setObjectName('docTabs')
         self.tabs.setDocumentMode(True)
         self.tabs.setTabsClosable(True)
@@ -85,7 +113,9 @@ class DocTabBar(QWidget):
         self.tabs.tabCloseRequested.connect(self.closeRequested.emit)
         self.tabs.currentChanged.connect(self._current)
         self.tabs.tabMoved.connect(self.tabMoved.emit)
-        self.tabs.tabBarDoubleClicked.connect(lambda i: self.newRequested.emit() if i < 0 else None)
+        self.tabs.tabBarDoubleClicked.connect(
+            lambda i: self.newRequested.emit() if i < 0 else self.renameRequested.emit(i))
+        self.tabs.released.connect(self.released.emit)
         self.tabs.installEventFilter(self)
         self.tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.customContextMenuRequested.connect(
@@ -134,7 +164,7 @@ class DocTabBar(QWidget):
                 self.tabs.addTab('')
             for i, t in enumerate(tabs):
                 self.tabs.setTabText(i, t.label())
-                self.tabs.setTabToolTip(i, t.path or getattr(t.doc, 'source_path', None) or tr('Sans titre'))
+                self.tabs.setTabToolTip(i, t.path or getattr(t.doc, 'source_path', None) or t.name())
             if 0 <= current < self.tabs.count():
                 self.tabs.setCurrentIndex(current)
         finally:

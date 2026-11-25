@@ -62,6 +62,7 @@ class TestSnapWindow(unittest.TestCase):
         w.snap_window()                                                     # F3 de nouveau : refermée
         self.assertTrue(w.dock_snap.isHidden())
         w.settings.setValue('accrochage/rayon', 8)
+        w.settings.remove('options/tolerance')                              # round 1153 : le rayon l'écrit aussi
 
 
 if __name__ == '__main__':

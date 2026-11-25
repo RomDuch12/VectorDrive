@@ -28,6 +28,11 @@ def prefs(**values):
     st = settings()
     for k in KEYS:
         st.remove(k)
+    # round 1153 : l'état retenu des accrochages l'emporterait sur « actif au démarrage » — ces essais portent sur
+    # le démarrage : la graine des essais (accrochages non repris) est posée ici, un essai d'avant a pu la retirer
+    st.setValue('accrochage/retenir', False)
+    for k in ('accrochage/actif', 'accrochage/modes', 'accrochage/reperage', 'accrochage/polaire'):
+        st.remove(k)
     for k, v in values.items():
         st.setValue(k.replace('__', '/'), v)
     st.sync()

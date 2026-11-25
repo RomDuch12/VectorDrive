@@ -53,7 +53,7 @@ def override_for(v: dict) -> dict:
     return {'quoi': q, 'selection': q == 'selection', 'plaque': bool(v.get('plaque', True)),
             'format': v.get('format') or 'A4', 'orientation': 'auto' if real else (v.get('orientation') or 'auto'),
             'echelle': scale, 'marge': max(0.0, _num(v.get('marge'), 10.0)), 'position': 'centre',
-            'reduire': not real, 'mosaique': False}
+            'reduire': not real, 'mosaique': False, 'couleurs': bool(v.get('couleurs', False))}
 
 
 class PrintDialog(QDialog):
@@ -130,6 +130,11 @@ class PrintDialog(QDialog):
         self.plate = QCheckBox(tr('La plaque en pointillés'))
         self.plate.setChecked(bool(last.get('plaque', True)))
         form.addRow(self.plate)
+        self.colors = QCheckBox(tr('En couleurs (celles des outils)'))   # demande du 24/11 ; décochée : en noir
+        self.colors.setToolTip(tr('Traits et aplats à la couleur de leur outil, comme « Couleurs » (Ctrl+8) à '
+                                  'l’écran ; décochée : tout en noir'))
+        self.colors.setChecked(bool(last.get('couleurs', False)))
+        form.addRow(self.colors)
         self.info = QLabel()
         self.info.setWordWrap(True)
         form.addRow(self.info)
@@ -166,7 +171,8 @@ class PrintDialog(QDialog):
                                                              if self.layers.item(i).checkState() == Qt.CheckState.Checked],
                 'sortie': self.output.currentData(), 'format': self.format.currentData(),
                 'orientation': self.orientation.currentData(), 'echelle': self.scale.currentData(),
-                'zoom': self.zoom.value(), 'marge': self.margin.value(), 'plaque': self.plate.isChecked()}
+                'zoom': self.zoom.value(), 'marge': self.margin.value(), 'plaque': self.plate.isChecked(),
+                'couleurs': self.colors.isChecked()}
 
     def update_info(self, *_a) -> str:
         """L'échelle et la feuille obtenues, montrées sous les réglages ; rend le texte."""
@@ -182,6 +188,7 @@ class PrintDialog(QDialog):
         self.scale.setEnabled(not bat and v['format'] != REAL)
         self.orientation.setEnabled(not bat and v['format'] != REAL)   # la taille réelle : la feuille suit le dessin
         self.plate.setEnabled(q in ('plaque', 'tout', 'calques'))
+        self.colors.setEnabled(not bat)                  # la page BAT : ses couleurs à elle
         if bat:
             text = tr('La page BAT : sa fenêtre suit (format, orientation, échelle)')
         else:

@@ -96,8 +96,8 @@ class TestDocTabMenu(Base):
         w.canvas.doc.add(Shape(path=geom.Path([geom.rect(0, 0, 10, 10)])))
         m = w.doc_tab_menu(w.doc_index, exec_menu=False)
         texts = [a.text() for a in m.actions() if a.text()]
-        self.assertEqual(texts, ['Nouveau', 'Dupliquer', 'Recharger depuis le disque', 'Ouvrir le dossier contenant',
-                                 'Enregistrer',
+        self.assertEqual(texts, ['Nouveau', 'Dupliquer', 'Renommer…', 'Épingler', 'Recharger depuis le disque',
+                                 'Ouvrir le dossier contenant', 'Enregistrer',
                                  'Enregistrer sous…', 'Fermer', 'Rouvrir un onglet fermé'])
         n = len(w.docs)
         w.duplicate_tab()

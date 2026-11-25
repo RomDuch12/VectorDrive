@@ -146,6 +146,16 @@ class RadialTool(Tool):
     def cancel(self):
         self.a = self.b = None
 
+    def take_draft(self):
+        """Le glisser en cours, abandonné (F2 : la forme en chiffres) : (type, point du clic, forme commencée — None
+        tant qu'elle n'a pas de taille) ; None sans glisser."""
+        if self.a is None:
+            return None
+        got = (self.kind, self.a, self.spec())
+        self.cancel()
+        self.c.overlay_update()                          # l'aperçu effacé
+        return got
+
 
 # --- formes point par point ------------------------------------------------------
 
