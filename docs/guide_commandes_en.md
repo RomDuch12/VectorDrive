@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 1.32.0
+# Command guide — VectorDrive 1.36.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -170,10 +170,11 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 
 | Command | Shortcut | Purpose |
 |---|---|---|
-| Direction | Ctrl+7, Ctrl+È | Contour direction: closed ones in green (clockwise) or blue (counter-clockwise), open ones in black (white in the dark theme); rank of each object. Direction arrows: F10 › Display |
+| Direction | Ctrl+7, Ctrl+È | Contour direction: closed ones in green (clockwise) or blue (counter-clockwise), open ones in black (white in the dark theme); rank of each object (“Contour numbers” hides it). Direction arrows: F10 › Display |
 | Fill | Ctrl+9, Ctrl+Ç | Closed contours filled with their tool colour |
 | Engraving preview |  | Strokes at the real width of their tool (tool table): spots details too fine for the cutter or the laser |
 | Grid | Ctrl+G |  |
+| Contour numbers |  | With Direction (Ctrl+7): the rank of each object written at its start; unchecked: the direction colours only |
 | Start points |  | The start point of each displayed contour (filled square) |
 | Control points |  | The points of all displayed contours: square for a corner, circle for a smooth point |
 

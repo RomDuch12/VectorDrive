@@ -92,7 +92,9 @@ def check(toolpaths, setup) -> list[str]:
                 out.append(f'« {tp.name} » descend à {lowest:.3f} mm, sous la profondeur prévue')
         if tool is not None and tool.kind != 'laser' and not tool.spindle:
             out.append(f'outil « {tool.name} » sans régime de broche')
-        out.extend(f'« {tp.name} » : {w}' for w in tp.warnings)
+        wire = any(isinstance(c, dict) and c.get('kind') == 'fil_edm' for c in (tp.cycles or ()))
+        out.extend(f'« {tp.name} » : {w}' for w in tp.warnings      # électroérosion à fil (round 1178) : ses
+                   if not (wire and str(w).startswith('BLOQUANT')))   # bloquants, le post les reprend
     return out
 
 
@@ -326,7 +328,7 @@ def _file_part(text: str) -> str:
     return out.strip(' .') or 'sans_nom'
 
 
-def program_groups(toolpaths, how: str, plan_of=None) -> list:
+def _program_groups(toolpaths, how: str, plan_of=None) -> list:
     """Les programmes à écrire (TE : Grouper) : [(suffixe du fichier, parcours)], dans l'ordre de la liste. 'plan' : un par plan
     (`plan_of(parcours)` rend son nom) ; 'parcours' : un par opération, numérotés ; sinon tout dans un fichier, sans suffixe."""
     paths = list(toolpaths)
@@ -343,6 +345,29 @@ def program_groups(toolpaths, how: str, plan_of=None) -> list:
         if len(out) > 1:
             return [(f'{i:02d}_{_file_part(group[0].name)}', group) for i, group in enumerate(out.values(), 1)]
     return [('', paths)]
+
+
+def program_groups(toolpaths, how: str, plan_of=None) -> list:
+    """Les programmes à écrire (`_program_groups`). Électroérosion à fil (round 1178) : ses parcours (ceux qui
+    vont au programme) répartis dans plusieurs programmes ne se contrôlent plus ensemble (ordre des opérations,
+    chutes) : chacun y va en copie, avec un avertissement bloquant que le post-processeur reprend."""
+    import copy
+    from ..wire_edm import BLOCKING, split_wire
+    paths = list(toolpaths)                             # une fois (un itérateur ne se relit pas)
+    groups = _program_groups(paths, how, plan_of)
+    spread = sum(1 for _suffix, part in groups if split_wire(part)[1])
+    if spread < 2:
+        return groups
+    note = (f'{BLOCKING} : électroérosion à fil répartie en plusieurs programmes ({spread}, « Programmes » : un par '
+            'plan ou par parcours) : l\'ordre des opérations et leurs chutes ne se contrôlent que dans un seul '
+            'programme — choisir un seul fichier, ou mettre l\'électroérosion sur un même plan')
+    wire = {id(tp) for tp in split_wire(paths)[1]}
+
+    def marked(tp):
+        c = copy.copy(tp)
+        c.warnings = list(tp.warnings) + [note]
+        return c
+    return [(suffix, [marked(tp) if id(tp) in wire else tp for tp in part]) for suffix, part in groups]
 
 
 #: orientations de sortie (TE, page 819) : (u, v) dans la plaque de W x H -> position dans la plaque orientée
@@ -484,6 +509,12 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
     fn, machine = _resolve(key, machine)
     if fn is None:
         raise PostError(f'post-processeur « {key} » absent (il est apporté par un plugin)')
+    skipped = []
+    if not getattr(fn, 'wire_edm', False):              # électroérosion à fil (round 1178) : seulement un post qui
+        from ..wire_edm import split_wire               # la connaît (`cam.post.robocut`) ; les autres l'écriraient
+        toolpaths, wire = split_wire(toolpaths)         # comme un fraisage à Z 0
+        skipped = [f'« {tp.name or "électroérosion"} » : électroérosion à fil, pas écrite par ce post-processeur'
+                   for tp in wire]
     if origin is not None:                             # origine du dessin : zéro du programme
         toolpaths = shifted(toolpaths, origin)
         try:
@@ -516,5 +547,7 @@ def run(key: str, toolpaths, setup, *, title: str = '', machine=None, stem: str 
     res = fn(toolpaths, setup, title=title, machine=machine, stem=stem, box_mm=box_mm, **extra)
     if not res.files and res.text:                     # texte vide : export refusé ou rien à écrire
         res.files = [(stem + res.extension, res.text)]
-    res.warnings = check(toolpaths, setup) + res.warnings
+    res.warnings = check(toolpaths, setup) + skipped + res.warnings
+    if getattr(fn, 'wire_edm', False):                  # électroérosion : les bloquants en tête (les listes montrées
+        res.warnings = sorted(res.warnings, key=lambda w: not str(w).startswith('BLOQUANT'))   # sont tronquées)
     return res

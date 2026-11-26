@@ -752,7 +752,7 @@ class MainWindow(QMainWindow):
         self._upd.failed.connect(self._update_failed)
         self._upd_silent = True
         if self.settings.value('maj/auto', 'false') in (True, 'true'):
-            QTimer.singleShot(4000, lambda: self.check_updates(silent=True))
+            QTimer.singleShot(4000, self._startup_update_check)
         QTimer.singleShot(1500, self._auto_news)
 
     # --- actions ------------------------------------------------------------
@@ -1201,7 +1201,11 @@ class MainWindow(QMainWindow):
         a('grid', tr('Grille'), self._toggle_grid, 'Ctrl+G', 'grid', checkable=True)
         a('direction', tr('Sens'), self._toggle_direction, 'Ctrl+7', 'direction', checkable=True,
           tip=tr('Sens des contours : fermés en vert (horaire) ou en bleu (anti-horaire), ouverts en noir (blanc '
-                 'en thème sombre) ; rang de chaque objet. Les flèches de sens : F10 › Affichage'))
+                 'en thème sombre) ; rang de chaque objet (« Numéros des contours » le cache). Les flèches de '
+                 'sens : F10 › Affichage'))
+        a('direction_numbers', tr('Numéros des contours'), self._toggle_direction_numbers, None, 'direction_numbers',
+          checkable=True, tip=tr('Avec Sens (Ctrl+7) : le rang de chaque objet écrit à son départ ; décoché : les '
+                                 'couleurs de sens seules'))
         a('tool_colors', tr('Couleurs'), self._toggle_tool_colors, 'Ctrl+8', 'select_same_tool', checkable=True,
           tip=tr('Traits et remplissages à leur couleur : celle donnée à l\'objet (Édition › Couleur…), sinon celle '
                  'de son outil (table des outils) ; décoché : tous à l\'encre'))
@@ -2423,6 +2427,10 @@ class MainWindow(QMainWindow):
           tip=tr('Inverser le sens de parcours des contours sélectionnés'))
         a('update', tr('Mises à jour'), lambda: self.check_updates(silent=False), None, 'update',
           tip=tr('Rechercher une nouvelle version'))
+        a('app_update', tr('Mettre à jour l’application…'), lambda _=False: self.update_application(), None,
+          'update', tip=tr('Chercher une version plus récente (manifeste de la source des mises à jour, archive '
+                           'portable déposée dans le dossier réglé, F10 › Mises à jour), dire ce qui est trouvé, '
+                           'puis l’installer'))
         a('favorites', tr('Favoris…'), lambda _=False: self.favorites_dialog(), None, 'star',
           tip=tr('Les favoris (barre de boutons du haut) : ajouter, retirer, ranger, libellés'))
         a('shortcuts', tr('Raccourcis clavier'), self.shortcuts_dialog, None, 'options',
@@ -2664,6 +2672,7 @@ class MainWindow(QMainWindow):
         g = t.group(tr('Contours'))
         for k in ('direction', 'fill', 'engrave_preview', 'grid'):
             g.add(A[k])
+        g.add(A['direction_numbers'], big=False)         # les numéros de Ctrl+7 (round 1176)
         g.add(A['show_starts'], big=False)
         g.add(A['show_nodes'], big=False)
         g = t.group(tr('Repères'))
@@ -3259,6 +3268,9 @@ class MainWindow(QMainWindow):
             on = self.settings.value(f'vue/points_{which}', 'false') in (True, 'true')
             self.A['show_' + which].setChecked(on)
             setattr(self.canvas, 'show_' + which, on)
+        on = self.settings.value('vue/sens_numeros', 'true') not in (False, 'false')   # numéros de Ctrl+7
+        self._check_quietly('direction_numbers', on)
+        self.canvas.show_order_numbers = on
 
     # --- état ---------------------------------------------------------------
     def _center(self):
@@ -5658,6 +5670,9 @@ class MainWindow(QMainWindow):
             a = m.addAction(icon('options'), tr('Réglages de « {0} »…').format(
                 button.defaultAction().text().replace('&', '').replace('\n', ' ')), settings)
             m.setDefaultAction(a)
+            m.addSeparator()
+        if self._action_key(button.defaultAction()) == 'direction' and 'direction_numbers' in self.A:
+            m.addAction(self.A['direction_numbers'])     # Sens (Ctrl+7) : ses numéros montrés ou cachés (round 1176)
             m.addSeparator()
         if not self._is_favorite_button(button) and self._in_ribbon(button):
             self._button_place_menu(m, button)           # sa taille et sa place dans le ruban (round 1141)
@@ -8969,6 +8984,8 @@ class MainWindow(QMainWindow):
         """Avant de tout fermer (fermeture, mise à jour) : avec la session
         silencieuse, rien n'est perdu ; sans elle, chaque dessin modifié est
         proposé à l'enregistrement. Rend False si l'utilisateur renonce."""
+        if getattr(self, '_update_settled', False):      # mise à jour de l'application : tout vient d'être passé à la
+            return True                                  # nouvelle version (`app_update`), rien n'est redemandé
         if self.session_dir is not None:
             return True
         self._store_current()
@@ -9672,7 +9689,8 @@ class MainWindow(QMainWindow):
 
     VIEW_FLAGS = {'show_direction': 'direction', 'show_fill': 'fill', 'tool_colors': 'tool_colors',
                   'engrave_preview': 'engrave_preview',
-                  'show_grid': 'grid', 'show_starts': 'show_starts', 'show_nodes': 'show_nodes'}
+                  'show_grid': 'grid', 'show_starts': 'show_starts', 'show_nodes': 'show_nodes',
+                  'show_order_numbers': 'direction_numbers'}
     VIEW_3D = ('yaw', 'pitch', 'zoom', 'ortho', 'display', 'clip')
 
     def _view_state(self) -> dict:
@@ -11841,13 +11859,33 @@ class MainWindow(QMainWindow):
                 __version__, platform.python_version(), qVersion(), PySide6.__version__)
             + '<br><br>' + tr('Mode : {0}').format(mode) + plugs)
 
+    def _startup_update_check(self) -> None:
+        """La recherche silencieuse du démarrage (« Rechercher au démarrage ») : seulement dans la fenêtre qui tient
+        le canal d'instance — pas dans une fenêtre `--nouvelle-fenetre` ni de script (relecture du 26/11)."""
+        if getattr(self, '_instance_server', None) is None:
+            return
+        self.check_updates(silent=True)
+
+    def _update_sources(self) -> tuple[str, list]:
+        """Où chercher une mise à jour : la source réglée (`maj/source` : son manifeste, et les archives portables
+        qui y sont déposées si c'est un dossier) et le dossier de la mise à jour par dossier (`maj/dossier_source`,
+        demande du 26/11)."""
+        from .. import app_update as AU
+        source = str(self.settings.value('maj/source', '') or '')
+        try:
+            folders = [str(AU.source_dir(self.settings))]
+        except Exception:                                # noqa: BLE001 — réglage illisible : la source seule
+            folders = []
+        return source, folders
+
     def check_updates(self, *, silent: bool = False) -> None:
-        """Recherche une mise à jour dans la source réglée (F10), sans
+        """Recherche une mise à jour (F10 › Mises à jour : le manifeste de la source réglée, et les archives
+        portables déposées seules dans elle et dans le dossier où chercher la dernière version — `update.look`), sans
         bloquer l'interface ; `silent` : ne rien dire s'il n'y a rien."""
         import threading
         from .. import update
-        source = str(self.settings.value('maj/source', '') or '')
-        if not source:
+        source, folders = self._update_sources()
+        if not source and not folders:
             if not silent:
                 QMessageBox.information(self, tr('Mises à jour'),
                                         tr('Aucune source de mises à jour : la choisir dans les options (F10).'))
@@ -11856,10 +11894,82 @@ class MainWindow(QMainWindow):
 
         def work():
             try:
-                self._upd.found.emit(update.check(source))
+                self._upd.found.emit(update.look(source, folders=folders))
             except Exception as ex:          # réseau, partage absent, manifeste invalide
                 self._upd.failed.emit(str(ex))
         threading.Thread(target=work, daemon=True).start()
+
+    def update_application(self):
+        """« Mettre à jour l’application… » (F10 › Mises à jour, recherche de commandes ; demande du 26/11) : la même
+        vérification que `check_updates` — manifeste et archives portables déposées seules —, dans un fil avec barre
+        d'avancement, puis ce qu'elle trouve (`_update_found`) : la mise à jour par manifeste (empreinte vérifiée), la
+        mise à jour par dossier (`app_update`), ou ce qui a été regardé. Rend le résultat de `app_update` quand c'est
+        elle qui s'en charge, sinon None."""
+        from .. import update
+        from .progress import Cancelled, run
+        source, folders = self._update_sources()
+        self._upd_silent = False
+        try:
+            got = run(self, tr('Recherche de la dernière version'), update.look, source, folders=folders)
+        except Cancelled:
+            return None
+        except Exception as ex:                          # noqa: BLE001 — dit, comme `check_updates`
+            self._update_failed(str(ex))
+            return None
+        return self._update_found(got)
+
+    def _update_seen(self, got) -> str:
+        """Ce que la vérification a regardé et trouvé, en clair (demande du 26/11 : « à jour » ne se dit plus sans
+        dire où l'on a cherché et ce qu'on y a vu)."""
+        if got.errors:
+            lines = [tr('Rien de plus récent trouvé (version {0} en cours), mais tout n’a pas pu être '
+                        'vérifié.').format(__version__)]
+        else:
+            lines = [tr('VectorDrive est à jour (version {0}).').format(__version__)]
+        if got.manifest is not None:
+            lines.append(tr('Manifeste de {0} : version {1}.').format(got.source, got.manifest) if got.manifest
+                         else tr('Pas de manifeste dans {0}.').format(got.source))
+        if got.folders:
+            where = ' ; '.join(got.folders)
+            lines.append(tr('Dernière archive portable de cette édition dans {0} : version {1}.').format(
+                where, got.archive.version) if got.archive is not None
+                else tr('Aucune archive portable de cette édition dans {0}.').format(where))
+        if got.odd:                                      # « … (1).zip » : ignorée, et dit pourquoi
+            lines.append(tr('Ignorées, leur nom n’ayant pas la forme VectorDrive-1.34.0-portable.zip : {0}').format(
+                ' ; '.join(sorted(set(got.odd))[:5])))
+        if got.errors:
+            lines.append(tr('Non vérifié : {0}').format(' ; '.join(got.errors)))
+        return '\n'.join(lines)
+
+    def _manifest_portable(self, up):
+        """Le manifeste désigne une archive portable et l'application est portable (relecture du 26/11) : l'archive
+        est copiée dans un dossier provisoire et son empreinte SHA-256 vérifiée (`update.fetch`), puis installée par
+        la mise à jour par dossier (`app_update` : sa confirmation, un dossier à elle, tous les onglets passés) — plus
+        jamais recopiée sur l'application en cours (`portable.launch_portable_update`). Le dossier provisoire est
+        effacé ensuite (l'archive est gardée dans `zips/`). Au démarrage (recherche silencieuse), la question vient
+        d'abord : rien n'est copié ni téléchargé sans accord."""
+        import shutil
+        import tempfile
+        from .. import update
+        from .progress import Cancelled, run
+        if self._upd_silent:                             # au démarrage : rien copié ni téléchargé avant de demander
+            r = QMessageBox.question(self, tr('Mises à jour'), tr('La version {0} est disponible (installée : {1}).')
+                                     .format(up.version, __version__) + '\n\n'
+                                     + tr('Vérifier l’archive, puis proposer son installation ?'))
+            if r != QMessageBox.StandardButton.Yes:
+                return None
+        work = pathlib.Path(tempfile.mkdtemp(prefix='vectordrive_maj_'))
+        try:
+            try:
+                path = run(self, tr('Téléchargement de la mise à jour'), update.fetch, up, work)
+            except Cancelled:
+                return None
+            except Exception as ex:                      # noqa: BLE001 — empreinte fausse, partage absent : dit
+                QMessageBox.critical(self, tr('Mises à jour'), str(ex))
+                return None
+            return self.app_update({'archive': str(path), 'version': up.version})
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
     def _update_failed(self, msg: str) -> None:
         if self._upd_silent:
@@ -11867,13 +11977,27 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, tr('Mises à jour'), msg)
 
-    def _update_found(self, up) -> None:
+    def _update_found(self, up):
+        """Ce que la vérification a trouvé (`update.Lookup` ; ou la mise à jour seule, `update.Update`, None : rien) :
+        rien de plus récent — dit où l'on a cherché (`_update_seen`) ; une archive portable déposée seule, sans
+        manifeste ni empreinte (`Update.folder`) — la mise à jour par dossier, sa confirmation et la vérification de
+        l'archive (`app_update`), jamais l'installateur silencieux ; sinon la mise à jour par manifeste."""
         from .. import update
+        got = up if isinstance(up, update.Lookup) else update.Lookup(update=up)
+        up = got.update
         if up is None:
-            if not self._upd_silent:
-                QMessageBox.information(self, tr('Mises à jour'),
-                                        tr('VectorDrive est à jour (version {0}).').format(__version__))
-            return
+            if self._upd_silent:
+                if got.errors:                           # au démarrage : jamais « à jour » sans avoir pu chercher
+                    self.statusBar().showMessage(tr('Mises à jour : {0}').format(' ; '.join(got.errors)), 6000)
+                return None
+            (QMessageBox.warning if got.errors else QMessageBox.information)(self, tr('Mises à jour'),
+                                                                              self._update_seen(got))
+            return None
+        if up.folder:
+            return self.app_update({'source': up.folder})
+        from .. import portable
+        if up.portable and portable.is_portable():       # relecture du 26/11 : jamais remplacée sur place
+            return self._manifest_portable(up)
         text = tr('La version {0} est disponible (installée : {1}).').format(up.version, __version__)
         if up.notes:
             text += '\n\n' + up.notes
@@ -11905,6 +12029,416 @@ class MainWindow(QMainWindow):
             update.launch_installer(path)
         self.modified = False
         QApplication.quit()
+
+    # --- mise à jour de l'application par dossier (demande du 24/11 : « Bouton maj App ») ---------------------
+    def app_update(self, params=None, exec_dialog: bool = True) -> dict:
+        """Mettre à jour l'application depuis un dossier (`update_application`) : la dernière archive portable du
+        dossier réglé, cherchée dans un fil, plus récente que la version en cours, est installée dans le dossier VD
+        après UNE confirmation qui dit tout (`AppUpdateDialog`) ; puis les réglages, les données et la bibliothèque
+        sont repris (au choix), tous les onglets ouverts passés à la nouvelle version (`_app_update_hand_over`),
+        la nouvelle version lancée — et seulement quand sa fenêtre répond sur le canal d'instance unique : les
+        raccourcis mis à jour, celle-ci fermée (`vectordrive.app_update`). Aucune ancienne version n'est jamais
+        supprimée (demande du 26/11). `params` (essais) : 'source', 'dossier', 'reprendre', 'raccourcis' remplacent
+        les réglages ; sans fenêtre (`exec_dialog=False`), 'ok' vaut accord ; 'runner', 'dossiers_raccourcis',
+        'lanceur', 'sonde' (le canal d'instance), 'delai' (attente de la nouvelle version, en s), 'quitter' : les
+        effets. Rend {'etat': 'rien' | 'a_jour' | 'annule' | 'occupe' (l'assistant IA travaille) | 'erreur' (dont :
+        une autre fenêtre tient le canal, rien d'installé) | 'installe' (pas lancée, ou sans réponse : la fenêtre
+        reste) | 'lance', …}."""
+        from PySide6.QtWidgets import QApplication
+        from .. import app_update as AU
+        from .. import portable, update
+        from .app_update_dialog import AppUpdateDialog
+        from .options import value
+        from .progress import Cancelled, run
+        p = dict(params or {})
+        title = tr('Mise à jour de l’application')
+
+        def say(text: str, bad: bool = False) -> None:
+            self.statusBar().showMessage(text, 10000)
+            if exec_dialog:
+                (QMessageBox.warning if bad else QMessageBox.information)(self, title, text)
+
+        archive = pathlib.Path(p['archive']) if p.get('archive') else None     # désignée par le manifeste, vérifiée
+        source = archive.parent if archive is not None else pathlib.Path(p['source']) if p.get('source') \
+            else AU.source_dir(self.settings)
+        folder =pathlib.Path(p['dossier']) if p.get('dossier') else AU.versions_dir(self.settings)
+        special = AU.special_dirs()                      # une fois, dans le fil de l'interface (`QStandardPaths`)
+        refused = AU.unsafe_root(folder, source, special)    # racine d'un lecteur, dossiers de l'utilisateur, dossier
+        if refused:                                          # où chercher
+            say(refused, True)
+            return {'etat': 'erreur', 'message': refused}
+
+        def busy() -> dict | None:
+            why = self._app_update_busy()                # l'assistant IA travaille, un outil MCP est en cours
+            if not why:
+                return None
+            text = tr('Mise à jour de l’application impossible pour l’instant : {0}.').format(why)
+            say(text, True)
+            return {'etat': 'occupe', 'message': text}
+
+        stop = busy()
+        if stop:
+            return stop
+        server = getattr(self, '_instance_server', None)
+        probe = p.get('sonde') or AU.answers
+        delay = float(p.get('delai', AU.START_TIMEOUT))
+        # cette fenêtre servait-elle le canal d'instance ? Sinon, elle ne le rouvre jamais : deux fenêtres ne tiennent
+        # jamais le même nom de tube
+        serving = server is not None and server.isListening()
+
+        def quiet() -> None:
+            if server is not None and server.isListening():
+                server.close()
+
+        def listen_again() -> None:
+            if serving:                                  # la fenêtre reste : les lancements suivants la retrouvent
+                self._app_update_reclaim(server, probe)
+
+        def held_elsewhere() -> bool:
+            """Une autre fenêtre de VectorDrive tient le canal d'instance (le nôtre fermé le temps de le demander, puis
+            repris s'il est libre ; tenu : laissé à l'autre) : la nouvelle version lui passerait la main et
+            s'arrêterait."""
+            quiet()
+            taken = None
+            try:
+                taken = bool(probe())
+                return taken
+            finally:
+                if serving and taken is not None:        # sonde en erreur : pas de réponse sûre, canal laissé
+                    self._app_update_reclaim(server, probe, taken)
+
+        app = portable.app_dir()                         # le dossier de l'exécutable ; None : depuis les sources
+        edition = AU.current_edition(app, update.manifest_name())
+        if archive is not None:                          # celle du manifeste (`_manifest_portable`), de cette édition
+            every = [AU.Found(archive, str(p.get('version') or '').strip().lstrip('vV'), edition)]
+        else:
+            try:
+                every = run(self, tr('Recherche de la dernière version'), AU.scan, source)
+            except Cancelled:
+                return {'etat': 'annule'}
+            except Exception as ex:                      # dossier injoignable, partage absent
+                say(str(ex), True)
+                return {'etat': 'erreur', 'message': str(ex)}
+        found = AU.latest_of(every, edition)
+        if found is None:
+            text = tr('Aucune version portable de VectorDrive dans {0}.').format(source)
+            others = sorted({f.edition or tr('sans édition') for f in every}, key=str.lower)
+            if others:                                   # jamais une autre édition que celle qui tourne
+                text += ' ' + tr('Il s’y trouve une autre édition ({0}), que cette application ne prend pas.').format(
+                    ', '.join(others))
+            say(text, True)
+            return {'etat': 'rien', 'message': text}
+        if update.parse_version(found.version) <= update.parse_version(__version__):
+            text = tr('VectorDrive est à jour : version {0} (la dernière de {1} : {2}).').format(
+                __version__, source, found.version)
+            say(text)
+            return {'etat': 'a_jour', 'version': found.version, 'message': text}
+        try:
+            elsewhere = held_elsewhere()                 # avant toute installation, toute copie
+        except Exception as ex:                          # noqa: BLE001 — canal impossible à interroger : dit
+            say(str(ex), True)
+            return {'etat': 'erreur', 'message': str(ex)}
+        if elsewhere:
+            text = tr('Une autre fenêtre de VectorDrive est ouverte : la fermer, puis recommencer (la nouvelle version '
+                      'lui passerait la main et s’arrêterait). Rien n’est installé.')
+            say(text, True)
+            return {'etat': 'erreur', 'version': found.version, 'message': text}
+        dest = AU.version_folder(folder, found.version, found.edition)
+        is_portable = portable.is_portable()
+        dlg = AppUpdateDialog(
+            self, found, dest, zips=folder / AU.ZIPS, portable=is_portable, there=AU.already_there(dest),
+            shortcuts=bool(p['raccourcis']) if 'raccourcis' in p else value(self.settings, 'maj/raccourcis'))
+        if 'reprendre' in p:
+            dlg.carry.setChecked(bool(p['reprendre']) and is_portable)
+        ok = bool(dlg.exec()) if exec_dialog else bool(p.get('ok'))
+        choice = dlg.values()
+        dlg.deleteLater()
+        carry = is_portable and choice['reprendre']
+        if not ok:
+            return {'etat': 'annule', 'version': found.version}
+        stop = busy()                                    # (l'assistant a pu reprendre pendant la confirmation)
+        if stop:
+            return stop
+        self.finish_typing()                             # le texte qui s'écrit est fini avant d'être passé
+        # aucun dessin n'est proposé à l'enregistrement : tous les onglets passent à la nouvelle version, tels quels
+        # (demande du 26/11 : « attention à récupérer tous les onglets »)
+        carried = None
+        handed, passed = 0, None
+        try:
+            inst = run(self, tr('Installation de la version {0}').format(found.version), AU.install, found.path,
+                       folder, version=found.version, edition=found.edition, special=special)
+            if carry:
+                errors: list[str] = []
+                if not self._app_update_keep_state(errors):     # jamais une session périmée reprise : on s'arrête
+                    raise AU.AppUpdateError(tr('La session ou les réglages n’ont pas pu être enregistrés ({0}) : la '
+                                               'mise à jour s’arrête, rien n’est repris ni lancé.').format(
+                                                   ' ; '.join(errors)))
+                carried = run(self, tr('Reprise des réglages, des données et de la bibliothèque'), AU.carry_settings,
+                              app, inst.exe.parent)
+            else:                                        # rien de repris : la nouvelle version ne le proposera pas
+                AU.decline_settings(inst.exe.parent)
+            try:                                         # à part : jamais dans la session propre de la version
+                handed, passed = self._app_update_hand_over(inst.exe.parent)
+            except Exception as ex:                      # noqa: BLE001 — jamais un onglet perdu : on s'arrête
+                raise AU.AppUpdateError(tr('Les onglets ouverts n’ont pas pu être passés à la nouvelle version ({0}) : '
+                                           'la mise à jour s’arrête, rien n’est lancé.').format(
+                                               str(ex) or ex.__class__.__name__)) from ex
+        except Cancelled:
+            self._forget_kept_now()                      # VectorDrive reste ouvert : rien de gardé pour rien
+            return {'etat': 'annule', 'version': found.version}
+        except Exception as ex:
+            self._forget_kept_now()
+            say(str(ex), True)
+            return {'etat': 'erreur', 'message': str(ex)}
+        notes = []
+
+        def listed(items: list) -> str:
+            return ' ; '.join(items[:5]) + (' …' if len(items) > 5 else '')
+
+        if carried is not None and carried.failed:       # jamais en silence (l'ancienne version reste, elle les a)
+            notes.append(tr('{0} fichier(s) n’ont pas pu être repris (l’ancienne version est gardée) : {1}').format(
+                len(carried.failed), listed(carried.failed)))
+        if carried is not None and carried.skipped:
+            notes.append(tr('{0} fichier(s) non repris : la nouvelle version a déjà un fichier de ce nom, différent, '
+                            'ou c’est un lien (l’ancienne version est gardée) : {1}').format(
+                                len(carried.skipped), listed(carried.skipped)))
+        quiet()                                          # la nouvelle version s'ouvre, au lieu de nous passer la main
+        state = why = ''
+        proc = None
+        try:
+            if probe():                                  # une autre fenêtre tient le canal : la nouvelle version lui
+                raise AU.AppUpdateError(tr('une autre fenêtre de VectorDrive est ouverte ; la fermer, puis '
+                                           'recommencer'))   # passerait la main et s'arrêterait
+            proc = (p.get('lanceur') or AU.launch)(inst.exe)
+            state = run(self, tr('Lancement de la version {0}').format(found.version), AU.wait_started, proc, probe,
+                        delay) if proc else 'refus'
+        except Cancelled:
+            state = 'interrompu'
+        except Exception as ex:
+            state, why = 'erreur', str(ex)
+        res = {'etat': 'lance' if state == 'ok' else 'installe', 'version': found.version, 'dossier': inst.folder,
+               'exe': inst.exe, 'raccourcis': None, 'demarrage': state, 'onglets': handed,
+               'non_repris': list(carried.failed) + list(carried.skipped) if carried else [], 'notes': notes}
+        if state != 'ok':                                # elle ne répond pas : ni raccourcis, ni fermeture
+            try:
+                alive = state in ('muette', 'interrompu') or (bool(proc) and proc.poll() is None)
+            except Exception:                            # noqa: BLE001 — processus inconnu : peut-être vivant
+                alive = True
+            if not alive:                                # muette, annulée, ou encore en vie : elle construit sa
+                listen_again()                           # fenêtre et prendra le canal (`serve`) ; jamais deux
+            if state in ('arretee', 'erreur', 'refus') and passed is not None:     # relecture du 26/11 : pas
+                AU.drop_handover(passed)                 # démarrée — ses onglets, restés ici, ne reviendraient plus
+            self._forget_kept_now()                      # tard en copie périmée (muette, interrompue : gardés)
+            if state == 'interrompu':
+                text = tr('Attente interrompue : la version {0}, installée dans {1}, a peut-être démarré. Rien d’autre '
+                          'n’est changé : ni raccourcis, ni anciennes versions.').format(found.version, inst.folder)
+            elif state == 'muette':
+                text = tr('La version {0} est installée dans {1}, mais sa fenêtre n’a pas répondu en {2} s : elle a '
+                          'peut-être démarré quand même. Rien d’autre n’est changé : ni raccourcis, ni anciennes '
+                          'versions.').format(found.version, inst.folder, int(delay))
+            else:
+                reason = tr('elle s’est arrêtée au démarrage') if state == 'arretee' else (why or tr('à lancer à la '
+                                                                                                    'main'))
+                text = tr('La version {0} est installée dans {1}, mais elle n’a pas démarré ({2}). Rien d’autre n’est '
+                          'changé : ni raccourcis, ni anciennes versions.').format(found.version, inst.folder, reason)
+            say(text, True)
+            res['message'] = text
+            return res
+        try:
+            if choice['raccourcis']:
+                link_dirs = p.get('dossiers_raccourcis') or AU.shortcut_dirs()  # dans le fil de l'interface
+                res['raccourcis'] = links = run(
+                    self, tr('Mise à jour des raccourcis'), AU.retarget_shortcuts,
+                    app / AU.EXE if app is not None else None, inst.exe, p.get('runner'),
+                    dirs=link_dirs, versions_dir=folder, edition=found.edition)
+                notes += links['erreurs']
+        except Cancelled:
+            pass
+        except Exception as ex:                          # noqa: BLE001 — la nouvelle version tourne déjà
+            notes.append(str(ex))
+        if notes:
+            say(tr('La version {0} est lancée. À savoir : {1}').format(found.version, ' ; '.join(notes)), True)
+        # la fermeture ne redemande rien (`_confirm_discard`) ; l'état « modifié » reste tel quel : la session de cette
+        # version, gardée en secours, ne doit pas dire « enregistré » un dessin qui ne l'est pas
+        self._update_settled = True
+        try:
+            (p.get('quitter') or QApplication.quit)()
+        finally:
+            self._update_settled = False
+        res['ferme'] = bool(getattr(self, '_closing', False))
+        if not res['ferme']:                             # fermeture refusée (police en cours d'édition…) : on reste
+            self._forget_kept_now()
+            listen_again()
+        return res
+
+    def _app_update_hand_over(self, app_dir) -> tuple:
+        """Demande du 26/11 (« attention à récupérer tous les onglets ») : tous les onglets ouverts — enregistrés,
+        modifiés, jamais enregistrés, épinglés, renommés, dans leur ordre, l'onglet actif, leurs parcours — écrits dans
+        un sous-dossier neuf de `<app_dir>/donnees/session_maj` (`app_update.new_handover`), jamais dans la session
+        propre de la nouvelle version (relecture du 26/11 : une version déjà là y garde peut-être ses dessins non
+        enregistrés) ; elle les rouvre à son lancement (`reopen_after_update`). Seul un onglet vide jamais touché, à
+        côté d'autres, ne suit pas (comme dans la session) ; un onglet sans dessin ni fichier n'est pas écrit. Le
+        passage d'une tentative d'avant restée sans réponse (muette, interrompue), jamais rouvert, est retiré : ses
+        onglets sont toujours ici, ils passent dans le nouveau. La session de cette fenêtre-ci n'est pas touchée. Sans
+        `VectorDrive.ini` la nouvelle version ne serait pas portable et ne les lirait jamais : erreur. Rend (nombre
+        d'onglets passés, leur dossier) ; une erreur arrête la mise à jour."""
+        from .. import app_update as AU
+        from . import session
+        ini = pathlib.Path(app_dir) / AU.INI
+        if not ini.is_file():
+            raise OSError(tr('{0} absent : la nouvelle version ne serait pas portable').format(ini))
+        before = getattr(self, '_app_update_passed', None)
+        if before is not None and before.is_dir() and AU.tries_of(before) == 0:
+            AU.drop_handover(before)                     # passage d'une tentative d'avant (muette, interrompue)
+        self._app_update_passed = None                   # jamais rouvert : ses onglets sont toujours ici
+        snap = session.snapshot(self)
+        snap['win'], snap['written'] = None, {}          # tout écrit là-bas ; rien de changé pour cette fenêtre
+        # ni dessin ni fichier (l'onglet vide jamais touché, seul) : rien à rouvrir — ne bloque jamais le passage
+        snap['docs'] = [d for d in snap['docs'] if d[1] is not None or d[0].get('path')]
+        folder = AU.new_handover(app_dir)
+        try:
+            session.write(snap, folder)
+        except BaseException:
+            AU.drop_handover(folder)                     # à moitié écrit : retiré (les onglets sont toujours ici)
+            raise
+        self._app_update_passed = folder
+        return len(snap['docs']), folder
+
+    def reopen_after_update(self, root=None) -> int:
+        """Au lancement (`VectorDrive.py`, après la session silencieuse) : les onglets que des mises à jour ont passés
+        à cette version (`_app_update_hand_over`, `donnees/session_maj/…` de son dossier ; `root` : ce dossier-là,
+        essais) sont rouverts, du plus ancien passage au plus récent — sautés : un fichier déjà ouvert ici, intact
+        dans le passage ; rouvert à part (sans fichier, « Enregistrer sous ») : un dessin modifié dont le fichier est
+        déjà ouvert ici. Chaque passage n'est effacé qu'une fois rouvert en entier ; la tentative est comptée avant
+        (`MAX_TRIES` : un plantage pendant la réouverture ne revient pas en boucle) ; un passage qui n'a pas pu l'être
+        reste, et c'est dit, avec son dossier. Rend le nombre d'onglets rouverts."""
+        import json
+        from .. import app_update as AU
+        from .. import portable
+        from . import session
+        from .doctabs import same_file
+        if root is None:
+            app = portable.app_dir()
+            if app is None:                              # depuis les sources : jamais de passage
+                return 0
+            root = AU.handover_root(app)
+        AU.sweep_handovers(root)                         # passages déjà rouverts dont l'effacement avait échoué
+        total = 0
+
+        def stuck_at(folder) -> None:
+            self.statusBar().showMessage(tr('Des onglets passés par une mise à jour n’ont pas tous pu être rouverts : '
+                                            'leurs dessins restent dans {0}.').format(folder), 15000)
+
+        for folder in AU.pending_handovers(root):
+            index = AU.read_handover(folder, session.VERSION)
+            if index is None:                            # illisible, verrouillé, d'une version à venir : jamais
+                stuck_at(folder)                         # réécrit ni effacé (2e relecture du 26/11)
+                continue
+            tries = AU.tries_of(folder)
+            if tries >= AU.MAX_TRIES:
+                stuck_at(folder)
+                continue
+            n, lost, done = 0, [], False
+            try:
+                AU.note_try(folder, tries + 1)           # avant : un plantage pendant la réouverture compte
+                self._store_current()
+                docs, files, paths = [], [], []
+                for e in index['docs']:
+                    path, drawing = e.get('path'), e.get('file')
+                    there = bool(path) and any(same_file(t.path, path) for t in self.docs)
+                    if there and not drawing:
+                        continue                         # le même fichier, intact : déjà ouvert ici
+                    if there:                            # modifié, son fichier déjà ouvert : à part, sans fichier
+                        e = {**e, 'path': None, 'source': e.get('source') or path}
+                    if drawing:
+                        (files if (folder / drawing).is_file() else lost).append(e)
+                    elif path:
+                        paths.append(e)                  # introuvable : `restore` le dit, une fois, sans bloquer
+                    else:
+                        continue                         # ni dessin ni fichier : rien à rouvrir
+                    docs.append(e)
+                if docs != index['docs'] or index.get('version') != session.VERSION:
+                    part = folder / (session.INDEX + AU.PART)
+                    part.write_text(json.dumps({**index, 'version': session.VERSION, 'docs': docs},
+                                               ensure_ascii=False, indent=1), encoding='utf-8')
+                    os.replace(part, folder / session.INDEX)
+                n = session.restore(self, folder) if docs else 0
+                opened = sum(1 for e in paths if any(same_file(t.path, e['path']) for t in self.docs))
+                done = not lost and n - opened >= len(files)     # chaque dessin du passage rouvert
+            except Exception as ex:                      # noqa: BLE001 — passage abîmé : gardé, et dit
+                self.statusBar().showMessage(tr('Session illisible : {0}').format(ex), 10000)
+            total += n
+            if done:
+                if not AU.retire_handover(folder):       # ni témoin ni renommage : au moins plus jamais rouvert
+                    try:
+                        AU.note_try(folder, AU.MAX_TRIES)
+                    except OSError:
+                        pass
+                continue
+            try:
+                AU.note_try(folder, AU.MAX_TRIES)        # gardé, sans revenir de lui-même
+            except OSError:
+                pass
+            stuck_at(folder)
+        return total
+
+    def _app_update_keep_state(self, errors: list | None = None) -> bool:
+        """Avant de copier réglages et données vers la nouvelle version : la place de la fenêtre, les onglets gardés
+        à rouvrir (sans session), la session silencieuse (onglets, dessins modifiés) et les réglages sont écrits,
+        comme à la fermeture. Faux si l'un d'eux n'a pas pu l'être (disque plein, droits…), l'erreur ajoutée à
+        `errors` : la mise à jour s'arrête alors."""
+        from PySide6.QtCore import QSettings
+        try:
+            self.remember_window()
+            if self.session_dir is None:
+                self._remember_reopen()                  # les onglets gardés d'avant reviendront d'eux-mêmes
+            self.save_session()
+            self.settings.sync()
+            if self.settings.status() != QSettings.Status.NoError:
+                raise OSError(tr('réglages non enregistrés : {0}').format(self.settings.fileName()))
+        except Exception as ex:                          # noqa: BLE001 — dit, et la mise à jour s'arrête
+            if errors is not None:
+                errors.append(str(ex) or ex.__class__.__name__)
+            self.statusBar().showMessage(tr('Session non enregistrée : {0}').format(ex), 10000)
+            return False
+        return True
+
+    def _app_update_busy(self) -> str:
+        """Pourquoi l'application ne peut pas être mise à jour maintenant ('' : elle le peut) : l'assistant IA
+        travaille (il tient un onglet, ou sa demande court encore), ou un outil de l'assistant — le sien ou celui d'un
+        assistant branché par le pont MCP — est en cours d'exécution."""
+        from .assistant_panel import AssistantPanel
+        dock = getattr(self, 'dock_assistant', None)
+        ai = dock.widget() if dock is not None else None
+        ai = ai if isinstance(ai, AssistantPanel) else None
+        if self.agent_tab() is not None or (ai is not None and ai.running):
+            return tr('l’assistant IA travaille : attendre la fin de sa demande, ou « Arrêter l’assistant »')
+        for bridge in (getattr(getattr(self, '_agent_server', None), 'bridge', None), getattr(ai, 'bridge', None)):
+            if getattr(bridge, 'active', 0):
+                return tr('un outil de l’assistant (pont MCP) est en cours : attendre sa fin')
+        return ''
+
+    def _app_update_reclaim(self, server, probe, taken: bool | None = None) -> None:
+        """Après une mise à jour qui n'a pas fermé cette fenêtre : le canal d'instance unique repris s'il est libre
+        (`taken` faux). Sonde en erreur : pas de réponse sûre, le canal est laissé. Tenu par une autre fenêtre (ou la
+        nouvelle version) : jamais repris — le prochain lancement devient la fenêtre principale ; jamais deux fenêtres
+        sur le même canal. `listen()` refusé : noté (`_app_update_listen`) et dit, sans plus."""
+        from . import instance
+        if server is None or getattr(self, '_closing', False) or server.isListening():
+            return
+        if taken is None:
+            try:
+                taken = bool(probe())
+            except Exception:                            # noqa: BLE001 — pas de réponse sûre : le canal est laissé
+                return
+        if taken:
+            return
+        ok = bool(server.listen(instance.channel()))
+        self._app_update_listen = ok
+        if not ok:
+            self.statusBar().showMessage(tr('Le canal d’instance n’a pas pu être rouvert ({0}) : un dessin ouvert par '
+                                            'double clic ouvrira une autre fenêtre.').format(server.errorString()),
+                                         10000)
 
     # --- édition ------------------------------------------------------------
     CLIP_MARK = 'application/x-vectordrive-copie'
@@ -14425,6 +14959,13 @@ class MainWindow(QMainWindow):
 
     def _toggle_direction(self, on) -> None:
         self.canvas.show_direction = on
+        self.canvas.update()
+
+    def _toggle_direction_numbers(self, on) -> None:
+        """Numéros des contours (rang de chaque objet) avec Sens, Ctrl+7 : montrés ou cachés, les couleurs restent ;
+        gardé dans les réglages (demande du 26/11)."""
+        self.canvas.show_order_numbers = bool(on)
+        self.settings.setValue('vue/sens_numeros', bool(on))
         self.canvas.update()
 
     def _toggle_points(self, which: str, on: bool) -> None:

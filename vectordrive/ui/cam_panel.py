@@ -679,6 +679,8 @@ class ToggleBox(QCheckBox):
         p.drawControl(QStyle.ControlElement.CE_PushButton, opt)
 #: une instruction machine n'a ni outil ni parcours : ses seuls champs
 INSTRUCTION_FIELDS = {'name', 'kind', 'enabled', 'instruction', 'params'}
+#: électroérosion à fil (round 1179) : ses réglages (`params`), ce qui est coupé et comment ; ni outil ni profondeurs
+WIRE_FIELDS = {'name', 'kind', 'enabled', 'params', 'sources', 'items', 'side', 'start_policy', 'order_mode'}
 
 
 class OpIllustration(QWidget):
@@ -1283,7 +1285,7 @@ class FieldsDialog(QDialog):
         w = self.widgets.get('tool_id')
         kind = self.widgets['kind'].currentData() if 'kind' in self.widgets else getattr(self.obj, 'kind', '')
         if isinstance(self.obj, model.Operation) and w is not None and not w.currentData() and \
-                kind not in ('instruction',):
+                kind not in ('instruction', 'fil_edm'):        # électroérosion : le fil est dans ses réglages
             w.setStyleSheet('QComboBox { border: 2px solid #c92a2a; }')
             w.setToolTip(tr('Choisir l’outil de l’opération'))
             w.setFocus()
@@ -1550,7 +1552,12 @@ class FieldsDialog(QDialog):
 
     def _pick_source(self, ins):
         """Encombrement des objets sélectionnés (ou leurs cercles pour une
-        mesure à deux repères) ; vide s'il n'y a rien à reprendre."""
+        mesure à deux repères) ; vide s'il n'y a rien à reprendre. Électroérosion à fil (round 1179) : les deux
+        premiers objets sélectionnés, le dessous puis le dessus (leur nom le dit, sinon l'ordre de la sélection)."""
+        if ins.pick == 'haut_bas':
+            from ..cam import wire_edm
+            sel = list(self.selection or [])
+            return wire_edm.lower_upper(sel) if len(sel) >= 2 else []
         if ins.pick == 'two_circles':
             from ..core import holes
             circles = [c for c in (holes.circle_of(it) for it in self.selection) if c]
@@ -1570,6 +1577,14 @@ class FieldsDialog(QDialog):
             return
         src = self._pick_source(ins)
         if not src:
+            return
+        if ins.pick == 'haut_bas':                       # électroérosion : contours haut et bas (round 1179)
+            from ..cam import wire_edm
+            self._params_value.update(self._read_params())
+            self._params_value.update(bas=src[0].id, haut=src[1].id,
+                                      inclinaison=wire_edm.CHOICE_LABELS['inclinaison']['haut_bas'])
+            self.param_widgets = {}
+            self._build_params()
             return
         if ins.pick == 'two_circles':
             p = from_selection(key, self._read_params(), None, src)
@@ -1708,6 +1723,8 @@ class FieldsDialog(QDialog):
             for n, (lab, w) in self.rows.items():
                 if kind == 'instruction':
                     show = n in INSTRUCTION_FIELDS
+                elif kind == 'fil_edm':
+                    show = n in WIRE_FIELDS
                 elif n in RAMP_FIELDS:                       # la plongée angulaire : où le parcours la suit
                     show = (not known) or kind in RAMP_KINDS
                 else:
@@ -5456,19 +5473,28 @@ class CamPanel(QWidget):
             self._remember('_inputs_states', now)
         self.display(tps)                                # après : la vue 3D les voit à jour
         self.announce_zones()
+        self.announce_chutes()
         return tp
+
+    def announce_chutes(self):
+        """Électroérosion à fil (round 1179) : la fenêtre des chutes à risque et de leurs propositions, une fois par
+        calcul (`ui.wire_edm_dialog`) ; rend la fenêtre ouverte, ou None."""
+        from . import wire_edm_dialog
+        return wire_edm_dialog.announce(self)
 
     def announce_zones(self) -> list:
         """Parcours qui signalent des zones du dessin (îles gardées malgré l'arrondi des angles) : elles sont en
         surbrillance orange avec le parcours, et une fenêtre d'information le dit, une fois par calcul. Rend les
         lignes dites."""
         seen = self.__dict__.setdefault('_zones_seen', set())
-        new = [tp for tp in self.toolpaths if getattr(tp, 'zones', None) and tp.uid not in seen]
+        def isles(tp):                                   # les îles seulement (les chutes d'une électroérosion
+            return [z for z in (getattr(tp, 'zones', None) or []) if z.get('kind', 'ile') == 'ile']   # aussi)
+        new = [tp for tp in self.toolpaths if isles(tp) and tp.uid not in seen]
         if not new:
             return []
         seen.update(tp.uid for tp in new)
         lines = [tr('{0} : {1} île(s) plus petite(s) que l\'arrondi des angles, gardée(s) telle(s) quelle(s) ; '
-                    'l\'outil en fait le tour sans les arrondir').format(tp.name or '—', len(tp.zones)) for tp in new]
+                    'l\'outil en fait le tour sans les arrondir').format(tp.name or '—', len(isles(tp))) for tp in new]
         box = QMessageBox(QMessageBox.Icon.Information, tr('Îles gardées'),
                           '\n'.join(lines) + '\n\n' + tr('Elles sont en surbrillance orange sur le dessin, avec le parcours.'),
                           QMessageBox.StandardButton.Ok, self.win)
@@ -6718,6 +6744,7 @@ class CamPanel(QWidget):
         self._remember('_whole', set())
         self.display(tps)                                # après : la vue 3D les voit à jour
         self.announce_zones()
+        self.announce_chutes()
         done = strategies.LAST_RUN
         if done.get('reused'):
             self.win.statusBar().showMessage(tr('{0} parcours repris tels quels (inchangés), {1} recalculé(s)').format(
@@ -6845,7 +6872,8 @@ class CamPanel(QWidget):
         special = REGISTRY.post_exports.get(key) or REGISTRY.post_exports.get(post.family(key))
         if special is not None:                          # export propre à la machine (travail, dossier, quantité…)
             try:
-                if special(self, tps, s):
+                from ..cam import wire_edm               # électroérosion à fil (round 1178) : pas pour
+                if special(self, wire_edm.split_wire(tps)[0], s):   # l'export propre (comme `post.run`)
                     return
             except Exception as ex:                      # un plugin ne casse pas l'export : l'ordinaire suit
                 self.win.statusBar().showMessage(tr('Plugin : {0}').format(ex), 10000)
@@ -6915,6 +6943,12 @@ class CamPanel(QWidget):
         tps = self.current_paths()
         if not tps:
             QMessageBox.information(self, tr('Parcellisation'), tr('Rien à découper : calculez d’abord les parcours.'))
+            return
+        from ..cam import wire_edm
+        if wire_edm.split_wire(tps)[1]:                  # électroérosion à fil (round 1178) : pas de panneaux
+            QMessageBox.information(self, tr('Parcellisation'), tr(
+                'Pas de parcellisation avec de l’électroérosion à fil : le fil coupe des contours entiers (chutes, '
+                'attaches, U/V).'))
             return
         s = self.setup()
         available = post.posts(self.machines_dir())

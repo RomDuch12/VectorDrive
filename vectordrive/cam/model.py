@@ -54,6 +54,7 @@ OP_KINDS = {
     'surfacage': 'Surfaçage (dessus de la zone ou de la plaque)',
     'instruction': 'Instruction machine (palpage, origine, message…)',
     'texte_machine': 'Texte machine (police de la commande, n° de série, date)',
+    'fil_edm': 'Électroérosion à fil (contours, fil incliné, chutes)',      # `cam.wire_edm` (round 1179)
 }
 #: filetages métriques ISO à pas gros : nom → (Ø nominal, pas, Ø d'avant-trou), mm
 THREADS = {'M2': (2.0, 0.4, 1.6), 'M2.5': (2.5, 0.45, 2.05), 'M3': (3.0, 0.5, 2.5), 'M4': (4.0, 0.7, 3.3),

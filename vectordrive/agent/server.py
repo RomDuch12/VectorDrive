@@ -61,6 +61,7 @@ class UiBridge(QObject):
         super().__init__(parent)
         self._home = threading.current_thread()
         self.closed = False
+        self.active = 0          # outils en cours d'exécution (la mise à jour de l'application attend leur fin)
         self.asked.connect(self._do, Qt.ConnectionType.QueuedConnection)
 
     def _do(self, job) -> None:
@@ -82,9 +83,16 @@ class UiBridge(QObject):
             return 'the user is dragging something in VectorDrive: try again in a moment'
         return ''
 
+    def _call(self, fn):
+        self.active += 1
+        try:
+            return fn()
+        finally:
+            self.active -= 1
+
     def run(self, fn):
         if threading.current_thread() is self._home:
-            return fn()
+            return self._call(fn)
         if self.closed:
             raise ToolError('VectorDrive is closing')
         done, lock, box = threading.Event(), threading.Lock(), {'state': 'waiting'}
@@ -100,7 +108,7 @@ class UiBridge(QObject):
                 why = self.busy()
                 if why:
                     raise ToolError(why)
-                box['value'] = fn()
+                box['value'] = self._call(fn)
             except BaseException as ex:                  # noqa: BLE001 — rendue à l'appelant, dans son fil
                 box['error'] = ex
             finally:

@@ -876,6 +876,16 @@ def _direction(p):
     _pointe(p, 10, 25, 0, -1, 14)
 
 
+def _direction_numbers(p):
+    """Numéros des contours (Ctrl+7) : le contour orienté et son rang, « 1 » sur une pastille."""
+    _st(p, 'blue_f')
+    _o(p, 26, 37, 19)
+    _pointe(p, 45, 43, 0, 1, 12)
+    _dot(p, 46, 18, 14, 'accent')
+    _plume(p, 'paper', 4.4)
+    _l(p, 41, 14, 47, 9, 47, 27)
+
+
 def _view_2d(p):
     _st(p, 'paper')
     _r(p, 6, 10, 52, 44, 3)
@@ -997,7 +1007,8 @@ ICONS.update({'zoom_fit': _zoom('fit'), 'zoom_in': _zoom('in'), 'zoom_out': _zoo
               'view_yz': _view_plane('yz'), 'view_zx': _view_plane('zx'), 'hide': _eye('hide'),
               'show_all': _eye('show'), 'freeze': _freeze('freeze'), 'unfreeze': _freeze('unfreeze'),
               'theme_dark': _theme_dark, 'themes': _themes, 'ribbon': _ribbon, 'plate': _plate,
-              'center_plate': _center_plate, 'origin': _origin, 'snap': _magnet})
+              'center_plate': _center_plate, 'origin': _origin, 'snap': _magnet,
+              'direction_numbers': _direction_numbers})
 
 
 # === outils de dessin ================================================================================================

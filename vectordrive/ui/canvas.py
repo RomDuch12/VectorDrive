@@ -279,6 +279,7 @@ class Canvas(QWidget):
         self.drag_out_ok = None
         self._out_grab = None             # point saisi pendant ce glisser-déposer (le reposer dans la vue : déplacé)
         self.show_direction = False       # Ctrl+7 : contours colorés selon leur sens (sans flèche)
+        self.show_order_numbers = True    # Ctrl+7 : rang de chaque objet écrit à son départ (round 1176 : cachable)
         self.show_arrows = False          # F10 › Affichage : flèche de sens au départ de chaque contour
         self.intuitive_snap = False       # cotation : accrochage aux points même sans F3 (TypeEdit)
         self._intuitive = None
@@ -904,7 +905,7 @@ class Canvas(QWidget):
             self._paint_toolpaths(p, v)
         if self.compare is not None and getattr(self.compare, 'doc', None) is self.doc:
             self._paint_compare(p, v, vis_doc)
-        if self.show_direction:
+        if self.show_direction and self.show_order_numbers:    # numéros cachés : les couleurs seules (round 1176)
             self._paint_directions(p)
         if self.show_arrows:
             self._paint_direction_arrows(p)
@@ -1299,7 +1300,8 @@ class Canvas(QWidget):
 
     def _paint_directions(self, p: QPainter) -> None:
         """Ctrl+7 (TypeEdit : Ctrl+T) : rang de chaque objet (le sens se lit à la
-        couleur des contours ; les flèches sont un réglage à part, `show_arrows`)."""
+        couleur des contours ; les flèches sont un réglage à part, `show_arrows`). Pas appelé quand
+        « Numéros des contours » est décoché (`show_order_numbers`, round 1176)."""
         p.setPen(QPen(QColor(canvas_colors()['direction']), 1))
         f = p.font()
         f.setPixelSize(11)

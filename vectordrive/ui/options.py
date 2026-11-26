@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QFontComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSpinBox,
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
+from ..app_update import DEFAULT_SOURCE
 from ..i18n import tr
 from . import workdirs as WD
 
@@ -367,6 +368,16 @@ SPEC: list[tuple[str, list[Opt]]] = [
     ('Mises à jour', [
         Opt('maj/source', 'Source des mises à jour', 'folder', '', tip='Dossier partagé ou adresse https'),
         B('maj/auto', 'Rechercher les mises à jour au démarrage', False),
+        Opt('maj/dossier_source', 'Dossier où chercher la dernière version', 'folder', DEFAULT_SOURCE,
+            tip='« Mettre à jour l’application » et la recherche des mises à jour y prennent la dernière archive '
+                'VectorDrive-1.34.0-portable.zip de cette édition (le dossier et ses sous-dossiers directs), même '
+                'déposée seule, sans manifeste'),
+        Opt('maj/dossier_vd', 'Dossier VD (versions de VectorDrive)', 'folder', '',
+            tip='Chaque version y a son sous-dossier, les archives copiées dans « zips » ; vide : « VectorDrive » '
+                'dans vos Documents. Aucune ancienne version n’y est jamais supprimée'),
+        B('maj/raccourcis', 'Mettre à jour les raccourcis (menu Démarrer, barre des tâches, bureau)', True,
+          tip='Les raccourcis qui lancent l’ancienne version lancent la nouvelle ; aucun dans le menu Démarrer : '
+              '« VectorDrive » y est créé'),
     ]),
     ('Plugins', [
         Opt('plugins/dossiers', 'Dossiers de plugins supplémentaires', 'folders', '', restart=True),
@@ -624,6 +635,8 @@ class OptionsDialog(QDialog):
                                  'de 0,8 s au plus la première fois.'))
                 note.setWordWrap(True)
                 form.insertRow(0, note)
+            if title == 'Mises à jour' and hasattr(parent, 'update_application'):
+                self._app_update_row(form, parent)
             if title == 'Performances':
                 form.addRow(QLabel(self._gpu_text()))
                 from PySide6.QtWidgets import QPushButton
@@ -682,6 +695,31 @@ class OptionsDialog(QDialog):
         bb.rejected.connect(self.reject)
         bb.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(self.restore_defaults)
         lay.addWidget(bb)
+
+    #: les réglages de l'onglet Mises à jour dont se sert le bouton « Mettre à jour l’application… »
+    APP_UPDATE_KEYS = ('maj/source', 'maj/dossier_source', 'maj/dossier_vd', 'maj/raccourcis')
+
+    def _app_update_row(self, form, parent) -> None:
+        """Onglet Mises à jour (demandes du 24/11 et du 26/11 : « Ajouter bouton mettre à jour dans options F10 ») :
+        le bouton « Mettre à jour l’application… », en tête de l'onglet ; le champ vide du dossier VD montre celui
+        d'office."""
+        from PySide6.QtWidgets import QPushButton
+        from .. import app_update
+        self.widgets['maj/dossier_vd'].edit.setPlaceholderText(str(app_update.default_versions_dir()))
+        b = self.app_update_button = QPushButton(tr('Mettre à jour l’application…'))
+        b.setObjectName('appUpdateButton')
+        b.setToolTip(tr('Chercher une version plus récente — manifeste de la source des mises à jour, archive '
+                        'portable déposée dans les dossiers réglés ci-dessous —, dire ce qui est trouvé, puis '
+                        'l’installer après une confirmation qui dit tout'))
+        b.clicked.connect(lambda _=False: self.run_app_update(parent))
+        form.insertRow(0, b)
+
+    def run_app_update(self, parent):
+        """Le bouton : les réglages de l'onglet Mises à jour, tels qu'ils sont dans la fenêtre, sont retenus d'abord
+        (la vérification s'en sert, la nouvelle version les reprend), puis la commande est lancée."""
+        for key in self.APP_UPDATE_KEYS:
+            self.settings.setValue(key, self.read(key))
+        return parent.update_application()
 
     def _shortcuts_page(self, form, parent) -> None:
         """L'onglet Raccourcis (demande du 19/11) : la fenêtre des raccourcis, toute (`shortcuts.dialog_class`,

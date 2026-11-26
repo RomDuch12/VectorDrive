@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 1.32.0
+# Guide des commandes — VectorDrive 1.36.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -170,10 +170,11 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 
 | Commande | Raccourci | Rôle |
 |---|---|---|
-| Sens | Ctrl+7, Ctrl+È | Sens des contours : fermés en vert (horaire) ou en bleu (anti-horaire), ouverts en noir (blanc en thème sombre) ; rang de chaque objet. Les flèches de sens : F10 › Affichage |
+| Sens | Ctrl+7, Ctrl+È | Sens des contours : fermés en vert (horaire) ou en bleu (anti-horaire), ouverts en noir (blanc en thème sombre) ; rang de chaque objet (« Numéros des contours » le cache). Les flèches de sens : F10 › Affichage |
 | Remplissage | Ctrl+9, Ctrl+Ç | Contours fermés remplis de la couleur de leur outil |
 | Aperçu gravure |  | Traits à la largeur réelle de leur outil (table des outils) : repère les détails trop fins pour la fraise ou le laser |
 | Grille | Ctrl+G |  |
+| Numéros des contours |  | Avec Sens (Ctrl+7) : le rang de chaque objet écrit à son départ ; décoché : les couleurs de sens seules |
 | Points de départ |  | Le point de départ de chaque contour affiché (carré plein) |
 | Points de contrôle |  | Les points de tous les contours affichés : carré pour un angle, rond pour un point lisse |
 

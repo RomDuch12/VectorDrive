@@ -4790,6 +4790,9 @@ def compute(doc: Document, setup: CamSetup, op: Operation, here=(0.0, 0.0)) -> T
     """Parcours d'une opération."""
     tool = setup.tool(op.tool_id)
     tp = Toolpath(op_id=op.id, tool_id=op.tool_id, name=op.name)
+    if op.kind == 'fil_edm':                            # électroérosion à fil (round 1178) : sans outil, le fil et
+        from . import wire_edm                          # ses réglages sont dans l'opération
+        return wire_edm.compute(doc, setup, op, tp, here)
     if op.kind == 'instruction':                        # sans outil ni parcours
         from .external import EXTERNAL, cycle_of
         if op.instruction == EXTERNAL:                   # opération d'un plugin : écrite par son post-processeur

@@ -1734,6 +1734,8 @@ def main(argv=None) -> int:
     if session_on:
         app.processEvents()
         w.restore_session()                              # sans question
+    if not args.new_window and not args.script:          # premier lancement après une mise à jour de l'application :
+        w.reopen_after_update()                          # les onglets de l'ancienne version, même sans session
     if not args.new_window and not args.script:          # lancement normal : les onglets gardés à la fermeture d'une
         w.reopen_kept()                                  # fenêtre sans session reviennent (sinon : au prochain)
     if args.fichier:

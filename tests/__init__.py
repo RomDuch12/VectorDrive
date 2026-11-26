@@ -85,6 +85,9 @@ os.environ.setdefault('VECTORDRIVE_BIBLIOTHEQUE', os.path.join(_dir, 'bibliotheq
 os.environ.setdefault('VECTORDRIVE_CLIENTS', os.path.join(_dir, 'clients'))
 # copies de l'assistant IA et leur registre : jamais celles du poste
 os.environ.setdefault('VECTORDRIVE_ASSISTANT_DIR', os.path.join(_dir, 'assistant'))
+# mise à jour de l'application par dossier : jamais les Documents, le partage ni les raccourcis du poste ; ni
+# PowerShell ni exécutable lancés, ni le canal d'instance interrogé
+os.environ.setdefault('VECTORDRIVE_APP_UPDATE', os.path.join(_dir, 'maj_application'))
 atexit.register(shutil.rmtree, _dir, True)
 
 #: dossiers de données de VectorDrive du profil de l'utilisateur (casse et chemin normalisés) : aucun essai n'y écrit

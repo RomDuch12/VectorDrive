@@ -259,6 +259,16 @@ KIND_PARAMS: dict[str, Instruction] = {
 }
 
 
+def _wire_edm() -> Instruction:
+    """Les réglages de l'électroérosion à fil (`cam.wire_edm`, round 1179) ; « Prendre sur la sélection » : le
+    contour du dessous puis celui du dessus (contours haut et bas)."""
+    from . import wire_edm as W
+    return Instruction(W.LABEL, list(W.FORM_FIELDS), W.FORM_NOTE, tuple(W.FORM_ADVANCED), pick='haut_bas')
+
+
+KIND_PARAMS['fil_edm'] = _wire_edm()
+
+
 #: types de saisie de l'opérateur
 INPUT_TYPES = ('Position', 'Avance', 'Angle', 'Nombre', 'Quantité', 'Texte', 'Booléen')
 
