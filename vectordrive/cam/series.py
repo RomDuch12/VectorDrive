@@ -98,22 +98,30 @@ def _live(tp) -> bool:
     return bool(tp.moves or getattr(tp, 'cycles', None))
 
 
-def program_one(src: str, out: str, tpl: dict | None = None, key: str = '', *, replace: bool = True,
-                overwrite: bool = False, machines_dir: str = '', default_post: str = '', dates: bool = True,
-                taken: dict | None = None, sources=()) -> tuple:
+def program_one(src: str, out: str, tpl: dict | None = None, key: str = '', **kw) -> tuple:
+    """Un dessin du lot (`_program_one`), les remarques de son compagnon (opérations perdues, fichier changé depuis
+    lui…) en tête de ses avertissements : sans elles, elles n'iraient qu'au compte rendu du dessin, jamais montré."""
+    notes: list = []
+    kind, src, info, warnings = _program_one(src, out, tpl, key, notes=notes, **kw)
+    return kind, src, info, notes + list(warnings)
+
+
+def _program_one(src: str, out: str, tpl: dict | None = None, key: str = '', *, replace: bool = True,
+                 overwrite: bool = False, machines_dir: str = '', default_post: str = '', dates: bool = True,
+                 taken: dict | None = None, sources=(), notes: list | None = None) -> tuple:
     """Un dessin du lot : ('fait', source, [fichiers], avertissements) | ('ignoré' | 'erreur', source, raison, []).
     `out` : chemin du programme sans son extension (celle du post-processeur) ; `default_post` : le post-processeur
     des Options (dessin sans réglage) ; `dates` : |Date| et |Heure| à la date du moment (réglage « fao/dates ») ;
     `taken` : {fichier (casse ignorée) : dessin} des programmes déjà écrits par le lot (aucun n'en écrase un autre) ;
     `sources` : les dessins du lot (jamais remplacés)."""
     from ..core import surface2d, variables
-    from ..io import registry
+    from ..io import companion
     from ..plugins import REGISTRY
     from . import mill3d, model, post, postcheck, preflight, strategies
     src_p, out_p = pathlib.Path(src), pathlib.Path(out)
     taken = {} if taken is None else taken
     try:
-        doc = registry.open_document(src_p)
+        doc = companion.open_document(src_p, notes=notes)  # comme à l'ouverture : son compagnon (round 1174)
         s = setup_for(doc, tpl, replace, default_post)
         if not any(o.enabled for o in s.operations):
             return 'ignoré', src, 'aucune opération (ni dans le dessin, ni dans le modèle)', []

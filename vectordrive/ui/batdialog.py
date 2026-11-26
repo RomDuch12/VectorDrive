@@ -649,6 +649,12 @@ class BatDialog(QDialog):
             return
         path, _ = QFileDialog.getOpenFileName(self, tr('Logo'), '',
                                               tr('Images et dessins') + f' ({proof.logo_filter()})')
+        from ..io import heif
+        why = heif.problem(path) if path else ''
+        if why:                                          # HEIC sans décodeur : dit quoi installer, logo non pris
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, tr('Logo'), why)
+            path = ''
         self.set_logo(box, path)
 
     def set_logo(self, box: QComboBox, path: str) -> None:

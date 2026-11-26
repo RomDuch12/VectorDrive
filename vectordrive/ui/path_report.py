@@ -203,7 +203,8 @@ def write_pdf(path: str, text: str, title: str, image='') -> None:
     writer.setTitle(title)
     td = QTextDocument()
     td.documentLayout().setPaintDevice(writer)           # les tailles de police comptent en vrais points
-    picture = image if isinstance(image, QImage) else (QImage(str(image)) if image else QImage())
+    from ..io.raster import read_qimage
+    picture = image if isinstance(image, QImage) else (read_qimage(str(image)) if image else QImage())
     if not picture.isNull():
         td.addResource(QTextDocument.ResourceType.ImageResource.value, QUrl('image'), picture)
     td.setHtml(text)
@@ -212,7 +213,8 @@ def write_pdf(path: str, text: str, title: str, image='') -> None:
 
 
 def image_ok(path: str) -> bool:
-    return bool(path) and not QImage(str(path)).isNull()
+    from ..io.raster import read_qimage
+    return bool(path) and not read_qimage(str(path)).isNull()
 
 
 class PathInfoDialog(QDialog):
@@ -320,20 +322,28 @@ class PathReportDialog(QDialog):
 
     def _image_toggled(self, on: bool) -> None:
         if on and not self.image_path:
-            path, _ = QFileDialog.getOpenFileName(self, tr('Ajouter une image'), '', tr('Images (*.png *.jpg *.jpeg *.bmp)'))
+            from ..io import heif, raster
+            path, _ = QFileDialog.getOpenFileName(self, tr('Ajouter une image'), '',
+                                                  tr('Images ({0})').format(raster.image_patterns()))
             if not self.set_image(path):
                 self.use_image.setChecked(False)
+                why = heif.problem(path) if path else ''
+                if why:                                  # HEIC sans décodeur : dit quoi installer
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, tr('Ajouter une image'), why)
         elif not on:
             self.set_image('')
 
     def set_image(self, path: str) -> bool:
         """L'image du compte rendu ; False si le fichier n'est pas une image lisible."""
-        if not image_ok(path):
+        from ..io.raster import read_qimage
+        img = read_qimage(path)                          # HEIC compris, photo redressée
+        if img.isNull():
             self.image_path = ''
             self.preview.clear()
             return False
         self.image_path = path
-        self.preview.setPixmap(QPixmap(path).scaledToWidth(180))
+        self.preview.setPixmap(QPixmap.fromImage(img).scaledToWidth(180))
         return True
 
     def options(self) -> ReportOptions:

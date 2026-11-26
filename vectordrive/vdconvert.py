@@ -605,7 +605,8 @@ def convert(src, fmt: str, out_dir=None, keep: bool = True) -> tuple:
     if fmt not in dict(SM.TARGETS):
         raise ValueError(f'format de sortie inconnu : {fmt} ({", ".join(k for k, _ in SM.TARGETS)})')
     p = pathlib.Path(src)
-    doc = registry.open_document(str(p))
+    from .io import companion
+    doc = companion.open_document(str(p))                    # comme à l'ouverture : son compagnon (round 1174)
     folder = pathlib.Path(out_dir) if out_dir else p.parent
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / f'{p.stem}.{fmt}'

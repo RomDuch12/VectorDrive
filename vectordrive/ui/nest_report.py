@@ -135,7 +135,8 @@ def write_pdf(path, doc, name: str, gap: float, comment: str = '', image_path: s
     writer.setTitle(tr('Rapport d’imbrication'))
     td = QTextDocument()
     td.documentLayout().setPaintDevice(writer)           # les tailles de police comptent en vrais points
-    picture = QImage(str(image_path)) if image_path else QImage()
+    from ..io.raster import read_qimage
+    picture = read_qimage(str(image_path)) if image_path else QImage()  # HEIC compris, photo redressée
     for i, layer in enumerate(L for L in doc.layers if L.visible and L.items):
         td.addResource(QTextDocument.ResourceType.ImageResource.value, QUrl(f'plan{i}'), plane_image(doc, layer))
     if not picture.isNull():

@@ -1257,7 +1257,8 @@ def _item_tool(it: Item) -> int:
 def _tool_layers(layers: list) -> list:
     """[(calque, outil)] : dans TypeEdit un calque = un outil = une couleur. Un calque dont les objets
     sont de plusieurs outils devient un calque TypeEdit par outil (le premier garde son nom, les
-    suivants « nom (n° d'outil) ») : chaque objet garde sa couleur."""
+    suivants « nom (n° d'outil) ») : chaque objet garde sa couleur. L'écriture d'avant le round 1174
+    (`split_tools`) ; d'office, chaque calque garde toutes ses couleurs (`_colours_layer`)."""
     import copy
     out = []
     for L in layers:
@@ -1274,6 +1275,60 @@ def _tool_layers(layers: list) -> list:
                 sub.name = f'{L.name} ({t + 1})'
             out.append((sub, t))
     return out
+
+
+def _leaf_tools(items) -> list[int]:
+    """Outils des objets écrits de `items` (groupes dépliés, sauf objet TypeEdit d'origine, écrit d'un bloc)."""
+    out = []
+    for it in items:
+        if not getattr(it, 'visible', True):
+            continue                                   # pas écrit
+        if isinstance(it, Group) and not (isinstance(it.extra, dict) and it.extra.get('vnd_obj') is not None):
+            out += _leaf_tools(it.children)
+        else:
+            out.append(_item_tool(it))
+    return out
+
+
+def _colours_layer(layer: Layer, report: list | None = None) -> tuple:
+    """(calque, outil) d'un calque du dessin écrit avec toutes ses couleurs (demandes du 26/11 : « toutes les couleurs
+    différentes sur le même calque », pour le .vnl puis pour le VND) : chaque courbe garde sa couleur (fin de courbe,
+    `_trailer`) ; l'outil du calque est le plus courant de ses objets (à égalité, le premier). TypeEdit usine toutes
+    les courbes d'un calque avec l'outil du calque, la couleur n'est qu'affichage (round 868) : le compte rendu le
+    rappelle pour un calque de plusieurs outils, avec le nombre d'objets d'un autre outil. Relus, ils ont l'outil du
+    calque ; seul le compagnon de VectorDrive leur rend le leur (`io.companion.apply`)."""
+    from ..i18n import tr
+    tools = Counter(_leaf_tools(layer.items))
+    tool = tools.most_common(1)[0][0] if tools else int(getattr(layer, 'tool', 0) or 0)
+    if report is not None and len(tools) > 1:
+        report.append(tr('plan « {0} » : TypeEdit usine toutes les courbes d’un calque avec l’outil du calque '
+                         '(outil {1}) ; les couleurs ne servent qu’à l’affichage').format(layer.name, tool + 1))
+        report.append(tr('plan « {0} » : {1} objet(s) d’un autre outil que le calque : relu(s) avec l’outil du '
+                         'calque, sauf par le compagnon de VectorDrive du fichier tel qu’écrit')
+                      .format(layer.name, sum(n for t, n in tools.items() if t != tool)))
+    return layer, tool
+
+
+def mixed_layers(layers: list) -> list[str]:
+    """Noms des calques dont les objets écrits sont de plusieurs outils : le compagnon garde leurs outils
+    (`io.companion.sync`)."""
+    return [L.name for L in layers if len(set(_leaf_tools(L.items))) > 1]
+
+
+def colours_summary(layers: list) -> list[str]:
+    """Ligne de résumé, en fin de compte rendu (la barre d'état en montre la fin) : nombre de calques de plusieurs
+    outils et d'objets usinés dans TypeEdit avec l'outil de leur calque (mêmes comptes que `_colours_layer`)."""
+    from ..i18n import tr
+    n = k = 0
+    for L in layers:
+        tools = Counter(_leaf_tools(L.items))
+        if len(tools) > 1:
+            n += 1
+            k += sum(tools.values()) - tools.most_common(1)[0][1]
+    if not n:
+        return []
+    return [tr('en résumé : {0} calque(s) de plusieurs couleurs ; {1} objet(s) usiné(s) dans TypeEdit avec l’outil '
+               'de leur calque, pas le leur').format(n, k)]
 
 
 def _calque(layer: Layer, tool: int, current: bool, template: MfcObject | None) -> MfcObject:
@@ -1358,11 +1413,14 @@ def layer_order(layers: list, writes=None) -> tuple:
     return order, behind
 
 
-def _calques(layers: list, report: list | None = None, first_shown: bool = False) -> list[MfcObject]:
+def _calques(layers: list, report: list | None = None, first_shown: bool = False,
+             split_tools: bool = False) -> list[MfcObject]:
     """Les calques TypeEdit du document, dans l'ordre du dessin (`write_order`) ; le premier plan est seul le plan
     courant. TypeEdit 13 n'affiche à l'ouverture que son premier plan : masqué, le compte rendu le dit (réglage
-    `first_shown` : le premier qui a quelque chose à montrer passe en tête)."""
-    built = [(L, _calque(L, tool, False, None)) for L, tool in _tool_layers(layers)]
+    `first_shown` : le premier qui a quelque chose à montrer passe en tête). Chaque calque du dessin avec toutes ses
+    couleurs (`_colours_layer`) ; `split_tools` : un calque TypeEdit par outil, comme avant le round 1174."""
+    pairs = _tool_layers(layers) if split_tools else [_colours_layer(L, report) for L in layers]
+    built = [(L, _calque(L, tool, False, None)) for L, tool in pairs]
     made = {id(L): c for L, c in built}
     subs = [L for L, _c in built]
     order = write_order(subs, lambda L: bool(made[id(L)].children), first_shown)
@@ -1666,7 +1724,7 @@ def _texts_differ(old_root: MfcObject, new_root: MfcObject) -> bool:
                for o, n in zip(_paragraphs(old_root), _paragraphs(new_root)))
 
 
-def _tree(doc: Document, page_bbox, report: list | None = None) -> MfcObject:
+def _tree(doc: Document, page_bbox, report: list | None = None, split_tools: bool = False) -> MfcObject:
     root = MfcObject(MfcClass('CTravail', SCHEMAS['CTravail']))
     draw = _bbox_m(doc.bbox())
     if doc.bbox():
@@ -1678,7 +1736,7 @@ def _tree(doc: Document, page_bbox, report: list | None = None) -> MfcObject:
     root.fields['ctn_version'] = 3
     with _using_tools(doc):
         root.children.extend(_calques(list(doc.layers) or [Layer(name='Plan 1')], report,
-                                      first_shown_of(doc)))  # calques vides compris
+                                      first_shown_of(doc), split_tools))  # calques vides compris
     return root
 
 
@@ -1878,11 +1936,14 @@ def clean_document(doc: Document) -> tuple[Document, list[str]]:
 
 
 def write_document(doc: Document, template: bytes | None = None, *,
-                   allow_foreign: bool = False, live_texts: bool | None = None) -> tuple[bytes, list[str]]:
+                   allow_foreign: bool = False, live_texts: bool | None = None,
+                   split_tools: bool = False) -> tuple[bytes, list[str]]:
     """VND du document (voir `_write_document`). `live_texts` : textes
     écrits en paragraphes TypeEdit modifiables plutôt qu'en courbes, quand
     TypeEdit peut les relire (`curves_reason`) ; par défaut
-    `doc.extra['vnd_textes_vivants']`."""
+    `doc.extra['vnd_textes_vivants']`. Chaque calque du dessin garde toutes ses
+    couleurs (`_colours_layer`) ; `split_tools` : un calque TypeEdit par outil,
+    l'écriture d'avant le round 1174 (essais de compatibilité)."""
     global _LIVE
     if live_texts is None:
         live_texts = bool(doc.extra.get('vnd_textes_vivants')) if isinstance(doc.extra, dict) else False
@@ -1891,11 +1952,11 @@ def write_document(doc: Document, template: bytes | None = None, *,
     cleaned = merged + cleaned
     doc = at_origin(doc)
     if not live_texts:
-        data, report = _write_document(doc, template, allow_foreign=allow_foreign)
+        data, report = _write_document(doc, template, allow_foreign=allow_foreign, split_tools=split_tools)
         return data, cleaned + report
     _LIVE = _LiveTexts([])
     try:
-        data, report = _write_document(doc, template, allow_foreign=allow_foreign)
+        data, report = _write_document(doc, template, allow_foreign=allow_foreign, split_tools=split_tools)
         return data, cleaned + report
     finally:
         _LIVE = None
@@ -1955,7 +2016,7 @@ def at_origin(doc: Document) -> Document:
 
 
 def _write_document(doc: Document, template: bytes | None = None, *,
-                    allow_foreign: bool = False) -> tuple[bytes, list[str]]:
+                    allow_foreign: bool = False, split_tools: bool = False) -> tuple[bytes, list[str]]:
     """VND du document. Repart du fichier source s'il y en a un (fin de
     document, outils, machine, GUID), sinon du modèle. Les textes et
     cotes TypeEdit ne sont réécrits tels quels que dans leur propre VND
@@ -2005,7 +2066,7 @@ def _write_document(doc: Document, template: bytes | None = None, *,
                       'écrit(s) comme image')
     if _LIVE is not None:
         _LIVE.__init__(vnd.font_table(base)[1])        # indices des polices : ceux de la base d'abord
-    new_root = _tree(doc, root_b.fields['bbox'], report)
+    new_root = _tree(doc, root_b.fields['bbox'], report, split_tools)
     new_fonts = _LIVE.names[len(_LIVE.base):] if _LIVE is not None else []
     head = _head(base, doc, new_fonts)
     live_lines = []                                    # en fin de compte rendu : la barre d'état en montre la fin
@@ -2039,6 +2100,8 @@ def _write_document(doc: Document, template: bytes | None = None, *,
     tail = set_tool_colors(tail, doc, report)
     body = bytes(w.buf) + tail
     report.extend(live_lines)
+    if not split_tools:                                # calques de plusieurs couleurs : le résumé, en dernier
+        report += colours_summary(list(doc.layers))
     if source and body == source[archive_start(source):]:
         return source, report                        # rien n'a changé : le fichier d'origine, aperçu compris
     return bytes(head) + body, report

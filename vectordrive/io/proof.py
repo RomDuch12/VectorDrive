@@ -197,7 +197,7 @@ def is_vector_logo(path) -> bool:
 def logo_filter() -> str:
     """Extensions de la boîte « Logo » : les images, puis tous les dessins que VectorDrive lit."""
     from . import registry
-    exts = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.ico']
+    exts = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.ico', '.heic', '.heif', '.avif']
     for f in registry.all_formats():
         if f.reader is not None:
             exts += [e for e in f.extensions if e not in exts]
@@ -229,9 +229,9 @@ def logo_vector(path: str):
 
 
 def _read_vector_logo(path: str):
-    from . import registry
+    from . import companion
     try:
-        doc = registry.open_document(path)
+        doc = companion.open_document(path, plates=False)    # son compagnon, sans plaques de reprise (round 1174)
     except Exception:                                # logo illisible : BAT sans logo
         return None
     closed, opened = [], []

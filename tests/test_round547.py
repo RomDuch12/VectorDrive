@@ -56,9 +56,16 @@ class TestColors(unittest.TestCase):
         self.assertEqual(sorted(set(r.tool_colors(items).values())), ['#000000', '#00a000', '#ff0000'])
 
     def test_vnd_one_layer_per_tool(self):
-        f = self.t / 'x.vnd'
-        registry.save_document(colored(), f)
+        from vectordrive.io import companion                              # round 1174 : un calque, outils au compagnon
+        f = str(self.t / 'x.vnd')
+        d = colored()
+        registry.save_document(d, f)
+        companion.sync(d, f)
         r = registry.open_document(f)
+        self.assertEqual(len(r.layers), 1)
+        companion.apply(r, f)
+        self.assertEqual([[lf.tool for lf in it.children] if isinstance(it, Group) else it.tool
+                          for it in r.layers[0].items], [3, 5, [3, 0]])   # chacun le sien, groupe compris
         tools = sorted({lf.tool for L in r.layers for it in L.items
                         for lf in (it.children if isinstance(it, Group) else [it])})
         self.assertIn(3, tools)

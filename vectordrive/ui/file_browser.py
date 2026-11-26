@@ -49,7 +49,7 @@ def _readable() -> tuple:
 #: dessins que le navigateur montre : tous ceux que VectorDrive lit, comme Importer
 BROWSER_EXT = _readable()
 TYPEEDIT_EXT = ('.vnd', '.vnl', '.vnm', '.gvt')
-IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif')
+IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif', '.heic', '.heif', '.avif')
 SOLID_EXT = ('.stp', '.step', '.igs', '.iges', '.stl', '.3dxml', '.catpart', '.catproduct', '.cgr', '.catdrawing')
 _KNOWN = ('.dxf', '.dwg', '.smb', '.svg', '.ai', '.eps', '.pdf', '.vdz') + TYPEEDIT_EXT + IMAGE_EXT + SOLID_EXT
 #: choix du filtre : (libellé, extensions) — les nouveaux à la fin : le filtre retenu l'est par son rang

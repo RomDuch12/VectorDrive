@@ -57,6 +57,9 @@ FORMATS: tuple[Format, ...] = (
     Format('vnm', 'Modèle TypeEdit', ('.vnm',), _lazy('vnd', 'read'), _lazy('vnd_write', 'write')),
     Format('image', 'Image (PNG, JPEG…)', ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif'),
            _lazy('raster', 'read'), _lazy('raster', 'write')),
+    # photos de téléphone : lues par le décodeur du poste (`io.heif`), jamais écrites ; une image comme les autres
+    Format('image', 'Image HEIC, HEIF, AVIF (photos de téléphone)', ('.heic', '.heif', '.avif'),
+           _lazy('raster', 'read'), None),
     Format('hpgl', 'HPGL (traceurs, découpeuses)', ('.plt', '.hpgl', '.hpg', '.hgl', '.gl2'), _lazy('hpgl', 'read'), _lazy('hpgl', 'write')),
     Format('inkscape', 'CorelDRAW, EMF, WMF, Visio (par Inkscape)', ('.cdr', '.cmx', '.emf', '.wmf', '.vsd', '.vsdx', '.wpg'),
            _lazy('inkscape_import', 'read'), None),

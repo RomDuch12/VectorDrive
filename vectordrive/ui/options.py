@@ -321,8 +321,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
         Opt('bat/company', 'En-tête : entreprise', 'text', ''),
         Opt('bat/logo', 'En-tête : logo (image ou dessin)', 'file', '',
             tip='Imprimé en haut à gauche de chaque BAT (10 mm de haut) ; un dessin (SVG, PDF, DXF…) reste en tracés exacts',
-            extra={'open': True, 'filter': 'Images et dessins (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.svg *.pdf '
-                                            '*.ai *.eps *.dxf *.vnd *.gvt *.smb)'}),
+            extra={'open': True, 'filter': 'Images et dessins (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.heic '
+                                            '*.heif *.avif *.svg *.pdf *.ai *.eps *.dxf *.vnd *.gvt *.smb)'}),
         Opt('bat/clients', 'Carnet de clients : dossier', 'folder', '',
             tip='Noms et logos des clients du BAT (les logos y sont copiés). Vide : dans les données de VectorDrive ; '
                 'un dossier partagé sert à tous les postes'),

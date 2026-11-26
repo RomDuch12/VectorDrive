@@ -334,10 +334,10 @@ def file_as_group(path):
 def _read_as_group(p: pathlib.Path):
     from ..core.document import Group
     from ..core.geom import Affine
-    from ..io import registry, smb
+    from ..io import companion, smb
     if p.suffix.lower() == '.smb':
         return smb.as_group(str(p))
-    doc = registry.open_document(str(p))
+    doc = companion.open_document(str(p), plates=False)      # son compagnon, sans plaques de reprise (round 1174)
     items = [it for L in doc.layers for it in L.items if getattr(it, 'visible', True)]
     if not items:
         return None
@@ -354,12 +354,12 @@ def _read_as_group(p: pathlib.Path):
 
 def _leaves_of(path):
     """(objets du fichier, couleur d'outil → hex) : symbole ou dessin."""
-    from ..io import registry, smb
+    from ..io import companion, smb
     p = pathlib.Path(path)
     if p.suffix.lower() == '.smb':
         doc = smb.read(str(p))
     else:
-        doc = registry.open_document(str(p))
+        doc = companion.open_document(str(p), plates=False)  # son compagnon, sans plaques de reprise (round 1174)
     return list(doc.iter_leaves()), doc
 
 

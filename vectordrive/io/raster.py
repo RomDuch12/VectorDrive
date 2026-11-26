@@ -12,8 +12,16 @@ from dataclasses import dataclass
 
 from ..core.document import Document, Group, Image, Shape, Text
 from ..core.geom import Affine, Path
+from .heif import HEIF_EXT
 
 MM_PER_INCH = 25.4
+#: images lues (Ouvrir, Importer, Vectoriser, Photo, rapports, logos) ; HEIC, HEIF, AVIF : par `io.heif`
+IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.gif') + HEIF_EXT
+
+
+def image_patterns(exts=IMAGE_EXT) -> str:
+    """'*.png *.jpg …' : les extensions d'images pour le filtre d'une boîte Ouvrir."""
+    return ' '.join('*' + e for e in exts)
 
 
 def _app():
@@ -56,13 +64,16 @@ def load_image(path, max_pixels: int | None = None):
     ValueError avec la raison de Qt si elle ne se lit pas."""
     import math
     _app()
+    from . import heif
+    cap = MAX_PIXELS if max_pixels is None else max_pixels
+    if heif.is_heif(path) and not heif.qt_reads(path):  # HEIC, HEIF, AVIF : le décodeur du poste (redressée, sRGB)
+        return heif.load(path, cap)
     from PySide6.QtCore import QSize
     from PySide6.QtGui import QImageReader
     QImageReader.setAllocationLimit(0)
     r = QImageReader(str(path))
     r.setAutoTransform(True)                         # photo de téléphone : redressée d'après l'orientation EXIF
     size = r.size()
-    cap = MAX_PIXELS if max_pixels is None else max_pixels
     note = None
     if size.isValid() and cap and size.width() * size.height() > cap:
         k = math.sqrt(cap / (size.width() * size.height()))
@@ -77,6 +88,33 @@ def load_image(path, max_pixels: int | None = None):
         if note:
             note = note.replace(f'à {w} × {h} px', f'à {h} × {w} px')
     return img, (size if size.isValid() else img.size()), note
+
+
+def read_qimage(path, max_pixels: int | None = None):
+    """QImage d'un fichier image (HEIC compris, photo redressée, grande image réduite) ; nulle si elle ne se lit
+    pas (le message : `heif.problem`)."""
+    from PySide6.QtGui import QImage
+    if not path:
+        return QImage()
+    try:
+        return load_image(path, max_pixels)[0]
+    except (ValueError, OSError):
+        return QImage()
+
+
+def pixel_size(path) -> tuple[int, int] | None:
+    """(largeur, hauteur) en pixels d'une image, sans la décoder quand Qt sait la lire (HEIC : décodée une fois
+    tant que le fichier ne change pas) ; None si elle ne se lit pas."""
+    _app()
+    from PySide6.QtGui import QImageReader
+    from . import heif
+    if heif.is_heif(path) and not heif.qt_reads(path):
+        try:
+            return heif.pixel_size(path)
+        except (ValueError, OSError):
+            return None
+    size = QImageReader(str(path)).size()
+    return (size.width(), size.height()) if size.isValid() and size.width() > 0 and size.height() > 0 else None
 
 
 def read(path) -> Document:

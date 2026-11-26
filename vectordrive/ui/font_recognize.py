@@ -23,7 +23,7 @@ from ..i18n import tr
 
 #: sous-dossiers d'Images où Windows range les captures d'écran (selon la langue et OneDrive)
 SHOT_FOLDERS = ('Screenshots', 'Captures d’écran', "Captures d'écran")
-IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.webp')
+IMAGE_EXT = ('.png', '.jpg', '.jpeg', '.bmp', '.webp', '.heic', '.heif', '.avif')
 #: plus grand côté de l'image comparée (pixels) : au-delà, elle est réduite
 MAX_SIDE = 2400
 #: ce que le calcul rend quand il n'a pas de polices à lister : le message
@@ -236,6 +236,12 @@ class FontRecognizeDialog(QDialog):
             self.path.setText(path)
             self.source.setCurrentIndex(self.source.findData('image'))
             self._show_preview()
+            if self._file_image().isNull():
+                from ..io import heif
+                why = heif.problem(path)
+                if why:                                  # HEIC sans décodeur : dit quoi installer
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, tr('Reconnaître une police'), why)
 
     def _file_image(self) -> QImage:
         """L'image du fichier choisi, lue une fois (photo redressée, grande image réduite : `io.raster.load_image`) ;

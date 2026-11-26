@@ -639,6 +639,7 @@ class MainWindow(QMainWindow):
         self._te_actions: list = []
         self._custom_relays: list = []             # boutons des onglets à soi au libellé choisi
         self.fav_bar = None                        # la barre des favoris (tout en haut), s'il y en a
+        self.fav_search = None                     # son champ de recherche (round 1175 : `fav_search`)
         self._build_ribbon()
         self._build_custom_tab(restyle=False)
         self.apply_ribbon_layout(restyle=False)
@@ -7334,10 +7335,13 @@ class MainWindow(QMainWindow):
     def refresh_favorites(self):
         """Les favoris : à la suite de la barre d'accès rapide de TypeEdit 13 si elle est là, sinon dans leur barre,
         tout en haut (au-dessus du ruban, la première rangée en plein écran) ; sans favoris, pas de barre. Rend la
-        barre qui les porte (ou None). Libellés et agencement en cours reposés ensuite (`fav_bar.decorate`)."""
-        from . import fav_bar
+        barre qui les porte (ou None). Libellés et agencement en cours reposés ensuite (`fav_bar.decorate`), et le
+        champ de recherche au bout de cette barre, ou de la barre d'accès rapide de TypeEdit 13 ; sans barre, dans la
+        rangée des onglets du ruban (`fav_search`)."""
+        from . import fav_bar, fav_search
         host = self._fill_favorites()
         fav_bar.decorate(self)
+        fav_search.place(self)                           # le champ de recherche au bout de la barre (round 1175)
         if not getattr(self, '_fav_quit_hooked', False):  # sortie sans fermeture (mise à jour, mesure) : rendues aussi
             from PySide6.QtWidgets import QApplication
             app = QApplication.instance()
@@ -11776,7 +11780,13 @@ class MainWindow(QMainWindow):
         GuideDialog(self).exec()
 
     def search_command(self) -> None:
-        """Ctrl+K : chercher une commande par son nom et l'exécuter."""
+        """Ctrl+K : chercher une commande par son nom et l'exécuter — dans le champ de la barre des favoris s'il est
+        là, ou de la rangée des onglets du ruban (round 1175) ; fenêtre cachée : la fenêtre de recherche."""
+        from shiboken6 import isValid
+        box = getattr(self, 'fav_search', None)
+        if box is not None and isValid(box) and box.isVisible():
+            box.take_focus()
+            return
         from .command_search import CommandSearch
         dlg = CommandSearch(self, {k: a for k, a in self.A.items() if k != 'command_search'})
         if dlg.exec() and dlg.chosen:
@@ -12512,20 +12522,29 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QToolButton
         if isinstance(obj, QToolButton) and obj.defaultAction() is not None \
                 and obj.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu:   # le sien (colonnes)
-            bar = obj.parentWidget()
-            quick = bar is not None and bar is getattr(self, 'te_quickbar', None)
-            if self._is_favorite_button(obj) and not quick:              # un bouton des favoris : les retirer,
-                self._ribbon_button_menu(obj, ev.globalPos())            # entre autres
+            kw = self._button_menu_args(obj)
+            if kw is not None:                           # le menu du ruban (aussi celui d'un résultat de la
+                self._ribbon_button_menu(obj, ev.globalPos(), **kw)      # recherche des favoris : round 1175)
                 return True
             settings = self._tool_settings(obj.defaultAction())
-            if quick or self._in_ribbon(obj):            # tout bouton du ruban : le menu, avec sa taille et sa place
-                self._ribbon_button_menu(obj, ev.globalPos(), settings=settings)   # (round 1141) ; les réglages
-                return True                              # d'un outil en tête ; la barre d'accès rapide de TypeEdit 13
-                #                                          aussi (round 1155), sans taille ni place (pas le ruban)
             if settings is not None:                     # hors du ruban (barres) : les réglages de l'outil
                 settings()
                 return True
         return super().eventFilter(obj, ev)
+
+    def _button_menu_args(self, button):
+        """Le clic droit sur `button` ouvre-t-il le menu du ruban (`_ribbon_button_menu`) ? Ses arguments nommés si
+        oui, None sinon (hors du ruban et des favoris). Un bouton des favoris : les retirer, entre autres ; tout bouton
+        du ruban : le menu, avec sa taille et sa place (round 1141), les réglages d'un outil en tête ; la barre
+        d'accès rapide de TypeEdit 13 aussi (round 1155), sans taille ni place (pas le ruban). Le filtre de la
+        fenêtre et la recherche des favoris (round 1175) s'en servent : le même menu."""
+        bar = button.parentWidget()
+        quick = bar is not None and bar is getattr(self, 'te_quickbar', None)
+        if self._is_favorite_button(button) and not quick:
+            return {}
+        if quick or self._in_ribbon(button):
+            return {'settings': self._tool_settings(button.defaultAction())}
+        return None
 
     def _tool_settings(self, act):
         """Les réglages de l'outil d'une commande (formes, Cote, Polaire, Contour ; demande du 23/11 : Poinçonner,
@@ -17358,12 +17377,12 @@ class MainWindow(QMainWindow):
                 return
             params = spec
         else:
+            from ..io import raster
             path, _ = QFileDialog.getOpenFileName(self, tr('Vectoriser'), self._last_dir('image'),
-                                                  tr('Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff)'))
+                                                  tr('Images ({0})').format(raster.image_patterns()))
             if not path:
                 return
             self._remember_dir('image', path)
-            from ..io import raster
             try:
                 q, _orig, _note = raster.load_image(path)  # grandes images comprises (limite de Qt levée)
             except ValueError as ex:
@@ -19948,7 +19967,15 @@ class MainWindow(QMainWindow):
             return None
         image = params.get('image', '')
         if params.get('with_image') and not image:
-            image, _ = QFileDialog.getOpenFileName(self, title, self._last_dir('image'), tr('Images (*.bmp *.jpg *.jpeg *.png)'))
+            from ..io import raster
+            image, _ = QFileDialog.getOpenFileName(self, title, self._last_dir('image'),
+                                                   tr('Images ({0})').format(raster.image_patterns()))
+        if image:
+            from ..io import heif
+            why = heif.problem(image)
+            if why:                                      # HEIC sans décodeur : dit quoi installer, rapport sans image
+                QMessageBox.warning(self, title, why)
+                image = ''
         if path is None:
             src = doc.source_path
             start = (os.path.splitext(src)[0] + ' - imbrication.pdf') if src else self._last_dir('rapport')

@@ -49,6 +49,9 @@ import zipfile
 from ..core.document import Document, Group, Image, Text
 from . import native
 
+#: marque du lien (round 1174) : le fichier garde chaque calque du dessin avec toutes ses couleurs (pas un calque
+#: par outil) ; ses calques sont ceux du compagnon, un pour un
+MULTI = 'calques_multicolores'
 LINK = 'compagnon.json'
 #: clés de `doc.extra` que le VND redonne lui-même (ou propres à un autre format lu)
 _FROM_VND = ('page_mm', 'compagnon', 'smb_fonts')
@@ -345,6 +348,10 @@ def sync(doc: Document, vnd_path, mode: str = 'besoin') -> tuple[pathlib.Path | 
     cp = companion_path(vnd_path)
     key = format_key(vnd_path)
     why = (reasons(doc) if te_native(vnd_path) else foreign_reasons(doc, vnd_path)) if mode != 'jamais' else []
+    if mode != 'jamais' and te_native(vnd_path):
+        from .vnd_write import mixed_layers           # calques de plusieurs outils : le fichier n'a que leur outil
+        if mixed_layers([L for i, L in enumerate(doc.layers) if i not in _plates(doc)]):
+            why.append('outils des objets d\'un calque de plusieurs couleurs')
     if mode == 'toujours' and not why:
         why = ['document VectorDrive complet']
     if not why:
@@ -363,6 +370,8 @@ def sync(doc: Document, vnd_path, mode: str = 'besoin') -> tuple[pathlib.Path | 
             'compteurs': [len(L.items) for L in written], 'raisons': why,
             'objets': [[i for i, it in enumerate(L.items) if rich(it)] for L in written],
             'plaques': plates, 'date': dt.datetime.now().isoformat(timespec='seconds')}
+    if te_native(vnd_path):                              # calques écrits avec toutes leurs couleurs (round 1174)
+        link[MULTI] = 1
     if te_native(vnd_path):                              # l'ordre des calques écrits (0.956.0) : `_in_vnd_order`
         from .vnd_write import first_shown_of
         link['ordre'] = 'premier' if first_shown_of(doc) else 'dessin'
@@ -376,9 +385,10 @@ def sync(doc: Document, vnd_path, mode: str = 'besoin') -> tuple[pathlib.Path | 
     return cp, why
 
 
-def apply(doc: Document, vnd_path) -> list[str]:
+def apply(doc: Document, vnd_path, plates: bool = True) -> list[str]:
     """À l'ouverture de `vnd_path` : reprend ce que garde son compagnon.
-    Rend les messages pour l'utilisateur."""
+    Rend les messages pour l'utilisateur. `plates` faux : sans les plaques de reprise du compagnon (un symbole, un
+    logo : pas ce repère de l'usinage)."""
     cp = companion_path(vnd_path)
     if not cp.exists() or not is_companion(cp):
         return []
@@ -412,6 +422,21 @@ def apply(doc: Document, vnd_path) -> list[str]:
     if twins:                                            # dit dans les remarques de l'ouverture, sans fenêtre
         msgs.append(f'calque(s) de même nom ({", ".join(sorted(twins))}) : rien n\'en est repris du compagnon '
                     '(ordre des calques non vérifiable) — renommer les calques')
+    n, t, restored = 0, 0, set()                         # objets repris, outils d'objets rétablis
+    if same and len(written) == len(doc.layers):         # outils des objets, un à un, avant `_outlines` (qui reconnaît
+        for L, k in zip(doc.layers, order):              # le contour d'une surface à son outil) : le fichier n'a que
+            C = written[k]                               # ceux des calques (calques de plusieurs couleurs, round 1174)
+            got = _tools_back(L, C) if L.name == C.name and L.name not in twins and id(C) not in info else None
+            if got is not None:
+                t += got
+                restored.add(id(C))
+    if link.get(MULTI):                                  # dit quand le fichier seul fait foi pour ces outils
+        from ..i18n import tr
+        from .vnd_write import mixed_layers
+        lost = [C.name for C in written if id(C) not in restored and mixed_layers([C])]
+        if lost:
+            msgs.append(tr('calque(s) de plusieurs couleurs ({0}) : outils des objets non rétablis par le compagnon ; '
+                           'chaque objet a l’outil de son calque, comme dans TypeEdit').format(', '.join(lost)))
     if len(written) == len(doc.layers):
         for L, C in zip(doc.layers, (written[i] for i in order)):
             if L.name != C.name or L.name in twins:      # pas sûrement le même calque : rien n'en est repris (ni son
@@ -423,7 +448,6 @@ def apply(doc: Document, vnd_path) -> list[str]:
             L.id = C.id
             L.extra = {**R.extra, **L.extra}
             _outlines(L, C)
-    n = 0
     back, hid = {}, {}
     if same and len(written) == len(doc.layers):
         counts = link.get('compteurs') or []
@@ -462,12 +486,15 @@ def apply(doc: Document, vnd_path) -> list[str]:
                     out.append(L)
             doc.layers[:] = out
     if same:                                             # images : le VND écrit un calque par outil (round 1160)
-        n += _images_back(doc, written, ordre, twins)
+        n += _images_back(doc, written, ordre, twins, split=not link.get(MULTI))
     kept = ', '.join(link.get('raisons') or [])
     if same:
         more = []
         if n:
             more.append(f'{n} objet(s) VectorDrive repris')
+        if t:                                            # à part : les outils rendus (round 1174)
+            from ..i18n import tr
+            more.append(tr('{0} outil(s) d’objet rétabli(s)').format(t))
         if back or hid:
             more.append(f'{len(back) + len(hid)} calque(s) en VD Géo repris avec leur original')
         msgs.append(f'compagnon {cp.name} relu : {kept}' + (f' ({" ; ".join(more)})' if more else ''))
@@ -476,13 +503,84 @@ def apply(doc: Document, vnd_path) -> list[str]:
         msgs.append(f'le {what} a changé depuis son compagnon {cp.name} (retouché dans TypeEdit ?) : '
                     f'le dessin du {what} fait foi ; seuls le réglage FAO, les guides et l\'état des calques '
                     'sont repris')
-    _put_plates(doc, held)                               # remises à leur rang, VND retouché ou non
+    if plates:
+        _put_plates(doc, held)                           # remises à leur rang, VND retouché ou non
     msgs += _lost_operations(doc)
     doc.extra['compagnon'] = cp.name
     return msgs
 
 
-def _images_back(doc: Document, comp_layers: list, ordre: str | None, cited=frozenset()) -> int:
+def open_document(path, plates: bool = True, notes: list | None = None) -> Document:
+    """Le dessin `path` lu comme à l'ouverture dans la fenêtre : un fichier TypeEdit (VND, .vnl, .vnm) avec son
+    compagnon appliqué (`apply` : outils des objets d'un calque de plusieurs couleurs, round 1174 ; objets VectorDrive,
+    réglage FAO…), ses remarques en tête du compte rendu. Pour les flux qui lisent sans la fenêtre : série FAO,
+    traitement par lot, conversion, bibliothèque de symboles, logo du BAT. `plates` faux : sans les plaques de reprise
+    du compagnon (symbole, logo) ; `notes` (liste) reçoit les remarques à montrer, sans la ligne « compagnon …
+    relu »."""
+    from . import registry
+    doc = registry.open_document(path)
+    if te_native(path):
+        msgs = apply(doc, path, plates=plates)
+        if isinstance(getattr(doc, 'report', None), list):
+            doc.report[:0] = msgs
+        if notes is not None:
+            said = f'compagnon {companion_path(path).name} relu'
+            notes += [m for m in msgs if not m.startswith(said)]
+    return doc
+
+
+def _tools_back(L, C) -> int | None:
+    """Le calque relu `L` a-t-il, rang pour rang, les objets écrits (`_written`) du calque `C` du compagnon (même
+    nombre, image ou non : `_same_kinds` ; un texte VectorDrive revient en courbe, un groupe d'un objet en cet objet) ?
+    Chacun reprend alors l'outil du sien (`_copy_tools`) : le fichier ne garde que l'outil du calque, la couleur de
+    chaque courbe n'étant qu'affichage (round 1174 : jamais d'outil déduit d'une couleur). Rend le nombre d'objets
+    dont l'outil change ; None si les objets ne se suivent pas (rien n'est changé)."""
+    if not _same_kinds(L, C):
+        return None
+    return sum(_copy_tools(a, b) for a, b in zip(L.items, [it for it in C.items if _written(it)]))
+
+
+def _vd_group(it) -> bool:
+    """Groupe VectorDrive (pas un objet TypeEdit d'origine écrit d'un bloc) : ses enfants ont chacun leur outil."""
+    return isinstance(it, Group) and (it.extra or {}).get('vnd_obj') is None
+
+
+def _kids(g) -> list:
+    """Les enfants écrits d'un groupe VectorDrive (`_written`)."""
+    return [c for c in g.children if _written(c)] if _vd_group(g) else []
+
+
+def _leaf_list(it) -> list:
+    """Les objets écrits au bout de `it` (groupes VectorDrive dépliés)."""
+    return [x for c in _kids(it) for x in _leaf_list(c)] if _vd_group(it) else [it]
+
+
+def _copy_tools(a, b) -> int:
+    """L'outil de l'objet `b` du compagnon reporté sur l'objet relu `a`, avec ce qui le suit dans l'objet relu
+    (`vnd._set_tool` : couleur et fin de courbe gardées sur cet outil, enfants d'un groupe relu compris). `b`, groupe
+    VectorDrive d'un seul enfant écrit, est relu comme cet enfant (zone d'un seul objet, `vnd._to_items`) ; deux
+    groupes de mêmes enfants (image ou non) : un à un ; sinon l'outil commun des objets de `b`, rien s'ils en ont
+    plusieurs. Rend le nombre d'objets dont l'outil change."""
+    from .vnd import _set_tool
+    while len(_kids(b)) == 1:
+        b = _kids(b)[0]
+    if _vd_group(b):
+        kids = _kids(b)
+        if _vd_group(a) and [isinstance(x, Image) for x in a.children] == [isinstance(y, Image) for y in kids]:
+            return sum(_copy_tools(x, y) for x, y in zip(a.children, kids))
+        tools = {int(lf.tool) for lf in _leaf_list(b)}
+        if len(tools) != 1:
+            return 0                                     # plusieurs outils sans objets qui se suivent : rien
+        tool = tools.pop()
+    else:
+        tool = int(b.tool)                               # feuille, texte, objet TypeEdit d'origine
+    before = [int(x.tool) for x in _leaf_list(a)]
+    _set_tool([a], tool)
+    return sum(1 for x in before if x != tool)
+
+
+def _images_back(doc: Document, comp_layers: list, ordre: str | None, cited=frozenset(),
+                 split: bool = True) -> int:
     """Les images que le VND a dégradées (tournées, inclinées, transparentes : `image_rich`) reprises du compagnon
     (round 1160), calque par calque : les calques du compagnon partagés comme à l'écriture (un calque TypeEdit par
     outil, `vnd_write._tool_layers` : « nom (n° d'outil) ») et remis dans l'ordre du VND (`_in_vnd_order`) ; un calque
@@ -490,9 +588,10 @@ def _images_back(doc: Document, comp_layers: list, ordre: str | None, cited=froz
     pixels ; côté compagnon, seulement les images écrites : visibles, dans des groupes visibles). Une image déjà
     reprise du compagnon (rang des objets) n'est pas retouchée ; dans le doute (nombre de calques, noms différents ou
     en double, nombre d'images différent), rien n'est remplacé ; ni d'un calque cité dans la remarque des noms en
-    double d'`apply` (`cited`), même partagé par outil. Rend leur nombre."""
+    double d'`apply` (`cited`), même partagé par outil. `split` faux (lien marqué `MULTI`, round 1174) : les calques du
+    fichier sont ceux du compagnon, pas partagés par outil. Rend leur nombre."""
     from .vnd_write import _tool_layers
-    subs = [L for L, _tool in _tool_layers(comp_layers)]
+    subs = [L for L, _tool in _tool_layers(comp_layers)] if split else list(comp_layers)
     if len(subs) != len(doc.layers):
         return 0
     order = _in_vnd_order(doc.layers, subs, ordre)

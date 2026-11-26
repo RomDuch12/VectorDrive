@@ -958,21 +958,22 @@ class HalftoneDialog(QDialog):
 
     def _browse(self) -> None:
         from PySide6.QtWidgets import QFileDialog
+        from ..io import raster
         f, _ = QFileDialog.getOpenFileName(self, tr('Image'), self.source.text(),
-                                           tr('Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.gif)'))
+                                           tr('Images ({0})').format(raster.image_patterns()))
         if f:
             self.source.setText(f)
 
     def _update(self) -> None:
-        from PySide6.QtGui import QImageReader
-        size = QImageReader(self.source.text()).size()
-        if size.width() <= 0:
-            self.info.setText(tr('Choisir une image.'))
+        from ..io import heif, raster
+        size = raster.pixel_size(self.source.text())     # HEIC compris
+        if size is None:
+            self.info.setText(heif.problem(self.source.text()) or tr('Choisir une image.'))
             return
         cols = round(self.width.value() / self.pitch.value())
-        rows = round(cols * size.height() / size.width())
+        rows = round(cols * size[1] / size[0])
         self.info.setText(tr('{0} × {1} px → {2} × {3} cellules, {4:.1f} × {5:.1f} mm').format(
-            size.width(), size.height(), cols, rows, cols * self.pitch.value(), rows * self.pitch.value()))
+            size[0], size[1], cols, rows, cols * self.pitch.value(), rows * self.pitch.value()))
 
     def result_spec(self):
         from ..core import halftone as HT

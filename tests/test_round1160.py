@@ -708,6 +708,27 @@ class Companion(unittest.TestCase):
         registry.save_document(doc, p)
         companion.sync(doc, p)
         back = registry.open_document(p)
+        self.assertEqual([L.name for L in back.layers], ['Plan', 'Plan'])    # round 1174 : plus partagé par outil
+        self.assertNotIn('renommer les calques', ' | '.join(companion.apply(back, p)))     # ordre vérifié (989)
+        self.assertEqual([(L.visible, len(L.items), [it.data for it in L.items if isinstance(it, Image)])
+                          for L in back.layers], [(True, 2, [im.data]), (False, 1, [])])  # le visible écrit d'abord
+        self.assertEqual([(round(it.bbox()[0], 6), it.tool) for it in back.layers[0].items
+                          if not isinstance(it, Image)], [(40.0, 1)])      # le carré à 40 mm : son outil 1 rendu
+        import json
+        import zipfile
+        from vectordrive.io import vnd_write
+        pathlib.Path(p).write_bytes(vnd_write.write_document(doc, split_tools=True)[0])   # un VND d'avant 1174
+        companion.sync(doc, p)
+        cp = companion.companion_path(p)
+        with zipfile.ZipFile(cp) as z:
+            parts = {n: z.read(n) for n in z.namelist()}
+        link = json.loads(parts[companion.LINK].decode('utf-8'))
+        del link[companion.MULTI]                                           # et son compagnon, sans la marque
+        parts[companion.LINK] = json.dumps(link).encode('utf-8')
+        with zipfile.ZipFile(cp, 'w') as z:
+            for n, b in parts.items():
+                z.writestr(n, b)
+        back = registry.open_document(p)
         self.assertEqual([L.name for L in back.layers], ['Plan', 'Plan', 'Plan (2)'])
         said = ' | '.join(companion.apply(back, p))
         self.assertIn('renommer les calques', said)

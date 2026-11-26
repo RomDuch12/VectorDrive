@@ -233,13 +233,14 @@ class BatchDialog(QDialog):
             from .options import value
             res = run(self, tr('Traitement par lots'), batch.convert, files, out, self.fmt.currentData(),
                       overwrite=self.overwrite.isChecked(), proof=self.proof.isChecked(), keep_tree_from=root,
-                      live_texts=value(st, 'vnd/textes_vivants'))
+                      live_texts=value(st, 'vnd/textes_vivants'), companion_mode=value(st, 'vnd/compagnon'))
         except Cancelled:
             self.report.setPlainText(tr('Traitement annulé'))
             return None
         lines = [tr('{0} converti(s), {1} ignoré(s), {2} erreur(s)').format(len(res.done), len(res.skipped),
                                                                             len(res.errors))]
         lines += [f'⚠ {pathlib.Path(s).name} : {m}' for s, m in res.errors]
+        lines += [f'• {pathlib.Path(s).name} : {m}' for s, m in res.notes]     # convertis, avec une réserve
         lines += [f'— {pathlib.Path(s).name} : {m}' for s, m in res.skipped]
         self.report.setPlainText('\n'.join(lines))
         self._out_changed()                              # le dossier existe maintenant
