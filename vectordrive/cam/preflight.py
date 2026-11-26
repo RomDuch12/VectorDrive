@@ -384,7 +384,7 @@ def inspect(doc, setup, toolpaths, *, post_warnings=(), timing_spec=None, all_pa
     if all_paths is not None:                                      # active, mais pas dans le programme
         listed: dict = {}
         for tp in all_paths:
-            listed[tp.op_id] = listed.get(tp.op_id, False) or getattr(tp, 'shown', True)
+            listed[tp.op_id] = listed.get(tp.op_id, False) or getattr(tp, 'on', True)    # marche/arrêt
         for o in setup.operations:
             if not o.enabled:
                 continue
@@ -392,7 +392,7 @@ def inspect(doc, setup, toolpaths, *, post_warnings=(), timing_spec=None, all_pa
                 add((ATTENTION, f'« {o.name or o.kind} » est active mais n\'a pas de parcours calculé : elle ne '
                                 'sera pas dans le programme — recalculer les parcours.'))
             elif not listed[o.id]:
-                add((INFO, f'« {o.name or o.kind} » : parcours décoché, pas dans le programme.'))
+                add((INFO, f'« {o.name or o.kind} » : parcours à l\'arrêt, pas dans le programme.'))
     from ..io import model3d
     twin = model3d.twin_note(doc)
     if twin:                                                       # deux pièces 3D du même nom

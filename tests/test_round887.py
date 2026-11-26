@@ -9,13 +9,13 @@ from unittest import mock
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ['VECTORDRIVE_NO_TYPEEDIT'] = '1'
-_SAVED = {k: os.environ.get(k) for k in ('VECTORDRIVE_SETTINGS', 'VECTORDRIVE_SESSION', 'VECTORDRIVE_CACHE')}
 _TMP = tempfile.mkdtemp(prefix='vd887_')
-os.environ['VECTORDRIVE_SETTINGS'] = os.path.join(_TMP, 'r887.ini')
+# round 1159 : posés par setUpModule, plus à l'import (ils valaient alors pour tous les essais du processus)
+_ENV = {'VECTORDRIVE_SETTINGS': os.path.join(_TMP, 'r887.ini'),
+        'VECTORDRIVE_SESSION': os.path.join(_TMP, 'session.json'),
+        'VECTORDRIVE_CACHE': os.path.join(_TMP, 'cache')}
+_SAVED = {}
 from tests import seed_settings  # noqa: E402
-seed_settings(os.environ['VECTORDRIVE_SETTINGS'])           # l'accrochage éteint, comme pour les autres essais
-os.environ['VECTORDRIVE_SESSION'] = os.path.join(_TMP, 'session.json')
-os.environ['VECTORDRIVE_CACHE'] = os.path.join(_TMP, 'cache')
 
 from collections import Counter
 
@@ -38,6 +38,14 @@ W = Qt.WindowState
 
 def dist(a, b) -> int:
     return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+
+def setUpModule():
+    os.makedirs(_TMP, exist_ok=True)
+    for k, v in _ENV.items():
+        _SAVED[k] = os.environ.get(k)
+        os.environ[k] = v
+    seed_settings(os.environ['VECTORDRIVE_SETTINGS'])           # l'accrochage éteint, comme pour les autres essais
 
 
 def tearDownModule():

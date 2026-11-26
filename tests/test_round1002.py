@@ -117,13 +117,15 @@ class Chosen(Base):
         self.assertEqual([tp.name for tp in p.toolpaths], ['Un', 'Deux', 'Trois'])   # calculés
         self.assertEqual([tp.shown for tp in p.toolpaths], [False, True, False])     # la choisie seule montrée
         self.assertEqual([self.eye(r) for r in range(3)], [False, True, False])
-        self.assertEqual([tp.name for tp in p.checked_paths()], ['Deux'])            # elle seule irait au programme
-        self.show.assert_called_once_with('3d')
-        self.assertEqual([o.name for o in p.hidden_active_ops()], ['Un', 'Trois'])   # … et le panneau le dit
-        self.assertIn('⚠', p.info.text())
+        self.assertEqual([tp.name for tp in p.checked_paths()], ['Un', 'Deux', 'Trois'])   # cachés : toujours au
+        self.show.assert_called_once_with('3d')                                      # programme (round 1163)
+        self.assertNotIn('⚠', p.info.text())                                         # rien à signaler
+        p.set_path_on(0, False)                                                      # à l'arrêt : c'est dit
+        p.set_path_on(2, False)
+        self.assertEqual([o.name for o in p.stopped_active_ops()], ['Un', 'Trois'])
         self.assertIn('2 ', p.info.text().split('⚠')[1])
-        self.assertEqual(p.show_all_paths(), 2)                                      # tout montrer : plus d'avis
-        self.assertEqual([tp.shown for tp in p.toolpaths], [True, True, True])
+        self.assertEqual(p.all_paths_on(), 2)                                        # tout en marche : plus d'avis
+        self.assertEqual([tp.on for tp in p.toolpaths], [True, True, True])
         self.assertNotIn('⚠', p.info.text())
         self.select(1)
         p.show_chosen_3d()
@@ -169,7 +171,7 @@ class Chosen(Base):
         out = p.show_chosen_3d()
         self.assertEqual([tp.name for tp in out], ['Quatre'])
         self.assertIn('Lu', [tp.name for tp in p.toolpaths])        # le parcours lu n'a pas disparu
-        self.assertEqual(sorted(tp.name for tp in p.checked_paths()), ['Lu', 'Quatre'])
+        self.assertEqual(sorted(tp.name for tp in p.toolpaths if tp.shown), ['Lu', 'Quatre'])   # montrés
 
     def test_nothing_active_and_nothing_shown_when_cancelled(self):
         p = self.p

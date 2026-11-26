@@ -4,9 +4,11 @@ trois dossiers — « Parcours type » (les parcours de base, par familles ;
 sous chacun, les modèles des plugins), « Mes modèles » (vos modèles et leurs
 dossiers), « TypeEdit » (la palette et les modèles importés de TypeEdit) —,
 tous renommables, et tout en bas « usiner la sélection ou les couleurs ». Un
-clic sur un parcours ouvre son formulaire pour les contours sélectionnés,
-prérempli avec ses dernières valeurs ; un clic sur un modèle l'ouvre déjà
-rempli."""
+double clic (ou Entrée) sur un parcours ouvre son formulaire pour les contours
+sélectionnés, prérempli avec ses dernières valeurs, puis le calcule ; sur un
+modèle, il l'ouvre déjà rempli ; sur un process, il l'ajoute au dessin. Un
+simple clic ne fait que choisir la ligne, ou déplier un dossier (demande du
+25/11)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -237,16 +239,20 @@ class CamPalette(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
         self.tree.itemClicked.connect(self._clicked)
+        self.tree.setExpandsOnDoubleClick(False)         # un dossier : déplié par le clic, pas replié par le second
+        self.tree.itemDoubleClicked.connect(lambda item, _c=0: self.activate(item))
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
-        for keys, slot in ((QKeySequence.StandardKey.Delete, self.delete_selected), ('F2', self.rename_selected)):
+        for keys, slot in ((QKeySequence.StandardKey.Delete, self.delete_selected), ('F2', self.rename_selected),
+                           ('Return', self._enter), ('Enter', self._enter)):
             sc = QShortcut(QKeySequence(keys), self.tree)
             sc.setContext(Qt.ShortcutContext.WidgetShortcut)
             sc.activated.connect(slot)
         lay.addWidget(self.tree, 1)
-        hint = QLabel(tr('Un clic sur un parcours ouvre son formulaire pour les contours sélectionnés, prérempli '
-                         'avec ses dernières valeurs ; un clic sur un modèle l\'ouvre déjà rempli. Vos modèles se '
-                         'rangent par glisser-déposer ; Suppr, F2 et clic droit pour le reste.'))
+        hint = QLabel(tr('Un double clic sur un parcours (ou Entrée) ouvre son formulaire pour les contours '
+                         'sélectionnés, prérempli avec ses dernières valeurs, puis le calcule ; sur un modèle, il '
+                         'l’ouvre déjà rempli. Un simple clic choisit la ligne. Faites glisser vos modèles pour '
+                         'les ranger ; Suppr, F2 et clic droit pour le reste.'))
         from PySide6.QtWidgets import QToolButton
         from .fold_label import FoldLabel
         hint = self.hint = FoldLabel(hint.text())        # une longue phrase : repliable en une ligne (demande du 15/11)
@@ -654,18 +660,43 @@ class CamPalette(QWidget):
     def forget_last(self, key: str) -> bool:
         return self.win.cam_panel.forget_last(key)
 
+    @staticmethod
+    def _is_folder(item: QTreeWidgetItem) -> bool:
+        """Une ligne qui ne crée rien : un dossier (ou une ligne d'aide)."""
+        return not (item.data(0, ROLE_PROCESS) or item.data(0, ROLE_FAMILY) or item.data(0, ROLE_KIND))
+
     def _clicked(self, item: QTreeWidgetItem, _col: int = 0) -> None:
+        """Un clic : la ligne choisie, rien de plus — le parcours se crée au double clic (demande du 25/11) ; un
+        dossier, ou une famille qui a des parcours en dessous, se déplie ou se replie."""
+        if self._is_folder(item) or (item.data(0, ROLE_FAMILY) and item.childCount()):
+            item.setExpanded(not item.isExpanded())
+
+    def _enter(self) -> None:
+        """Entrée sur la ligne courante : comme un double clic ; un dossier se déplie ou se replie."""
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        if self._is_folder(item):
+            item.setExpanded(not item.isExpanded())
+        else:
+            self.activate(item)
+
+    def activate(self, item: QTreeWidgetItem, exec_dialog: bool = True):
+        """Double clic (ou Entrée) sur une ligne de la palette : un process est ajouté au dessin ; une famille, un
+        parcours ou un modèle crée son opération sur les formes sélectionnées (ou les couleurs) — son formulaire, puis
+        son calcul ; sans forme sélectionnée, le panneau FAO le dit. Un dossier : rien (le clic qui précède le double
+        clic l'a déjà déplié). Rend ce que rend la création (None : rien d'ajouté)."""
+        if item is None:
+            return None
+        kw = {} if exec_dialog else {'exec_dialog': False}
         if item.data(0, ROLE_PROCESS):                   # un process : ajouté au dessin
-            self.apply_process(str(item.data(0, ROLE_TPL)))
-            return
+            return self.apply_process(str(item.data(0, ROLE_TPL)), **kw)
         if item.data(0, ROLE_FAMILY):                    # parcours unifiés : le formulaire de la famille
-            self.win.cam_panel.new_family(str(item.data(0, ROLE_FAMILY)))
-            return
+            return self.win.cam_panel.new_family(str(item.data(0, ROLE_FAMILY)), **kw)
         key = item.data(0, ROLE_KIND)
         if not key:
-            item.setExpanded(not item.isExpanded())
-            return
-        self.win.cam_panel.new_operation(key, template=item.data(0, ROLE_TPL) or None)
+            return None
+        return self.win.cam_panel.new_operation(key, template=item.data(0, ROLE_TPL) or None, **kw)
 
     def _menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -676,9 +707,9 @@ class CamPalette(QWidget):
             if item.data(0, ROLE_ORIGIN) == 'utilisateur':
                 m.addAction(tr('Remplacer par les opérations du dessin'), lambda: self.update_process(str(name)))
         if item is not None and item.data(0, ROLE_FAMILY):
-            m.addAction(tr('Nouveau parcours…'), lambda: self._clicked(item))
+            m.addAction(tr('Nouveau parcours…'), lambda: self.activate(item))
         if item is not None and item.data(0, ROLE_KIND):
-            m.addAction(tr('Nouveau parcours…'), lambda: self._clicked(item))
+            m.addAction(tr('Nouveau parcours…'), lambda: self.activate(item))
             key = str(item.data(0, ROLE_KIND))
             if not name and self.win.cam_panel.last_values(key) is not None:
                 m.addAction(tr('Enregistrer les dernières valeurs comme modèle…'), lambda: self.save_last(key))

@@ -6,12 +6,18 @@ courante, sans rien changer au dessin. Choisir un autre calque reprend sa couleu
 Chaque ligne dit combien d'objets portent cette couleur ; la couleur courante est en gras, celles de la sélection
 cochées. Clic droit : changer la couleur de l'outil.
 
+Le bouton « Pinceau » (demande du 26/11 : « couleurs : creer outil pinceau pour colorier manuellement les contours au
+clic ») prend le pinceau de couleur (`tools.ColorBrushTool`) : chaque clic sur un contour lui donne la couleur
+courante, comme un clic de la palette la donne à la sélection ; une autre couleur choisie pendant ce temps devient
+celle du pinceau, sans recolorer la sélection.
+
 Un panneau de colonne comme les autres (à gauche d'office, masqué tant qu'on ne le demande pas). Il ne prend pas le
 clavier : les raccourcis restent au dessin."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from ..i18n import tr
 
@@ -34,6 +40,16 @@ class ColorPanel(QWidget):
         self._later.timeout.connect(lambda: self.sync(force=False, now=True))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
+        row = QHBoxLayout()                              # le pinceau de couleur (demande du 26/11)
+        self.brush_button = QToolButton()
+        self.brush_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.brush_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        act = getattr(win, 'A', {}).get('tool_color_brush')
+        if act is not None:
+            self.brush_button.setDefaultAction(act)      # coché tant que l'outil est pris
+        row.addWidget(self.brush_button)
+        row.addStretch(1)
+        lay.addLayout(row)
         self.list = QListWidget()
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)             # le clavier reste au dessin
         self.list.setToolTip(tr('Un clic : les objets sélectionnés prennent cette couleur, qui devient la couleur '
@@ -63,6 +79,14 @@ class ColorPanel(QWidget):
     def current(self) -> int:
         return int(getattr(self.win.canvas, 'current_tool_index', 0) or 0)
 
+    def brush_active(self) -> bool:
+        """Le pinceau de couleur est-il l'outil en cours ?"""
+        return getattr(self.win.canvas, 'tool', None) == 'color_brush'
+
+    def brush_color(self) -> str:
+        """La couleur du pinceau : la couleur courante (« #rrggbb »)."""
+        return self.doc().tool_color(self.current())
+
     def counts(self) -> dict:
         """{outil : nombre d'objets du dessin de cette couleur}."""
         out: dict = {}
@@ -87,7 +111,8 @@ class ColorPanel(QWidget):
         self._later.stop()
         doc = self.doc()
         counts = self.counts()
-        sig = ([(t.index, t.color, t.name) for t in doc.tools], counts, self.current(), sorted(self.chosen()), id(doc))
+        sig = ([(t.index, t.color, t.name) for t in doc.tools], counts, self.current(), sorted(self.chosen()), id(doc),
+               self.brush_active())
         if not force and sig == self.signature:
             return
         self.signature = sig
@@ -110,6 +135,10 @@ class ColorPanel(QWidget):
             it.setToolTip(t.color)
             self.list.addItem(it)
         sel = len(self.win.canvas.selection)
+        if sig[5]:
+            self.note.setText(tr('Pinceau : un clic sur un contour du dessin lui donne la couleur courante (en gras) ; '
+                                 'un clic ici choisit celle du pinceau ; clic droit ou Échap : quitter'))
+            return
         self.note.setText(tr('{0} objet(s) sélectionné(s) : un clic les colore').format(sel) if sel else
                           tr('Rien de sélectionné : un clic choisit la couleur courante'))
 
@@ -148,15 +177,35 @@ class ColorPanel(QWidget):
         if not any(t.index == index for t in doc.tools):
             return 0
         win.canvas.current_tool_index = index
-        sel = list(win.canvas.selection)
-        leaves = [x for x in _leaves_of(sel) if getattr(x, 'tool', None) is not None and x.tool != index]
-        tops = [t for t in sel if getattr(t, 'tool', None) is not None and t.tool != index]
+        if self.brush_active():                          # le pinceau en main : la couleur du pinceau, rien d'autre
+            tool = win.canvas.tool_obj
+            if hasattr(tool, 'colour_changed'):
+                tool.colour_changed()
+            self.sync(force=True)
+            return 0
+        return self.recolor(list(win.canvas.selection), index)
+
+    def brush(self, items) -> int:
+        """Pinceau de couleur : les objets cliqués `items` (une forme, ou un groupe avec Maj) prennent la couleur
+        courante, en un pas d'annulation ; rend le nombre de formes recoloriées."""
+        index = self.current()
+        if not any(t.index == index for t in self.doc().tools):
+            return 0
+        return self.recolor(items, index, tr('Pinceau de couleur'))
+
+    def recolor(self, items, index: int, label: str | None = None) -> int:
+        """Les objets `items` (groupes compris, et leurs formes) à la couleur `index` (leur outil), en un pas
+        d'annulation nommé `label` (« Couleur » d'office) ; ceux qui l'ont déjà ne changent pas (rien à changer : aucun
+        pas). Rend le nombre de formes recoloriées."""
+        win = self.win
+        leaves = [x for x in _leaves_of(items) if getattr(x, 'tool', None) is not None and x.tool != index]
+        tops = [t for t in items if getattr(t, 'tool', None) is not None and t.tool != index]
         if not leaves and not tops:
             self.sync(force=True)
             return 0
         if hasattr(win, 'finish_typing'):               # une saisie en cours : son pas d'annulation d'abord
             win.finish_typing()
-        win.push_undo(tr('Couleur'))
+        win.push_undo(label or tr('Couleur'))
         for t in tops:
             t.tool = index
         for x in leaves:

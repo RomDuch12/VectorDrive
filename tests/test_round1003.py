@@ -263,16 +263,16 @@ class Live(Base):
         self.assertEqual(self.prog.timer.interval(), PW.LIVE_MS)    # les changements à la suite n'en font qu'un
         self.assertIn('(Détourage été)', self.text())
         with mock.patch.object(self.p, 'program_preview', wraps=self.p.program_preview) as made:
-            self.p.toggle_op_paths(1, False)                        # un parcours caché : hors du programme
+            self.p.set_path_on(1, False)                            # arrêté : hors du programme (round 1163)
             app.processEvents()
             self.assertIn('(Détourage été)', self.text())           # pas dans l'instant…
             self.wait()
             self.assertEqual(made.call_count, 1)                    # … mais sous peu, une seule fois
         self.assertNotIn('(Détourage été)', self.text())
         self.assertIn('(Plaque avant)', self.text())
-        self.assertIn('⚠', self.prog.status.text())                 # une opération active cachée : c'est dit
+        self.assertIn('⚠', self.prog.status.text())                 # une opération active à l'arrêt : c'est dit
         self.assertTrue(self.prog.buttons['all'].isVisibleTo(self.prog))
-        self.prog.buttons['all'].click()                            # « Tout montrer » : le programme entier
+        self.prog.buttons['all'].click()                            # « Tout en marche » : le programme entier
         self.assertIn('(Détourage été)', self.text())
         self.assertNotIn('⚠', self.prog.status.text())
         self.assertFalse(self.prog.buttons['all'].isVisibleTo(self.prog))
@@ -300,7 +300,7 @@ class Live(Base):
         app.processEvents()
         self.prog.live.setChecked(False)
         self.assertEqual(str(self.w.settings.value('fao/programme_direct')).lower(), 'false')
-        self.p.toggle_op_paths(1, False)
+        self.p.set_path_on(1, False)
         self.wait()
         self.assertIn('(Détourage été)', self.text())               # à la demande : rien n'a bougé
         self.prog.buttons['update'].click()
@@ -310,14 +310,14 @@ class Live(Base):
         from vectordrive.ui import program_window as PW
         self.p.compute()
         with mock.patch.object(self.p, 'program_preview', wraps=self.p.program_preview) as made:
-            self.p.toggle_op_paths(1, False)
+            self.p.set_path_on(1, False)
             self.wait()
             made.assert_not_called()                                # fenêtre fermée : rien n'est écrit pour rien
             self.w.show_program()
             app.processEvents()
             made.reset_mock()
             self.p._computing = True                                # pendant un calcul : après lui
-            self.p.toggle_op_paths(1, True)
+            self.p.set_path_on(1, True)
             self.wait()
             made.assert_not_called()
             self.p._computing = False
@@ -325,7 +325,7 @@ class Live(Base):
             self.assertEqual(made.call_count, 1)
             made.reset_mock()
             with mock.patch.object(PW, 'LIVE_MAX_MOVES', 1):        # un très long programme : à la demande
-                self.p.toggle_op_paths(1, False)
+                self.p.set_path_on(1, False)
                 self.wait()
                 made.assert_not_called()
                 self.assertIn('Mettre à jour', self.prog.status.text())
@@ -352,9 +352,9 @@ class Links(Base):
         self.prog.refresh()                                         # une mise à jour ne déplace ni la vue ni le curseur
         self.assertEqual(self.prog.text.textCursor().blockNumber(), 0)
         self.assertEqual(len(self.prog.text.extraSelections()), 1)  # … mais l'opération reste surlignée
-        self.p.toggle_op_paths(1, False)
+        self.p.set_path_on(1, False)                                # (round 1163 : l'œil ne la retire plus)
         self.prog.refresh()
-        self.assertEqual(self.prog.text.extraSelections(), [])      # cachée : rien à surligner, pas une autre ligne
+        self.assertEqual(self.prog.text.extraSelections(), [])      # arrêtée : rien à surligner, pas une autre ligne
         self.select()
         self.assertEqual(self.prog.text.extraSelections(), [])
         self.assertEqual(self.prog.find_lines('absent du programme'), [])

@@ -43,8 +43,8 @@ def paths_key(tps) -> tuple:
     """Identité des parcours affichés : change à chaque recalcul (nouveaux
     objets), quand on coche, décoche ou inverse un parcours (gardés avec
     lui), pas quand on déplace un onglet."""
-    return tuple((getattr(tp, 'uid', id(tp)), bool(getattr(tp, 'shown', True)), bool(getattr(tp, 'reversed', False)))
-                 for tp in tps)
+    return tuple((getattr(tp, 'uid', id(tp)), bool(getattr(tp, 'shown', True)), bool(getattr(tp, 'reversed', False)),
+                  bool(getattr(tp, 'on', True))) for tp in tps)
 
 
 def fin_spans(moves) -> list:
@@ -75,6 +75,7 @@ def paths_bytes(tps) -> bytes:
         heads.append({'op_id': tp.op_id, 'tool_id': tp.tool_id, 'name': tp.name, 'source': tp.source,
                       'warnings': list(tp.warnings), 'cycles': list(tp.cycles),
                       'shown': bool(getattr(tp, 'shown', True)), 'reversed': bool(getattr(tp, 'reversed', False)),
+                      'on': bool(getattr(tp, 'on', True)),
                       'zones': list(getattr(tp, 'zones', None) or []),
                       'n': len(moves), 'kinds': table[len(KINDS):],
                       'fin': fin_spans(moves)})
@@ -115,6 +116,8 @@ def paths_from_bytes(data: bytes) -> list:
             for i in range(max(0, int(a)), min(int(b), len(tp.moves))):
                 tp.moves[i].fin = True
         tp.shown = bool(h.get('shown', True))
+        # marche/arrêt (25/11) ; d'avant, l'œil retirait du programme : un parcours caché le reste hors du programme
+        tp.on = bool(h['on']) if 'on' in h else tp.shown
         if h.get('reversed'):
             tp.reversed = True
         out.append(tp)
@@ -131,6 +134,7 @@ def _paths_from_json(data) -> list:
                       cycles=list(d.get('cycles', [])),
                       moves=[Move(k, x, y, z, cx, cy) for k, x, y, z, cx, cy in d.get('moves', [])])
         tp.shown = bool(d.get('shown', True))
+        tp.on = tp.shown                                 # caché, d'avant : hors du programme, comme alors
         out.append(tp)
     return out
 

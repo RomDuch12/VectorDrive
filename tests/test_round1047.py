@@ -117,7 +117,7 @@ class MyProcesses(Base):
             seen.update(kw, name=name)
             return []
         with mock.patch.object(self.p, 'apply_template', side_effect=apply):
-            self.pal._clicked(row)
+            self.pal.activate(row)                                           # double clic (round 1163)
         self.assertEqual(seen.get('name'), 'Plaque')
         self.assertEqual(seen.get('prefer'), 'objets')                       # d'office : les formes sélectionnées
         self.pal.apply_process('Plaque', exec_dialog=False, items=[self.shapes[2].id])

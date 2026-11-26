@@ -7,7 +7,11 @@ son titre — retient le dossier où l'on a choisi. Elle y rouvre quand le code 
 de fichier nu, le dossier personnel ou Documents) ; un chemin que le code propose à dessein (le dossier du dessin
 pour son programme, la valeur d'un champ, le dossier qu'une fenêtre retient déjà elle-même) est gardé. Une fenêtre
 jamais ouverte : le dernier dossier choisi dans l'application. Un dossier disparu (clé USB) n'est pas proposé ; un
-partage réseau n'est pas testé (un serveur hors d'atteinte gèlerait l'interface).
+partage réseau n'est pas testé (un serveur hors d'atteinte gèlerait l'interface). F10 › Dossiers de travail : une
+fenêtre qui a sa ligne (son départ rendu par `workdirs.start_folder` ou `program_dir`, noté par `workdirs.issue`)
+garde ce départ s'il est son dossier fixé ou son dernier utilisé encore là (même Documents ou le Bureau) ; « Autres
+fenêtres de fichiers » fixé ne vaut que pour les fenêtres sans ligne, quand elles ne proposent rien de précis (un
+dossier fixé sur un partage : attente de `workdirs.REMOTE_WAIT` au plus la première fois).
 
     from . import pathmemory
     pathmemory.install()          # une fois, au lancement
@@ -116,9 +120,17 @@ def propose(key: str, given: str, kind: str, settings=None) -> str:
     fichier proposé ; sinon le dernier dossier choisi dans l'application ; sinon ce que le code propose."""
     st = settings or _settings()
     given = str(given or '')
+    from . import workdirs
+    usage, how, folder = workdirs.issued(given)          # une fenêtre qui a sa ligne dans les dossiers de travail
+    if usage is not None:
+        if how == workdirs.FIXED and workdirs.is_fixed_path(st, given, usage):
+            return given                                 # son dossier fixé (même Documents) : tel quel
+        if how == workdirs.LAST and _exists(folder):
+            return given                                 # son dernier utilisé encore là (même le Bureau) : tel quel
+                                                         # (supprimé : le dossier retenu, plus bas)
     if _deliberate(given, kind):
         return given
-    last = remembered(key, st)
+    last = (workdirs.fixed_folder(st, 'autres') if usage is None else '') or remembered(key, st)
     if not last:
         anywhere = str(st.value(LAST, '') or '')
         last = anywhere if _usable(anywhere) else ''

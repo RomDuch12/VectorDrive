@@ -127,7 +127,7 @@ class Shown(unittest.TestCase):
         pump()
         self.assertFalse(self.w.tabifiedDockWidgets(d))                        # sorti des onglets, choisi
 
-    def test_dims_above_layers_by_default_stays(self):
+    def test_dims_above_layers_by_default_until_closed(self):
         from vectordrive.ui.columns import F2_KEY
         self._close()
         self.w.settings.setValue(F2_KEY, 'dessus')                              # poste neuf : Dimensions au-dessus
@@ -142,9 +142,8 @@ class Shown(unittest.TestCase):
         self.assertFalse(self.w.tabifiedDockWidgets(dims))
         self.c.close(dims)
         pump()
-        dims.setVisible(True)
-        pump()
-        self.assertFalse(self.w.tabifiedDockWidgets(dims))
+        dims.setVisible(True)                                                   # remontré : son onglet (round 1162)
+        self.in_group(dims)
 
     def test_alone_in_its_column_stays(self):
         d = self.dock('couleur')                                                # colonne de gauche vide

@@ -21,7 +21,6 @@ from ..core import geom
 from ..core.document import Document, Group, Image, Item, Shape, Text
 from ..core.geom import Affine, Conic, Cubic, Line, Path
 from ..core.snap import LABELS as SNAP_LABELS, Snap
-from ..core.orient import COLORS as ORIENT_COLORS
 from .theme import canvas_colors, ink
 
 HANDLE_PX = 7
@@ -279,7 +278,8 @@ class Canvas(QWidget):
         #: (le pointeur sur une Bibliothèque montrée)
         self.drag_out_ok = None
         self._out_grab = None             # point saisi pendant ce glisser-déposer (le reposer dans la vue : déplacé)
-        self.show_direction = False
+        self.show_direction = False       # Ctrl+7 : contours colorés selon leur sens (sans flèche)
+        self.show_arrows = False          # F10 › Affichage : flèche de sens au départ de chaque contour
         self.intuitive_snap = False       # cotation : accrochage aux points même sans F3 (TypeEdit)
         self._intuitive = None
         self.show_starts = False          # points de départ des contours (carrés), comme TypeEdit
@@ -665,6 +665,13 @@ class Canvas(QWidget):
                 self._orient = {id(src): e}
         return e[1]
 
+    def orient_colors(self) -> dict:
+        """Ctrl+7 : couleur de chaque sens selon le thème — fond sombre : vert et bleu clairs, ouverts en blanc ;
+        fond clair : vert et bleu foncés, ouverts en noir."""
+        from ..core.orient import colors
+        from .icons import dark_theme
+        return colors(dark_theme())
+
     def _qpath(self, it: Item) -> QPainterPath | None:
         e = self._entry(it)
         return e[1] if e else None
@@ -832,6 +839,7 @@ class Canvas(QWidget):
         p.save()
         p.setTransform(v)
         sel_ids = {id(x) for x in _leaves(self.selection)}
+        ocolors = self.orient_colors() if self.show_direction else None    # Ctrl+7 : thème lu une fois par repeint
         for L in self.doc.layers:
             if not self.layer_shown(L):
                 continue
@@ -878,8 +886,8 @@ class Canvas(QWidget):
                         p.setPen(Qt.PenStyle.NoPen)
                         p.drawPath(q)
                         p.setBrush(Qt.BrushStyle.NoBrush)
-                    for key, oq in self._oriented(e[0]):     # Ctrl+7 : vert anti-horaire, bleu horaire, noir ouvert
-                        op_ = QPen(QColor(ink(ORIENT_COLORS[key])), 0)
+                    for key, oq in self._oriented(e[0]):     # Ctrl+7 : vert horaire, bleu anti-horaire, noir ouvert
+                        op_ = QPen(QColor(ocolors[key]), 0)
                         op_.setCosmetic(True)
                         p.setPen(op_)
                         p.drawPath(oq)
@@ -898,6 +906,8 @@ class Canvas(QWidget):
             self._paint_compare(p, v, vis_doc)
         if self.show_direction:
             self._paint_directions(p)
+        if self.show_arrows:
+            self._paint_direction_arrows(p)
         if self.show_starts or self.show_nodes:
             self._paint_points(p)
         if self.cross_marks:
@@ -1288,8 +1298,8 @@ class Canvas(QWidget):
         return out
 
     def _paint_directions(self, p: QPainter) -> None:
-        """Ctrl+7 (TypeEdit : Ctrl+T) : sens des contours (flèche au départ)
-        et rang de chaque objet."""
+        """Ctrl+7 (TypeEdit : Ctrl+T) : rang de chaque objet (le sens se lit à la
+        couleur des contours ; les flèches sont un réglage à part, `show_arrows`)."""
         p.setPen(QPen(QColor(canvas_colors()['direction']), 1))
         f = p.font()
         f.setPixelSize(11)
@@ -1298,6 +1308,11 @@ class Canvas(QWidget):
         for n, (x, y) in self.order_marks()[:2000]:
             A = self.to_screen(x, y)
             p.drawText(A + QPointF(5, -5), str(n))
+
+    def _paint_direction_arrows(self, p: QPainter) -> None:
+        """F10 › Affichage « Flèches de sens » : flèche au départ de chaque
+        contour, dans le sens du parcours (indépendante de Ctrl+7)."""
+        p.setPen(QPen(QColor(canvas_colors()['direction']), 1))
         for leaf in _leaves(self.shown_items()):
             path = item_path(leaf)
             if not path:
@@ -3182,6 +3197,14 @@ class Canvas(QWidget):
                 self.select([])
             return
         super().keyPressEvent(ev)
+
+    def keyReleaseEvent(self, ev: QKeyEvent) -> None:
+        """Une touche relâchée : à l'outil en cours s'il le veut (`key_release`, vrai : prise), sinon comme avant."""
+        release = getattr(self.tool_obj, 'key_release', None)
+        if release is not None and release(ev):
+            self.update()
+            return
+        super().keyReleaseEvent(ev)
 
     def resizeEvent(self, ev) -> None:
         # première taille, ou taille rejouée par Qt (plan de travail redimensionné pendant qu'il était caché :

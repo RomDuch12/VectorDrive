@@ -21,7 +21,7 @@ def _plain(text: str) -> str:
 
 
 def name(action) -> str:
-    return action.text().replace('&', '').strip()
+    return action.text().replace('&', '').replace('\n', ' ').strip()     # (« Texte\nvertical » : round 1164)
 
 
 class FavoritesDialog(QDialog):
@@ -81,7 +81,7 @@ class FavoritesDialog(QDialog):
         self._fill()
 
     def _row(self, key: str) -> QListWidgetItem:
-        a = self.win.A[key]
+        a = self.win.favorite_action(key)                # (un bouton Mode de TypeEdit 13 aussi : round 1164)
         it = QListWidgetItem(a.icon(), name(a))
         it.setData(KEY, key)
         tip = (a.toolTip() or '').strip()
@@ -117,8 +117,10 @@ class FavoritesDialog(QDialog):
         if key is None:
             it = self.all.currentItem()
             key = it.data(KEY) if it is not None and not self.all.isRowHidden(self.all.row(it)) else None
-        if not key or key not in self.win.A or self.win.A[key] in {self.win.A[k] for k in self.keys()}:
-            return False                                 # la même commande sous une autre clé : déjà là
+        act = self.win.favorite_action(key) if key and key in self.win.A else None
+        if act is None or key in self.keys() or self.win._favorite_twin(key, act, self.keys()):
+            return False                                 # la même commande sous une autre clé, ou par un bouton
+        #                                                  Mode d'outil : déjà là (comme `add_favorite`, round 1164)
         at = self.favs.currentRow()
         row = self._row(key)
         if at >= 0:
@@ -146,6 +148,6 @@ class FavoritesDialog(QDialog):
 
     def apply(self) -> None:
         """Les favoris retenus (ceux d'un plugin absent aujourd'hui gardés au bout) et les libellés."""
-        absent = [k for k in self.win._stored_favorites() if k not in self.win.A]
+        absent = [k for k in self.win._stored_favorites() if self.win.favorite_action(k) is None]
         self.win._save_favorites(self.keys() + absent)
         self.win.favorite_labels(self.labels.isChecked())

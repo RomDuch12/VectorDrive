@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 1.15.0
+# Guide des commandes — VectorDrive 1.29.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -170,7 +170,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 
 | Commande | Raccourci | Rôle |
 |---|---|---|
-| Sens | Ctrl+7, Ctrl+È | Sens des contours : fermés en vert (anti-horaire) ou en bleu (horaire), ouverts en noir ; flèche au départ et rang de chaque objet |
+| Sens | Ctrl+7, Ctrl+È | Sens des contours : fermés en vert (horaire) ou en bleu (anti-horaire), ouverts en noir (blanc en thème sombre) ; rang de chaque objet. Les flèches de sens : F10 › Affichage |
 | Remplissage | Ctrl+9, Ctrl+Ç | Contours fermés remplis de la couleur de leur outil |
 | Aperçu gravure |  | Traits à la largeur réelle de leur outil (table des outils) : repère les détails trop fins pour la fraise ou le laser |
 | Grille | Ctrl+G |  |
@@ -1019,6 +1019,7 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Dessin |  | Options (F10), onglet « Dessin » |
 | Affichage |  | Options (F10), onglet « Affichage » |
 | Fichiers |  | Options (F10), onglet « Fichiers » |
+| Dossiers de travail |  | Options (F10), onglet « Dossiers de travail » |
 | FAO |  | Options (F10), onglet « FAO » |
 | BAT |  | Options (F10), onglet « BAT » |
 | Impression |  | Options (F10), onglet « Impression » |

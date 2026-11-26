@@ -112,10 +112,10 @@ class Palette(WithWindow):
         self.pal.refresh()
         trous = next(r for r in self.rows() if r.data(0, ROLE_FAMILY) == 'trous')
         with mock.patch.object(self.p, 'new_family') as fam, mock.patch.object(self.p, 'new_operation') as op:
-            self.pal._clicked(trous)
+            self.pal.activate(trous)                                         # double clic (round 1163)
             fam.assert_called_once_with('trous')
             op.assert_not_called()
-            self.pal._clicked(trous.child(2))                                # un de ses parcours : le sien, direct
+            self.pal.activate(trous.child(2))                                # un de ses parcours : le sien, direct
             self.assertEqual(op.call_args[0][0], 'taraudage')
 
     def test_the_machine_keeps_only_what_fits(self):

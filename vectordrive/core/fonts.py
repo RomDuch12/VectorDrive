@@ -642,6 +642,21 @@ def plugin_families() -> list[str]:
     return sorted(PLUGIN_FONTS, key=str.lower)
 
 
+def group_of(name: str) -> str:
+    """Le filtre de la liste des polices (« TypeEdit ») d'une famille TrueType / OpenType rangée dans un dossier d'un
+    format de plugin qui a le sien (les TrueType livrées avec TypeEdit et LaserType), sinon ''. Une famille installée
+    dans le système reste une police du système ; une police lue par un plugin a déjà son filtre."""
+    from . import fontformats
+    fam = families()
+    k = _key(name)
+    if k in SYSTEM_KEYS or k not in fam:
+        return ''
+    f = fam[k][0]
+    if fontformats.of(f) is not None or _is_svg(f):
+        return ''
+    return fontformats.group_of_file(f)
+
+
 def kerning(path: str, index: int = 0):
     """Fonction (glyphe gauche, glyphe droit) → crénage en unités de la
     police : GPOS (fonction « kern ») si la police en a, sinon la table

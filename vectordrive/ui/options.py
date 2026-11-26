@@ -16,13 +16,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
 from ..i18n import tr
+from . import workdirs as WD
 
 
 @dataclass(frozen=True)
 class Opt:
     key: str
     label: str
-    kind: str                     # float, int, bool, choice, text, folder, folders, file, font, theme, color
+    kind: str                     # float, int, bool, choice, text, folder, folders, file, font, theme, color, workdir
     default: object = None
     lo: float = 0.0
     hi: float = 1e6
@@ -48,6 +49,16 @@ def B(key, label, default, **kw):
 
 def C(key, label, default, choices, **kw):
     return Opt(key, label, 'choice', default, choices=tuple(choices), **kw)
+
+
+#: l'onglet des dossiers de travail (demande du 25/11) : une ligne par usage de `workdirs.USAGES`
+WORKDIRS = 'Dossiers de travail'
+
+
+def _workdir_opt(u) -> Opt:
+    """La ligne d'un usage : réglage « dossiers_travail/<usage> » (le dernier utilisé ou toujours ce dossier) ; le
+    dossier fixé lui-même dans « dossiers_travail/<usage>_chemin » (`workdirs.path_key`)."""
+    return Opt(WD.mode_key(u.key), u.label, 'workdir', WD.LAST, tip=u.tip, extra={'usage': u.key})
 
 
 SPEC: list[tuple[str, list[Opt]]] = [
@@ -152,6 +163,9 @@ SPEC: list[tuple[str, list[Opt]]] = [
         B('vue/regles', 'Règles', True),
         B('vue/grille_visible', 'Grille visible au démarrage', False),
         B('vue/sens', 'Sens de parcours visible au démarrage', False),
+        B('vue/fleches_sens', 'Flèches de sens au départ des contours', False,
+          tip='Une flèche au point de départ de chaque contour, dans le sens du parcours. À part de « Sens » '
+              '(Ctrl+7), qui colore les contours selon leur sens, sans flèche'),
         B('vue/remplissage', 'Contours fermés remplis au démarrage', False),
         B('vue/onglets_calques', 'Calques en onglets', False),
         B('vue/panneau_fao', 'Panneau FAO ouvert au démarrage', False),
@@ -179,6 +193,10 @@ SPEC: list[tuple[str, list[Opt]]] = [
         Opt('symboles/dossiers_extra', 'Dossiers de symboles supplémentaires', 'folders', '', restart=True),
         B('symboles/poser_au_clic', 'Bibliothèque : double-clic, puis un clic pour poser le dessin '
           '(sinon : au centre de la vue)', True),
+        C('fichiers/format_enregistrement', 'Format d’enregistrement d’office', 'vnd',
+          [('vnd', 'VND (TypeEdit), avec un .vdz compagnon si besoin'), ('vdz', 'VDZ (VectorDrive : garde tout)')],
+          tip='Proposé par Ctrl+S pour un dessin jamais enregistré et par « Enregistrer sous » ; un fichier ouvert se '
+              'réenregistre dans son format. Les autres formats (DXF, SVG, PDF…) restent au choix dans la boîte'),
         C('vnd/compagnon', 'Enregistrement dans un autre format que VDZ : fichier .vdz compagnon', 'besoin',
           [('besoin', 'si des données ne tiennent pas dans ce format'), ('toujours', 'toujours'),
            ('jamais', 'jamais')],
@@ -231,6 +249,7 @@ SPEC: list[tuple[str, list[Opt]]] = [
            ('ACAD14', 'AutoCAD R14'), ('ACAD12', 'AutoCAD R12')],
           tip='Pour un destinataire équipé d\'un AutoCAD ancien : la version que son logiciel ouvre'),
     ]),
+    (WORKDIRS, [_workdir_opt(u) for u in WD.USAGES.values()]),
     ('FAO', [
         Opt('fao/post', 'Post-processeur (machine) du dessin et des nouveaux dessins', 'post', '',
             tip='Programme écrit par « Post-traiter » : le choix vaut pour le dessin ouvert et pour les nouveaux '
@@ -302,10 +321,6 @@ SPEC: list[tuple[str, list[Opt]]] = [
         Opt('bat/company', 'En-tête : entreprise', 'text', ''),
         Opt('bat/logo', 'En-tête : logo (image ou dessin)', 'file', '',
             tip='Imprimé en haut à gauche de chaque BAT (10 mm de haut) ; un dessin (SVG, PDF, DXF…) reste en tracés exacts',
-            extra={'open': True, 'filter': 'Images et dessins (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.svg *.pdf '
-                                            '*.ai *.eps *.dxf *.vnd *.gvt *.smb)'}),
-        Opt('bat/logo2', 'En-tête : second logo, à droite (image ou dessin)', 'file', '',
-            tip='Le logo du client, par exemple',
             extra={'open': True, 'filter': 'Images et dessins (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.svg *.pdf '
                                             '*.ai *.eps *.dxf *.vnd *.gvt *.smb)'}),
         Opt('bat/clients', 'Carnet de clients : dossier', 'folder', '',
@@ -455,13 +470,24 @@ ASSISTANT_ADVANCED = frozenset({
     'assistant/couleur_valeurs', 'assistant/couleur_outils', 'assistant/valeurs_couleur', 'assistant/montrer_outils'})
 #: onglets de la fenêtre, repris en boutons dans l'onglet Options du ruban : titre → (clé, icône)
 PAGES = {'Général': ('general', 'options'), 'Apparence': ('apparence', 'themes'), 'Dessin': ('dessin', 'bezier'),
-         'Affichage': ('affichage', 'view_2d'), 'Fichiers': ('fichiers', 'open'), 'FAO': ('fao', 'cam'),
+         'Affichage': ('affichage', 'view_2d'), 'Fichiers': ('fichiers', 'open'), WORKDIRS: ('dossiers', 'save'),
+         'FAO': ('fao', 'cam'),
          'BAT': ('bat', 'pdf'), 'Impression': ('impression', 'print'), 'Mises à jour': ('maj', 'update'), 'Plugins': ('plugins', 'ribbon'),
          'Performances': ('performances', 'view_3d'), 'Assistant': ('assistant', 'assistant_ia'),
          'Raccourcis': ('raccourcis', 'keyboard')}
 assert list(PAGES) == [t for t, _o in SPEC], 'un bouton par onglet des options'
 #: réglages d'apparence : un changement réapplique le thème
 APPEARANCE = [o.key for o in dict(SPEC)['Apparence']]
+
+
+def add_workdir(u) -> Opt:
+    """La ligne d'un usage ajoutée à l'onglet « Dossiers de travail » (`workdirs.register`, plugins) : dans les
+    fenêtres des options ouvertes ensuite. Une clé déjà là est remplacée."""
+    o = _workdir_opt(u)
+    rows = dict(SPEC)[WORKDIRS]
+    rows[:] = [x for x in rows if x.key != o.key] + [o]
+    BY_KEY[o.key] = o
+    return o
 
 
 def _fold(text: str) -> str:
@@ -540,6 +566,9 @@ class OptionsDialog(QDialog):
         self.setSizeGripEnabled(True)
         avail = self.screen().availableGeometry() if self.screen() is not None else None
         self.resize(min(980, avail.width() - 80) if avail else 980, min(740, avail.height() - 80) if avail else 740)
+        from PySide6.QtCore import Qt                    # demande du 25/11 : ouverte en plein écran (maximisée) ;
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)    # restaurée : la taille ci-dessus
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
         self.settings = settings
         self.widgets: dict[str, QWidget] = {}
         self._rows: list = []                            # (onglet, formulaire, champ, texte cherché)
@@ -588,6 +617,13 @@ class OptionsDialog(QDialog):
                 self.plugin_status.setObjectName('pluginStatus')
                 self.plugin_status.setWordWrap(True)
                 form.addRow(self.plugin_status)
+            if title == WORKDIRS:
+                note = QLabel(tr('Le dossier où s’ouvre chaque fenêtre de fichiers : le dernier utilisé (toujours '
+                                 'retenu, même quand un dossier est fixé) ou toujours le même dossier. Un dossier fixé '
+                                 'hors d’atteinte (lecteur réseau débranché) : le dernier utilisé, après une attente '
+                                 'de 0,8 s au plus la première fois.'))
+                note.setWordWrap(True)
+                form.insertRow(0, note)
             if title == 'Performances':
                 form.addRow(QLabel(self._gpu_text()))
                 from PySide6.QtWidgets import QPushButton
@@ -807,6 +843,10 @@ class OptionsDialog(QDialog):
         return '\n'.join(f'{p.name} {p.version}' + (f' — {tr("erreur")} : {p.error}' if p.error else '')
                          for p in REGISTRY.plugins)
 
+    #: réglages de police des dessins : la liste des polices de VectorDrive (intégrées, plugins, SVG, système), pas
+    #: seulement celles du système (Qt) — une police TypeEdit peut être celle des textes neufs
+    DRAWING_FONTS = ('texte/police',)
+
     def _widget(self, o: Opt) -> QWidget:
         v = value(self.settings, o.key)
         if o.key == 'assistant/mode' and not self.settings.contains(o.key):
@@ -831,6 +871,10 @@ class OptionsDialog(QDialog):
         elif o.kind == 'post':
             w = QComboBox()
             self._fill_posts(w, v)
+        elif o.kind == 'font' and o.key in self.DRAWING_FONTS:
+            from .dialogs import FontBox                 # celle des textes : les polices de VectorDrive (TypeEdit…)
+            w = FontBox()
+            w.setCurrentFont(v or 'Arial')
         elif o.kind == 'font':
             w = QFontComboBox()
             w.setCurrentFont(QFont(v or 'Arial'))
@@ -841,6 +885,8 @@ class OptionsDialog(QDialog):
         elif o.kind == 'color':
             from .theme_editor import ColorButton
             w = ColorButton(v)
+        elif o.kind == 'workdir':
+            w = self._workdir_row(o, v)
         elif o.kind in ('folder', 'folders', 'file'):
             w = QWidget()
             row = QHBoxLayout(w)
@@ -858,6 +904,114 @@ class OptionsDialog(QDialog):
         else:
             w = QLineEdit(v)
         return w
+
+    def changeEvent(self, ev) -> None:                   # noqa: N802 (API Qt)
+        """Restaurée après le plein écran : élargie de nouveau, à sa taille normale, si un réglage y défile
+        (`fit.widen`, comme à sa première apparition)."""
+        super().changeEvent(ev)
+        from PySide6.QtCore import QEvent, QTimer
+        if ev.type() == QEvent.Type.WindowStateChange:
+            was, self._was_max = getattr(self, '_was_max', False), self.isMaximized()
+            if was and not self._was_max:
+                from . import fit
+                QTimer.singleShot(0, lambda d=self: fit._safe_widen(d))
+
+    def _workdir_row(self, o: Opt, mode) -> QWidget:
+        """Une ligne des dossiers de travail : « Le dernier utilisé » ou « Toujours ce dossier », le dossier (« … »
+        pour le choisir), « ↺ » pour revenir à l'origine (le dernier utilisé, sans dossier fixé) ; dessous, en rouge,
+        ce qui ne va pas à OK. Le champ vide montre le dernier dossier utilisé (lu dans les réglages, sans disque)."""
+        usage = o.extra['usage']
+        w = QWidget()
+        box = QVBoxLayout(w)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(2)
+        row = QHBoxLayout()
+        box.addLayout(row)
+        w.warn = QLabel()
+        w.warn.setWordWrap(True)
+        w.warn.setStyleSheet('color: #d32f2f;')
+        w.warn.hide()
+        box.addWidget(w.warn)
+        w.mode = QComboBox()
+        w.mode.addItem(tr('Le dernier utilisé'), WD.LAST)
+        w.mode.addItem(tr('Toujours ce dossier'), WD.FIXED)
+        w.mode.setCurrentIndex(max(0, w.mode.findData(mode)))
+        w.edit = QLineEdit(str(self.settings.value(WD.path_key(usage), '') or ''))
+        last = WD.last_used(self.settings, usage)
+        w.edit.setPlaceholderText(tr('Dernier utilisé : {0}').format(last) if last
+                                  else tr('Aucun dossier utilisé pour l’instant'))
+        w.edit.textEdited.connect(lambda text, r=w: self._workdir_typed(r, text))
+        w.browse = QToolButton()
+        w.browse.setText('…')
+        w.browse.setToolTip(tr('Choisir le dossier'))
+        w.browse.clicked.connect(lambda _=False, r=w, u=usage: self._browse_workdir(r, u))
+        w.reset = QToolButton()
+        w.reset.setText('↺')
+        w.reset.setToolTip(tr('Revenir à l’origine : le dernier utilisé, sans dossier fixé'))
+        w.reset.clicked.connect(lambda _=False, r=w: self._reset_workdir(r))
+        row.addWidget(w.mode)
+        row.addWidget(w.edit, 1)
+        row.addWidget(w.browse)
+        row.addWidget(w.reset)
+        w.start = (w.mode.currentData(), w.edit.text())  # à OK, seules les lignes modifiées sont contrôlées
+        return w
+
+    @staticmethod
+    def _workdir_typed(w, text: str) -> None:
+        """Un dossier écrit : c'est lui, toujours ; le champ vidé : la ligne repasse en « Le dernier utilisé »."""
+        w.mode.setCurrentIndex(w.mode.findData(WD.FIXED if text.strip() else WD.LAST))
+        w.warn.hide()
+
+    def _workdirs_ok(self) -> bool:
+        """À OK, les lignes modifiées seulement : en « Toujours ce dossier », le dossier doit être un chemin complet
+        (guillemets retirés, ~ et %VARIABLE% développés), sinon OK est refusé ; un dossier fixé absent (lecteur
+        débranché…) est signalé et un second OK le garde. Chaque souci est écrit en rouge sous sa ligne, la recherche
+        vidée et l'onglet montré. Rend vrai si OK peut fermer."""
+        bad, absent = False, set()
+        for key, w in self.widgets.items():
+            o = BY_KEY.get(key)
+            if o is None or o.kind != 'workdir' or (w.mode.currentData(), w.edit.text()) == w.start:
+                continue
+            w.warn.hide()
+            path, ok = WD.clean_path(w.edit.text())
+            if not path:                                 # rien d'écrit : le dernier utilisé
+                w.mode.setCurrentIndex(w.mode.findData(WD.LAST))
+                continue
+            if w.mode.currentData() != WD.FIXED:         # dossier gardé pour plus tard : pas contrôlé
+                continue
+            if not ok:
+                w.warn.setText(tr('Chemin incomplet : il faut le chemin complet du dossier, lecteur ou serveur '
+                                  'compris'))
+                bad = True
+            elif not WD.reachable(path):
+                w.warn.setText(tr('Dossier absent pour l’instant : le dernier utilisé servira tant qu’il manque '
+                                  '(OK de nouveau pour garder ce choix)'))
+                absent.add((key, WD._norm(path)))
+            else:
+                continue
+            w.warn.show()
+        warned = getattr(self, '_workdirs_warned', frozenset())
+        if not bad and absent <= warned:
+            return True
+        self._workdirs_warned = warned | absent
+        self.search.clear()                              # une recherche en cours cacherait la ligne signalée
+        self.show_page(WORKDIRS)
+        return False
+
+    def _browse_workdir(self, w, usage: str) -> str:
+        """« … » : le dossier choisi devient le dossier fixé de la ligne ; rend ce dossier ('' : rien choisi)."""
+        start = w.edit.text().strip() or WD.last_used(self.settings, usage)
+        d = QFileDialog.getExistingDirectory(self, tr('Choisir un dossier'), start)
+        if d:
+            w.edit.setText(d)
+            w.mode.setCurrentIndex(w.mode.findData(WD.FIXED))
+        return d or ''
+
+    @staticmethod
+    def _reset_workdir(w) -> None:
+        w.mode.setCurrentIndex(w.mode.findData(WD.LAST))
+        w.edit.clear()
+        w.warn.hide()
 
     def _fill_posts(self, w, v) -> None:
         """Post-processeurs connus (plugins, fiches machine) ; choisi : celui
@@ -914,14 +1068,20 @@ class OptionsDialog(QDialog):
             return w.currentData()
         if o.kind == 'color':
             return w.value()
+        if o.kind == 'font' and o.key in self.DRAWING_FONTS:
+            return w.currentText().strip() or o.default
         if o.kind == 'font':
             return w.currentFont().family()
+        if o.kind == 'workdir':
+            return w.mode.currentData()
         if o.kind in ('folder', 'folders', 'file'):
             return w.edit.text().strip()
         return w.text().strip()
 
     def restore_defaults(self) -> None:
         for o in BY_KEY.values():
+            if o.kind == 'workdir' and o.key not in self.widgets:   # ligne ajoutée (plugin) après l'ouverture
+                continue
             w = self.widgets[o.key]
             o = Opt(**{**o.__dict__, 'default': default_of(o)})
             if o.kind == 'bool':
@@ -936,14 +1096,23 @@ class OptionsDialog(QDialog):
                 w.setValue(o.default)
             elif o.kind == 'font':
                 w.setCurrentFont(QFont(o.default))
+            elif o.kind == 'workdir':
+                self._reset_workdir(w)
             elif o.kind in ('folder', 'folders', 'file'):
                 w.edit.setText(o.default)
             else:
                 w.setText(o.default)
 
     def accept(self) -> None:
+        if not self._workdirs_ok():                      # dossier de travail incomplet, ou absent (1er OK)
+            return
         for key in self.widgets:
             self.settings.setValue(key, self.read(key))
+            o = BY_KEY.get(key)
+            if o is not None and o.kind == 'workdir':     # le dossier fixé de la ligne (vide : réglage retiré)
+                folder, _ok = WD.clean_path(self.widgets[key].edit.text())
+                pk = WD.path_key(o.extra['usage'])
+                self.settings.setValue(pk, folder) if folder else self.settings.remove(pk)
         for keep in self.on_accept:
             keep()
         super().accept()

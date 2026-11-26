@@ -252,6 +252,9 @@ class OffsetDialog(QDialog):
         self.setWindowTitle(tr('Décaler'))
         form = QFormLayout(self)
         self.dist = _spin(distance, -1000, 1000)
+        self.dist.setToolTip(tr('Contour ouvert : un seul contour ouvert parallèle, à la même distance partout, sans '
+                                'bouchon aux bouts ; + à droite du sens de tracé, − à gauche (« Sens », Ctrl+7, le '
+                                'montre)'))
         self.join = QComboBox()
         for k, label in (('round', tr('Arrondie')), ('miter', tr('Angle vif')), ('bevel', tr('Chanfreinée'))):
             self.join.addItem(label, k)
@@ -996,13 +999,15 @@ class FontBox(QComboBox):
         self._popup = None
         self._fill()
 
-    def _add(self, name: str, kind: str, tip: str | None = None) -> None:
-        from .fontlist import KIND_ROLE
+    def _add(self, name: str, kind: str, tip: str | None = None, group: str = '') -> None:
+        from .fontlist import GROUP_ROLE, KIND_ROLE
         self.addItem(name)
         i = self.count() - 1
         self.setItemData(i, kind, KIND_ROLE)
         if tip:
             self.setItemData(i, tip, Qt.ItemDataRole.ToolTipRole)
+        if group:                                          # filtre de son format (« TypeEdit ») dans la liste
+            self.setItemData(i, group, GROUP_ROLE)
 
     def _fill(self) -> None:
         from PySide6.QtGui import QFontDatabase
@@ -1015,19 +1020,28 @@ class FontBox(QComboBox):
         self.insertSeparator(self.count())
         from ..core import fontformats
         gv = fonts.plugin_families()
-        for n in gv:
+        qt = list(QFontDatabase.families())                 # celles du système que Qt connaît depuis son lancement,
+        others = sorted(qt + fonts.unlisted_families(qt), key=str.lower)     # et les TrueType arrivées depuis
+        plugin = set(gv)
+        # TrueType rangées avec les polices d'un format qui a son filtre (livrées avec TypeEdit) : sous ce filtre
+        tt = {n: g for n in others if n not in plugin and (g := fonts.group_of(n))}
+        for n in sorted([*gv, *tt], key=str.lower):
+            if n in tt:
+                self._add(n, 'plugin', tr('Police TrueType livrée avec les polices {0}').format(tr(tt[n])), tt[n])
+                continue
             fmt = fontformats.of(fonts.PLUGIN_FONTS.get(n, ''))
-            self._add(n, 'plugin', tr(fmt.label) if fmt is not None else tr('Police lue par un plugin'))
-        if gv:
+            self._add(n, 'plugin', tr(fmt.label) if fmt is not None else tr('Police lue par un plugin'),
+                      fmt.filter_label if fmt is not None else '')
+        if gv or tt:
             self.insertSeparator(self.count())
         svg = fonts.svg_families()
         for n in svg:
             self._add(n, 'svg', tr('Police SVG'))
         if svg:
             self.insertSeparator(self.count())
-        qt = list(QFontDatabase.families())                 # celles du système que Qt connaît depuis son lancement,
-        for n in sorted(qt + fonts.unlisted_families(qt), key=str.lower):     # et les TrueType arrivées depuis
-            self._add(n, 'systeme')
+        for n in others:
+            if n not in tt:
+                self._add(n, 'systeme')
 
     def reload(self) -> None:
         """La liste refaite (polices installées depuis), le choix et le texte tapé gardés, sans signal."""

@@ -159,18 +159,93 @@ def same_content(a, b) -> bool:
         return False
 
 
+#: le choix du nom d'une copie gardée et sa pose (rapides : le dossier local seulement), une à la fois (round 1164)
+_KEEP_LOCK = __import__('threading').Lock()
+#: fichier temporaire d'une copie gardée (`tempfile.mkstemp` : « .vdkeep.<nom>.<8 signes>.tmp », préfixe propre à
+#: l'application : jamais un fichier de l'utilisateur) ; au-delà d'un jour : un reste (application quittée pendant
+#: une copie), retiré à la copie suivante dans ce dossier
+KEEP_PREFIX = '.vdkeep.'
+KEEP_TMP = r'\.vdkeep\..+\.[a-z0-9_]{8}\.tmp'
+KEEP_TMP_AGE = 86400.0
+#: les fichiers temporaires des copies en cours (chemins normalisés, sous `_KEEP_LOCK`) : jamais purgés
+_KEEP_BUSY: set = set()
+#: hors Windows, la copie est posée par un lien dur (qui échoue si le nom est pris ; `os.rename` y écraserait)
+_KEEP_LINK = __import__('os').name != 'nt'
+
+
+def _linked(tmp, dst) -> bool:
+    """`tmp` posé sous `dst` par un lien dur, puis retiré ; FileExistsError si `dst` est pris ; faux si le disque
+    n'a pas de liens durs (FAT, certains partages) : à poser autrement."""
+    import os
+    try:
+        os.link(tmp, dst)
+    except FileExistsError:
+        raise
+    except (OSError, AttributeError, NotImplementedError):
+        return False
+    try:
+        os.unlink(tmp)                                   # (pas `_drop_tmp` : même fichier que la copie, ses droits
+    except OSError:                                      # restent ; un reste éventuel : purgé plus tard)
+        pass
+    return True
+
+
+def _drop_tmp(tmp) -> None:
+    """Le fichier temporaire d'une copie retiré, même en lecture seule (attribut copié de l'original par `copy2` :
+    Windows refuse alors de l'effacer ; pas de changement d'attribut sur un lien) ; sans erreur s'il ne s'efface
+    pas."""
+    import os
+    import stat
+    try:
+        if os.name == 'nt' and not os.path.islink(tmp):     # (ailleurs, inutile pour effacer)
+            os.chmod(tmp, stat.S_IREAD | stat.S_IWRITE)
+        os.unlink(tmp)
+    except OSError:
+        pass
+
+
+def _purge_tmp(folder) -> None:
+    """Les fichiers temporaires de copie de plus d'un jour retirés de `folder` : ceux de notre motif seulement, ni
+    lien ni dossier, jamais celui d'une copie en cours ; l'âge : la plus récente de la date du contenu (celle de
+    l'original, que `copy2` reporte) et de celle de création ou de changement du fichier."""
+    import os
+    import re
+    import time
+    limit = time.time() - KEEP_TMP_AGE
+    with _KEEP_LOCK:                                     # (une copie qui pose son temporaire attend)
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            return
+        for e in entries:
+            try:
+                if not re.fullmatch(KEEP_TMP, e.name) or not e.is_file(follow_symlinks=False) \
+                        or os.path.normcase(e.path) in _KEEP_BUSY:
+                    continue
+                st = e.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if max(st.st_mtime, st.st_ctime) < limit:
+                _drop_tmp(e.path)
+
+
 def keep_copy(src, folder, made: list | None = None) -> pathlib.Path | None:
     """`src` gardé une fois dans `folder` (créé au besoin), sous son nom : déjà dans ce dossier, il n'est pas
     recopié ; un fichier de même nom et de même contenu y est déjà sa copie (pas de doublon) ; de même nom mais
     d'un autre contenu : « nom (2) »… Rend la copie (ajoutée à `made` si elle vient d'être faite) ; None : `src`
-    n'est pas un fichier. OSError : copie impossible."""
+    n'est pas un fichier. OSError : copie impossible. Deux copies en même temps (fil des logos d'un partage, round
+    1164) : chacune son fichier temporaire, le nom de destination choisi ensuite sous verrou."""
+    import os
     import shutil
+    import stat
+    import tempfile
     src, folder = pathlib.Path(src), pathlib.Path(folder)
     if not src.is_file():
         return None
     if is_below(src, folder):
         return src
     folder.mkdir(parents=True, exist_ok=True)
+    _purge_tmp(folder)                                   # (restes d'une copie interrompue : round 1164)
     n = 1
     while True:
         dst = folder / (src.name if n == 1 else f'{src.stem} ({n}){src.suffix}')
@@ -179,13 +254,37 @@ def keep_copy(src, folder, made: list | None = None) -> pathlib.Path | None:
         if dst.is_file() and same_content(src, dst):
             return dst
         n += 1
-    tmp = dst.with_name(dst.name + '.tmp')               # copie entière ou rien (disque plein, partage coupé)
+    # copie entière ou rien (disque plein, partage coupé), dans un fichier temporaire à elle (extension non montrée)
+    fd, name = tempfile.mkstemp(dir=folder, prefix=KEEP_PREFIX + src.name + '.', suffix='.tmp')
+    os.close(fd)
+    tmp, busy = pathlib.Path(name), os.path.normcase(name)
+    with _KEEP_LOCK:
+        _KEEP_BUSY.add(busy)                             # (jamais purgé pendant la copie)
     try:
         shutil.copy2(src, tmp)
-        tmp.replace(dst)
+        os.chmod(tmp, stat.S_IMODE(os.stat(tmp).st_mode) | stat.S_IWRITE)   # modifiable (original en lecture seule)
+        with _KEEP_LOCK:                                 # le nom : choisi maintenant (une autre copie a pu le
+            n = 1                                        # prendre pendant la nôtre)
+            while True:
+                dst = folder / (src.name if n == 1 else f'{src.stem} ({n}){src.suffix}')
+                if not os.path.lexists(dst):             # (un lien cassé de ce nom : pris aussi)
+                    try:
+                        if not (_KEEP_LINK and _linked(tmp, dst)):
+                            os.rename(tmp, dst)          # (Windows : sans écraser ; ailleurs, sans liens durs)
+                        break
+                    except FileExistsError:              # pris entre-temps : le nom suivant
+                        n += 1
+                        continue
+                if dst.is_file() and same_content(tmp, dst):    # la même, posée entre-temps : la sienne
+                    _drop_tmp(tmp)
+                    return dst
+                n += 1
     except OSError:
-        tmp.unlink(missing_ok=True)
+        _drop_tmp(tmp)
         raise
+    finally:
+        with _KEEP_LOCK:
+            _KEEP_BUSY.discard(busy)
     if made is not None:
         made.append(dst)
     return dst

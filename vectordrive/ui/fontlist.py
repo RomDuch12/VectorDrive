@@ -1,5 +1,6 @@
 """La liste des polices dépliée d'une `FontBox` : haute comme la fenêtre, une recherche (plusieurs mots, sans casse ni
-accents), des filtres (toutes, favorites, intégrées, lues par un plugin, SVG, système) et des favorites marquées d'une
+accents), des filtres (toutes, favorites, intégrées, celles d'un format de plugin qui a son filtre — « TypeEdit » —,
+les autres lues par un plugin, SVG, système) et des favorites marquées d'une
 étoile (un clic sur l'étoile ; gardées dans les réglages, en tête de la liste). Chaque police du système est montrée
 dans son propre dessin. « Reconnaître la sélection » : les polices les plus proches des lettres en courbes
 sélectionnées (`core.fontmatch`), parmi celles du filtre choisi, en tête de la liste."""
@@ -25,6 +26,10 @@ COUNT_KEY = 'polices/propositions'
 NAME_ROLE = Qt.ItemDataRole.UserRole
 KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 PROX_ROLE = Qt.ItemDataRole.UserRole + 2
+#: rôle des polices de plugin : le libellé du filtre de leur format (« TypeEdit », `FontFormat.filter_label`), ou rien
+GROUP_ROLE = Qt.ItemDataRole.UserRole + 3
+#: clé d'un filtre de format de plugin : ce préfixe et son libellé (gardée comme les autres dans FILTER_KEY)
+GROUP_PREFIX = 'groupe:'
 #: catégories des polices, dans l'ordre de la liste (rôle KIND_ROLE des éléments de la FontBox)
 KINDS = (('integree', 'Intégrées à VectorDrive'), ('plugin', 'Lues par un plugin'), ('svg', 'Polices SVG'),
          ('systeme', 'Polices du système'))
@@ -228,16 +233,12 @@ class FontPopup(QFrame):
         lay.addWidget(self.search)
         row = QHBoxLayout()
         row.setSpacing(2)
+        self._filter_row = row
         self.filters = QButtonGroup(self)
         self.filters.setExclusive(True)
         self.filter_buttons = {}
         for key, label in FILTERS:
-            b = QToolButton(self)
-            b.setText(tr(label))
-            b.setCheckable(True)
-            b.setAutoRaise(True)
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.filters.addButton(b)
+            b = self._filter_button(tr(label))
             self.filter_buttons[key] = b
             row.addWidget(b)
         row.addStretch(1)
@@ -286,20 +287,74 @@ class FontPopup(QFrame):
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
 
+    def _filter_button(self, text: str) -> QToolButton:
+        b = QToolButton(self)
+        b.setText(text)
+        b.setCheckable(True)
+        b.setAutoRaise(True)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.filters.addButton(b)
+        return b
+
     # --- contenu ---------------------------------------------------------------------------------------------------
     def entries(self) -> list[tuple]:
-        """(nom, catégorie, bulle) des polices de la FontBox, dans son ordre."""
+        """(nom, catégorie, bulle, filtre de son format) des polices de la FontBox, dans son ordre ; le filtre : le
+        libellé court du format d'une police de plugin qui en a un (« TypeEdit »), sinon ''."""
         out = []
         b = self.box
         for i in range(b.count()):
             name = b.itemText(i)
             if not name:                                  # séparateur
                 continue
-            out.append((name, b.itemData(i, KIND_ROLE) or 'systeme', b.itemData(i, Qt.ItemDataRole.ToolTipRole)))
+            out.append((name, b.itemData(i, KIND_ROLE) or 'systeme', b.itemData(i, Qt.ItemDataRole.ToolTipRole),
+                        str(b.itemData(i, GROUP_ROLE) or '')))
         return out
 
     def current_filter(self) -> str:
         return next((k for k, b in self.filter_buttons.items() if b.isChecked()), 'toutes')
+
+    def in_filter(self, e: tuple, f: str) -> bool:
+        """La police `e` (de `entries`) est montrée par le filtre `f`."""
+        if f == 'toutes':
+            return True
+        if f == 'favorites':
+            return e[0] in self.favs
+        if f.startswith(GROUP_PREFIX):
+            return e[1] == 'plugin' and e[3] == f[len(GROUP_PREFIX):]
+        if f == 'plugin':                                 # les autres polices de plugin : celles sans filtre à elles
+            return e[1] == 'plugin' and not e[3]
+        return e[1] == f
+
+    def sync_groups(self, entries) -> None:
+        """Un bouton de filtre par format de plugin qui a le sien (« TypeEdit »), après « Plugins » ; « Plugins » ne
+        reste que pour les polices de plugin sans filtre à elles (sinon il ferait double emploi)."""
+        want = sorted({e[3] for e in entries if e[1] == 'plugin' and e[3]}, key=str.lower)
+        for k in [k for k in self.filter_buttons if k.startswith(GROUP_PREFIX) and k[len(GROUP_PREFIX):] not in want]:
+            b = self.filter_buttons.pop(k)                # format parti (plugin retiré) : son bouton aussi
+            self.filters.removeButton(b)
+            b.deleteLater()
+        row = self._filter_row
+        at = row.indexOf(self.filter_buttons['plugin'])
+        for i, g in enumerate(want):
+            key = GROUP_PREFIX + g
+            if key not in self.filter_buttons:
+                b = self._filter_button(tr(g))
+                b.setToolTip(tr('Polices {0}').format(tr(g)))
+                self.filter_buttons[key] = b
+                row.insertWidget(at + 1 + i, b)
+        # « Plugins » caché seulement s'il ferait double emploi avec un filtre de format ; sinon grisé sans police
+        self.filter_buttons['plugin'].setVisible(not want or any(e[1] == 'plugin' and not e[3] for e in entries))
+
+    def _sections(self, key: str, label: str, group: list) -> list[tuple]:
+        """(titre, polices) des sections d'une catégorie : les polices de plugin par filtre de leur format (« Polices
+        TypeEdit »), celles sans filtre sous « Lues par un plugin »."""
+        if key != 'plugin':
+            return [(tr(label), group)] if group else []
+        plain = [e for e in group if not e[3]]
+        out = [(tr(label), plain)] if plain else []
+        for g in sorted({e[3] for e in group if e[3]}, key=str.lower):
+            out.append((tr('Polices {0}').format(tr(g)), [e for e in group if e[3] == g]))
+        return out
 
     def _filter_changed(self) -> None:
         s = _settings()
@@ -312,10 +367,12 @@ class FontPopup(QFrame):
         it.setData(NAME_ROLE, None)
         self.list.addItem(it)
 
-    def _font(self, name: str, kind: str, tip, prox=None) -> None:
+    def _font(self, name: str, kind: str, tip, group: str = '', prox=None) -> None:
         it = QListWidgetItem(name)
         it.setData(NAME_ROLE, name)
         it.setData(KIND_ROLE, kind)
+        if group:
+            it.setData(GROUP_ROLE, group)
         if prox is not None:
             it.setData(PROX_ROLE, float(prox))
         it.setToolTip(str(tip or ''))
@@ -326,11 +383,7 @@ class FontPopup(QFrame):
         choisie et montrée."""
         q = self.search.text().strip()
         f = self.current_filter()
-        found = [e for e in self.entries() if matches(e[0], q)]
-        if f == 'favorites':
-            found = [e for e in found if e[0] in self.favs]
-        elif f != 'toutes':
-            found = [e for e in found if e[1] == f]
+        found = [e for e in self.entries() if matches(e[0], q) and self.in_filter(e, f)]
         self.list.setUpdatesEnabled(False)
         try:
             self.list.clear()
@@ -347,9 +400,8 @@ class FontPopup(QFrame):
                     for e in favs:
                         self._font(*e)
             for key, label in KINDS:
-                group = [e for e in found if e[1] == key]
-                if group:
-                    self._header(tr(label))
+                for title, group in self._sections(key, label, [e for e in found if e[1] == key]):
+                    self._header(title)
                     for e in group:
                         self._font(*e)
         finally:
@@ -390,16 +442,18 @@ class FontPopup(QFrame):
         self.count_box.blockSignals(False)
         key = str(_settings().value(FILTER_KEY, 'toutes') or 'toutes')
         entries = self.entries()
-        have = {k: any(e[1] == k for e in entries) for k, _l in KINDS}
-        have['favorites'] = any(e[0] in self.favs for e in entries)
+        self.sync_groups(entries)
+        have = {k: any(self.in_filter(e, k) for e in entries) for k in self.filter_buttons}
+        groups = [k for k in self.filter_buttons if k.startswith(GROUP_PREFIX)]
+        if key == 'plugin' and not have['plugin'] and groups:   # « Plugins » retenu d'avant les filtres de format
+            key = groups[0]
         have['toutes'] = True
         for k, b in self.filter_buttons.items():              # « Favorites » reste : elle dit comment en marquer
             b.setEnabled(have.get(k, True) or k == 'favorites')
         cur = self.box.currentText()
-        cur_kind = next((e[1] for e in entries if e[0] == cur), None)
+        cur_e = next((e for e in entries if e[0] == cur), None)
         if key not in self.filter_buttons or not have.get(key, False) or (
-                cur_kind is not None and key != 'toutes'
-                and not (cur in self.favs if key == 'favorites' else cur_kind == key)):
+                cur_e is not None and key != 'toutes' and not self.in_filter(cur_e, key)):
             key = 'toutes'
         self.filter_buttons[key].setChecked(True)
         was = self.search.blockSignals(True)
@@ -484,8 +538,7 @@ class FontPopup(QFrame):
             self.status.setText(tr('Sélectionnez d’abord des lettres en courbes dans le dessin'))
             return
         f = self.current_filter()
-        names = list(dict.fromkeys(e[0] for e in self.entries()
-                                   if f == 'toutes' or (e[0] in self.favs if f == 'favorites' else e[1] == f)))
+        names = list(dict.fromkeys(e[0] for e in self.entries() if self.in_filter(e, f)))
         if not names:
             self._drop_proposals(tr('Aucune police à comparer dans ce filtre'))
             return

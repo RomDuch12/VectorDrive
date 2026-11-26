@@ -14,6 +14,9 @@ de parcours) —
   (boucles des courbures plus fortes que 1/d, U trop étroits…).
 
 `remove_loops` est aussi la commande « Gomme à boucles ».
+
+`offset_open(contour, d, join)` : Décaler (A) un contour ouvert, comme TypeEdit — un seul contour ouvert parallèle,
+d > 0 à droite du sens de tracé, raccords arrondis, vifs ou chanfreinés (round 1170).
 """
 from __future__ import annotations
 
@@ -122,8 +125,55 @@ def offset_segment(seg, d: float, tol: float = TOL) -> list:
 
 # --- un contour --------------------------------------------------------------------
 
-def _join(acc: list, nxt: list, vertex, d: float, t_in, t_out) -> None:
-    """Raccorde `nxt` à la fin de `acc` (modifie les deux listes)."""
+#: angle vif (`join='miter'`) : au-delà de MITER_LIMIT·|d| du sommet, l'angle est chanfreiné (la limite de
+#: `pathops.offset`)
+MITER_LIMIT = 4.0
+
+
+class _Corner(Line):
+    """Raccord vif ou chanfreiné d'un angle extérieur (round 1170) ; `vertex` : le sommet d'origine ; `near` : sa
+    plus courte distance à ce sommet, seuil du nettoyage pour lui (un chanfrein passe plus près du tracé que |d|).
+    Jamais rendu tel quel : `_clean` le change en droite."""
+
+
+def _corner(p, q, vertex) -> _Corner:
+    seg = _Corner(p, q)
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    n2 = dx * dx + dy * dy
+    t = 0.0 if n2 < 1e-30 else max(0.0, min(1.0, ((vertex[0] - p[0]) * dx + (vertex[1] - p[1]) * dy) / n2))
+    object.__setattr__(seg, 'vertex', vertex)
+    object.__setattr__(seg, 'near', dist(vertex, (p[0] + t * dx, p[1] + t * dy)))
+    return seg
+
+
+def _keep_corner(old, new):
+    """`new`, morceau coupé de `old` (`split_at` rend une droite ordinaire) : raccord vif ou chanfreiné s'il l'était,
+    avec son sommet et le seuil du raccord entier (deux chanfreins voisins alignés, recoupés, restent d'un tenant)."""
+    if not isinstance(old, _Corner):
+        return new
+    seg = _corner(new.p0, new.p1, old.vertex)
+    object.__setattr__(seg, 'near', old.near)
+    return seg
+
+
+def _sharp(acc: list, a, b, vertex, d: float, theta: float, t_in, join: str) -> None:
+    """Angle extérieur vif (`miter` : prolongement des deux tangentes jusqu'à leur rencontre, chanfrein au-delà de
+    MITER_LIMIT) ou chanfreiné (`bevel` : droite de a à b)."""
+    if join == 'miter':
+        half = math.radians(abs(theta)) / 2
+        n = math.hypot(*t_in)
+        if n > 1e-15 and math.cos(half) * MITER_LIMIT >= 1.0:
+            s = abs(d) * math.tan(half)                  # de a à la pointe, le long de la tangente d'arrivée
+            m = (a[0] + t_in[0] / n * s, a[1] + t_in[1] / n * s)
+            acc.append(_corner(a, m, vertex))
+            acc.append(_corner(m, b, vertex))
+            return
+    acc.append(_corner(a, b, vertex))
+
+
+def _join(acc: list, nxt: list, vertex, d: float, t_in, t_out, join: str = 'round') -> None:
+    """Raccorde `nxt` à la fin de `acc` (modifie les deux listes) ; `join` : angle extérieur arrondi (d'office),
+    vif (`miter`) ou chanfreiné (`bevel`) — un demi-tour reste arrondi."""
     if not acc or not nxt:
         return
     a, b = acc[-1].end, nxt[0].start
@@ -135,6 +185,9 @@ def _join(acc: list, nxt: list, vertex, d: float, t_in, t_out) -> None:
     theta = math.degrees(math.atan2(t_in[0] * t_out[1] - t_in[1] * t_out[0],
                                     t_in[0] * t_out[0] + t_in[1] * t_out[1]))
     if theta * d < 0 or abs(theta) > 179.9:             # côté extérieur : arc autour du sommet
+        if join in ('miter', 'bevel') and abs(theta) <= 179.9:
+            _sharp(acc, a, b, vertex, d, theta, t_in, join)
+            return
         va = (a[0] - vertex[0], a[1] - vertex[1])
         sweep = -math.copysign(abs(theta), d)
         arc = arc_conics(vertex, abs(d), abs(d), math.degrees(math.atan2(va[1], va[0])), sweep)
@@ -149,7 +202,7 @@ def _join(acc: list, nxt: list, vertex, d: float, t_in, t_out) -> None:
             hits = segment_crossings(acc[i], nxt[j])
             if hits:
                 ta, tb = max(hits, key=lambda h: (h[0], -h[1]))
-                left = split_at(acc[i], ta)[0] if ta < 1 - 1e-12 else acc[i]
+                left = _keep_corner(acc[i], split_at(acc[i], ta)[0]) if ta < 1 - 1e-12 else acc[i]
                 right = split_at(nxt[j], tb)[1] if tb > 1e-12 else nxt[j]
                 del acc[i:]
                 acc.append(left)
@@ -208,7 +261,7 @@ def _without_specks(c: Contour, eps: float) -> Contour:
     return Contour(segs, c.closed)
 
 
-def parallel_raw(contour: Contour, d: float, tol: float = TOL) -> Contour:
+def parallel_raw(contour: Contour, d: float, tol: float = TOL, join: str = 'round') -> Contour:
     c = contour.close() if contour.closed else contour
     c = _without_specks(c, min(1e-3, abs(d) / 100))
     segs = c.segments
@@ -221,13 +274,13 @@ def parallel_raw(contour: Contour, d: float, tol: float = TOL) -> Contour:
     acc = list(pieces[idx[0]])
     for a, b in zip(idx, idx[1:]):
         nxt = list(pieces[b])
-        _join(acc, nxt, segs[b].start, d, _end_tangent(segs[a]), _start_tangent(segs[b]))
+        _join(acc, nxt, segs[b].start, d, _end_tangent(segs[a]), _start_tangent(segs[b]), join)
         acc.extend(nxt)
     if c.closed:
         first = acc[:len(pieces[idx[0]])]
         tail = acc
         nxt = list(first)
-        _join(tail, nxt, segs[idx[0]].start, d, _end_tangent(segs[idx[-1]]), _start_tangent(segs[idx[0]]))
+        _join(tail, nxt, segs[idx[0]].start, d, _end_tangent(segs[idx[-1]]), _start_tangent(segs[idx[0]]), join)
         # `nxt` est le début modifié : on le remet en tête
         k = len(first)
         acc = nxt + tail[k:] if len(tail) >= k else nxt
@@ -406,8 +459,10 @@ def _clean(raw: Contour, orig: Contour, d: float, tol: float = TOL, line=None) -
     morceau, puis rechaînage par les extrémités communes."""
     n = len(raw.segments)
     bridges = {k for k, sg in enumerate(raw.segments) if isinstance(sg, _Bridge)}
+    corners = {k: sg.near for k, sg in enumerate(raw.segments) if isinstance(sg, _Corner)}
     cuts = sorted({round(g, 12) for pair in self_crossings(raw) for g in pair}
-                  | {float(k) for k in bridges} | {float((k + 1) % n if raw.closed else k + 1) for k in bridges})
+                  | {float(k) for k in bridges} | {float((k + 1) % n if raw.closed else k + 1) for k in bridges}
+                  | {float(k) for k in corners} | {float((k + 1) % n if raw.closed else k + 1) for k in corners})
     if raw.closed:
         spans = list(zip(cuts, cuts[1:] + [cuts[0] + n])) if cuts else [(0.0, float(n))]
     else:
@@ -423,7 +478,13 @@ def _clean(raw: Contour, orig: Contour, d: float, tol: float = TOL, line=None) -
             gm = g0 + (g1 - g0) * f
             i = int(math.floor(gm))
             probes.append(raw.segments[i % n].point(gm - i))
-    ok3 = (_distances(orig, probes, line) >= lim).reshape(-1, 3).tolist() if probes else []
+
+    # seuil de chaque morceau : |d|, ou la distance au sommet d'un raccord vif ou chanfreiné (round 1170)
+    def span_lim(g0, g1):
+        k = int(math.floor((g0 + g1) / 2)) % n
+        return min(lim, corners[k] - max(10 * tol, 1e-6)) if k in corners else lim
+    lims = [span_lim(g0, g1) for g0, g1 in spans]
+    ok3 = (_distances(orig, probes, line).reshape(-1, 3) >= np.asarray(lims)[:, None]).tolist() if probes else []
     far = [all(row) for row in ok3]
     if bridges:
         far = [ok and int(math.floor((g0 + g1) / 2)) % n not in bridges for (g0, g1), ok in zip(spans, far)]
@@ -437,7 +498,7 @@ def _clean(raw: Contour, orig: Contour, d: float, tol: float = TOL, line=None) -
         spans2, far2 = [], []
         for i, (sp, ok) in enumerate(zip(spans, far)):
             if i in mixed:
-                runs = _far_runs(raw, orig, sp[0], sp[1], abs(d), lim, line)
+                runs = _far_runs(raw, orig, sp[0], sp[1], abs(d), lims[i], line)
                 spans2 += runs
                 far2 += [True] * len(runs)
             else:
@@ -453,6 +514,7 @@ def _clean(raw: Contour, orig: Contour, d: float, tol: float = TOL, line=None) -
     res = []
     out = [sg for sg in out if sum(x.length() for x in sg) > 1e-9]
     for segs in out:
+        segs = [Line(sg.p0, sg.p1) if isinstance(sg, _Corner) else sg for sg in segs]
         closed = raw.closed and dist(segs[-1].end, segs[0].start) < 1e-6
         if closed:
             segs[-1] = _with_end(segs[-1], segs[0].start)
@@ -515,10 +577,11 @@ def _close_gaps(chains: list[list], limit: float) -> list[list]:
     return done
 
 
-def parallel(contour: Contour, d: float, tol: float = TOL, line=None) -> list[Contour]:
+def parallel(contour: Contour, d: float, tol: float = TOL, line=None, join: str = 'round') -> list[Contour]:
     """Courbe(s) parallèle(s) propres à distance d (à gauche si d > 0) ;
-    `line` : polyligne shapely du contour, si déjà calculée."""
-    raw = parallel_raw(contour, d, tol)
+    `line` : polyligne shapely du contour, si déjà calculée ; `join` : angles extérieurs arrondis (d'office), vifs
+    (`miter`) ou chanfreinés (`bevel`)."""
+    raw = parallel_raw(contour, d, tol, join)
     if not raw.segments:
         return []
     orig = contour.close() if contour.closed else contour
@@ -664,19 +727,78 @@ def stroke_checked(path: Path, width: float, tol: float = TOL) -> tuple[Path, bo
     return ref, False
 
 
+#: un contour ouvert dont les bouts sont plus près que cela (mm) est décalé comme un fermé (round 1170)
+LOOP_GAP = 1e-6
+
+
+def _open_polyline(c: Contour, d: float, join: str) -> list[Contour]:
+    """Repli de `offset_open` (contour de plus de EXACT_LIMIT segments, ou erreur du calcul exact) : la parallèle
+    de sa polyligne (aplatie à `pathops.FLATTEN`) par shapely (`offset_curve`, qui garde le sens de tracé ; d > 0 à
+    droite), même limite de vif ; [] si elle échoue aussi (la forme reste alors telle quelle)."""
+    try:
+        import shapely
+
+        from . import pathops
+        from .geom import polyline
+        pts = c.flatten(pathops.FLATTEN)
+        if len(pts) < 2:
+            return []
+        style = {'miter': 'mitre', 'bevel': 'bevel'}.get(join, 'round')
+        g = shapely.LineString(pts).offset_curve(-d, quad_segs=16, join_style=style, mitre_limit=MITER_LIMIT)
+        parts = getattr(g, 'geoms', [g])
+        out = [polyline([(float(x), float(y)) for x, y, *_z in ln.coords]) for ln in parts
+               if not ln.is_empty and len(ln.coords) >= 2]
+        return [k for k in out if k.segments]
+    except Exception:                                    # filet de sécurité : la commande n'échoue jamais
+        return []
+
+
+def offset_open(c: Contour, d: float, join: str = 'round', tol: float = TOL) -> list[Contour]:
+    """Décaler (A) un contour ouvert, comme TypeEdit (round 1170) : un contour ouvert parallèle à |d| partout,
+    d'un seul côté — d > 0 à droite du sens de tracé (l'extérieur d'un contour fermé tracé dans le sens
+    anti-horaire), d < 0 à gauche —, bouts décalés perpendiculairement (pas de bouchon), angles extérieurs selon
+    `join` (arrondis exacts, vifs, chanfreinés), arcs exacts, Bézier à `tol` ; une boucle locale (rayon plus petit
+    que |d| du côté du décalage) est ôtée et les deux côtés rejoints à leur croisement. Plusieurs morceaux seulement
+    là où la parallèle disparaît vraiment ; [] si rien ne reste. Au-delà de EXACT_LIMIT segments, ou sur une erreur
+    du calcul exact : `_open_polyline`."""
+    if c.closed or not c.segments or abs(d) < 1e-12:
+        return []
+    if len(c.segments) > EXACT_LIMIT:
+        return _open_polyline(c, d, join)
+    try:
+        res = parallel(c, -d, tol, join=join if join in ('miter', 'bevel') else 'round')
+    except Exception:
+        return _open_polyline(c, d, join)
+    return [Contour(r.segments, False) for r in res if r.segments]
+
+
 def offset_job(path: Path, distances: list, join: str = 'round') -> tuple[list, int, int]:
     """Décalages d'un tracé aux `distances` (commande Décaler) : (tracés non
     vides, exacts, approchés). Fonction du module : calculable dans un autre
-    processus (core.workers.adaptive_map)."""
+    processus (core.workers.adaptive_map). Les contours ouverts donnent chacun un contour ouvert parallèle
+    (`offset_open`, round 1170 ; avant : le contour fermé de leur trait) ; ceux dont les bouts se rejoignent (à
+    LOOP_GAP près) sont décalés comme des fermés ; les fermés, comme avant."""
     from . import pathops
+    looped = [c for c in path.contours if not c.closed and c.segments and dist(c.start, c.end) < LOOP_GAP]
+    opened = [c for c in path.contours if not c.closed and c.segments and dist(c.start, c.end) >= LOOP_GAP]
+    if opened or looped:                                 # les fermés seuls passent par le décalage de région
+        path = Path([c for c in path.contours if c.closed and c.segments]
+                    + [Contour(c.segments, True) for c in looped])
     out, exact, approx = [], 0, 0
     for d in distances:
-        if join == 'round':
-            res, ok = offset_checked(path, d)                # exact (arcs concentriques), contrôlé
-            exact += ok
-            approx += not ok
-        else:
-            res = pathops.offset(path, d, join)
+        res = None
+        if path.contours:
+            if join == 'round':
+                res, ok = offset_checked(path, d)            # exact (arcs concentriques), contrôlé
+                exact += ok
+                approx += not ok
+            else:
+                res = pathops.offset(path, d, join)
+        if opened:
+            lines = [r for c in opened for r in offset_open(c, d, join)]
+            if lines:
+                exact += not path.contours                   # exacts (arcs concentriques, Bézier à 0,1 µm)
+                res = Path((res.contours if res else []) + lines)
         if res:
             out.append(res)
     return out, exact, approx

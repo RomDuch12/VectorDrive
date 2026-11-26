@@ -7,8 +7,9 @@ place du canva »).
 une colonne, ou en plein écran translucide par-dessus le dessin — à sa place quand l'opacité est au plus haut. Il
 montre le programme que le post-processeur du dessin écrirait pour les parcours montrés (les mêmes fichiers, le même
 encodage que l'écriture), coloré ; il suit le panneau FAO et le dessin en direct, ou à la demande ; l'opération
-choisie dans le panneau FAO y est retrouvée ; il dit quand des opérations actives sont cachées, donc hors du
-programme ; « Enregistrer… » écrit le programme (le post-traitement de toujours).
+choisie dans le panneau FAO y est retrouvée ; un parcours caché (son œil) reste dans le programme, seul son bouton
+marche/arrêt l'en retire ; « Enregistrer… » écrit le programme (le post-traitement de toujours). À gauche du texte,
+le plan du programme se replie en une bande étroite ou se déplie (demande du 25/11).
 """
 from __future__ import annotations
 
@@ -24,8 +25,14 @@ from ..i18n import tr
 from .code_view import CodeView, fold_regions
 
 LIVE_KEY = 'fao/programme_direct'
-#: le plan du programme (la liste des séquences et des parcours, à gauche du texte) montré (retenu)
+#: le plan du programme (la liste des séquences et des parcours, à gauche du texte) déplié (vrai) ou replié en une
+#: bande étroite (retenu)
 OUTLINE_KEY = 'fao/programme_plan'
+#: sa largeur dépliée (retenue) ; la bande du plan replié ; le moins de place pour le plan déplié, et pour le texte
+OUTLINE_WIDTH_KEY = 'fao/programme_plan_largeur'
+OUTLINE_BAND = 22
+OUTLINE_MIN = 90
+TEXT_MIN = 160
 #: la vue du programme (menu « Vue ») : taille du texte (0 : d'origine), numéros de ligne, retour à la ligne, couleurs
 VIEW_KEY = 'fao/programme_vue'
 #: les parties apportées par les plugins (`host_panel`) : dépliées ou repliées, retenu par clé
@@ -195,8 +202,8 @@ class ProgramPanel(QWidget):
         for key, text, tip, slot in (
                 ('update', tr('Mettre à jour'), tr('Refaire les parcours si le dessin a changé, et réécrire le programme'),
                  lambda: self.refresh(recompute=True)),
-                ('all', tr('Tout montrer'), tr('Des opérations actives sont cachées, donc hors du programme : les '
-                                               'montrer toutes'), self.show_all),
+                ('all', tr('Tout en marche'), tr('Des opérations actives ont tous leurs parcours à l’arrêt, donc '
+                                                 'hors du programme : les remettre en marche'), self.show_all),
                 ('copy', tr('Copier'), tr('Copier le programme montré'), self.copy),
                 ('save', tr('Enregistrer…'), tr('Écrire le programme machine dans un fichier'), self.save)):
             b = self.buttons[key] = QPushButton(text)
@@ -250,20 +257,34 @@ class ProgramPanel(QWidget):
         from PySide6.QtWidgets import QHeaderView, QSplitter, QTreeWidget
         self.given: list = []                           # les plages données par le post (`program_preview`)
         self.outline = QTreeWidget()                     # le plan : séquences et parcours du programme montré
-        self.outline.setHeaderLabels([tr('Plan du programme'), tr('N° de lignes')])
+        self.outline.setHeaderLabels([tr('Séquences et parcours'), tr('N° de lignes')])
         self.outline.setRootIsDecorated(True)
         self.outline.setIndentation(12)
         self.outline.header().setStretchLastSection(False)
         self.outline.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.outline.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.outline.itemClicked.connect(lambda it, _c=0: self.goto_section(it))
+        from PySide6.QtWidgets import QSizePolicy, QToolButton as _Tool
+        self.plan_col = QWidget()                        # le plan en colonne repliable (demande du 25/11) : son
+        pl = QVBoxLayout(self.plan_col)                  # en-tête « ▾ Plan du programme » ; replié, une bande « ▸ »
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(0)
+        h = self.plan_head = _Tool()
+        h.setAutoRaise(True)
+        h.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        h.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        h.setStyleSheet('QToolButton { text-align: left; font-weight: bold; padding: 1px 2px; }')
+        h.clicked.connect(lambda _=False: self.fold_outline(not self.outline_folded()))
+        pl.addWidget(h)
+        pl.addWidget(self.outline, 1)
         self.split = QSplitter(Qt.Orientation.Horizontal)
-        self.split.addWidget(self.outline)
+        self.split.addWidget(self.plan_col)
         self.split.addWidget(self.text)
+        self.split.setChildrenCollapsible(False)         # tiré à fond : la bande reste, et le texte
         self.split.setStretchFactor(0, 0)
         self.split.setStretchFactor(1, 1)
         self.split.setSizes([190, 600])
-        self.outline.setVisible(win.settings.value(OUTLINE_KEY, 'true') in (True, 'true'))
+        self.split.splitterMoved.connect(lambda *_a: self._outline_moved())
         vlay.addWidget(self.split, 1)
         self.status = QLabel('')
         self.status.setWordWrap(True)
@@ -292,7 +313,7 @@ class ProgramPanel(QWidget):
         b.clicked.connect(lambda _=False: self.refresh(recompute=True))
         b.hide()
         foot.addWidget(b)
-        b = self.buttons['outline'] = QToolButton()      # ☰ : le plan montré ou caché (retenu)
+        b = self.buttons['outline'] = QToolButton()      # ☰ : le plan déplié ou replié en bande (retenu)
         b.setText('☰')
         b.setCheckable(True)
         b.setChecked(not self.outline.isHidden())
@@ -319,6 +340,7 @@ class ProgramPanel(QWidget):
         self.timer.setSingleShot(True)
         self.timer.setInterval(LIVE_MS)
         self.timer.timeout.connect(self._live_refresh)
+        self.fold_outline(not _flag(win.settings.value(OUTLINE_KEY, 'true'), True), remember=False)
         self.apply_view()
 
     def set_centered(self, on: bool) -> None:
@@ -401,6 +423,8 @@ class ProgramPanel(QWidget):
         cols = getattr(w, 'columns', None)
         if d is None or cols is None or d.isFloating() or d.widget() is not self.viewer:
             return
+        if cols.free_program():                          # la fenêtre encore en onglet : sortie, son texte refait
+            return
         side = side if side in ('gauche', 'droite') else self.text_side()
         self._text_side = self.text_side()
         if getattr(self, '_laid', None) == side and cols.side(d) == side and not w.tabifiedDockWidgets(d):
@@ -428,25 +452,44 @@ class ProgramPanel(QWidget):
                 w.removeDockWidget(x)
             w.addDockWidget(AREAS['droite'], d)
             prev = None
-            for b in blocks:
-                if prev is None:
-                    w.addDockWidget(AREAS['droite'], b[0], Qt.Orientation.Horizontal)
+            for b in blocks:                             # les têtes de bloc d'abord, les onglets ensuite : partagé
+                if prev is None:                         # sous un panneau en onglets, un panneau en deviendrait un
+                    w.addDockWidget(AREAS['droite'], b[0], Qt.Orientation.Horizontal)   # onglet (Qt)
                 else:
                     w.splitDockWidget(prev, b[0], Qt.Orientation.Vertical)
-                for m in b[1:]:
-                    w.tabifyDockWidget(b[0], m)
-                for m in b:
-                    m.setVisible(True)
+                b[0].setVisible(True)
                 prev = b[0]
-            main = max(blocks, key=len)[0] if blocks else None
+            hosts = [b for b in blocks if cols.host_ok(b)]   # jamais en onglet sur la colonne Datron (25/11)
+            main = max(hosts, key=len)[0] if hosts else None
+            edge, later = None, []
             for x in asleep:                             # les cachés : leur onglet dans le groupe, ou sous la colonne
-                if main is None:                         # aucun montré : une seule colonne, en onglets
+                if cols._datron(x):                      # la fenêtre Programme Datron cachée : sa place à elle,
+                    if prev is None:                     # jamais en onglet (rangée par l'onglet CAD, 25/11)
+                        w.addDockWidget(AREAS['droite'], x, Qt.Orientation.Horizontal)
+                    else:
+                        w.splitDockWidget(prev, x, Qt.Orientation.Vertical)
+                elif main is None and blocks:            # rien que la colonne Datron : leur colonne à part, au bord
+                    if edge is None:
+                        w.addDockWidget(AREAS['droite'], x, Qt.Orientation.Horizontal)
+                        edge = x
+                    else:
+                        w.tabifyDockWidget(edge, x)
+                elif main is None:                       # aucun montré : une seule colonne, en onglets
                     w.addDockWidget(AREAS['droite'], x, Qt.Orientation.Horizontal)
                     main = prev = x
                 elif x.objectName() in placed:
                     w.splitDockWidget(prev, x, Qt.Orientation.Vertical)
                 else:
-                    w.tabifyDockWidget(main, x)
+                    later.append(x)                      # en onglet, une fois les blocs faits
+                    continue
+                x.setVisible(False)
+            for b in blocks:
+                for m in b[1:]:
+                    w.tabifyDockWidget(b[0], m)
+                for m in b:
+                    m.setVisible(True)
+            for x in later:
+                w.tabifyDockWidget(main, x)
                 x.setVisible(False)
             for b in blocks:
                 b[0].raise_()
@@ -464,6 +507,8 @@ class ProgramPanel(QWidget):
             d.setVisible(not dp.isHidden())
             if not d.isHidden():
                 d.raise_()
+                if getattr(self, '_laid', None) is None and not d.isFloating() and self.split_wanted():
+                    self.put_text_dock()                 # sa fenêtre ancrée pendant qu'il était caché (25/11)
 
     # --- les parties apportées par les plugins (atelier SimPL, 17/11) -------------------------------------------
     def host_panel(self, key: str, title: str, widget, shown: bool = True) -> None:
@@ -613,9 +658,9 @@ class ProgramPanel(QWidget):
             a.setCheckable(True)
             a.setChecked(v[key])
             a.toggled.connect(lambda on, k=key: self.set_view(k, bool(on)))
-        a = m.addAction(tr('Plan du programme'))
+        a = m.addAction(tr('Plan du programme'))       # coché : déplié ; décoché : replié en bande
         a.setCheckable(True)
-        a.setChecked(not self.outline.isHidden())
+        a.setChecked(not self.outline_folded())
         a.toggled.connect(lambda on: self.set_outline_shown(bool(on)))
         m.addSeparator()
         m.addAction(tr('Replier chaque parcours')).triggered.connect(lambda _=False: self.fold_paths(True))
@@ -682,7 +727,7 @@ class ProgramPanel(QWidget):
         if getattr(cp, '_computing', False):
             self.timer.start()                           # après le calcul
             return
-        moves = sum(len(tp.moves) for tp in cp.toolpaths if getattr(tp, 'shown', True))
+        moves = sum(len(tp.moves) for tp in cp.toolpaths if getattr(tp, 'on', True))
         if moves > LIVE_MAX_MOVES:
             self.timer.stop()
             self.status.setText(tr('Long programme ({0} mouvements) : « Mettre à jour » le réécrit').format(moves))
@@ -700,7 +745,7 @@ class ProgramPanel(QWidget):
         self.sync_machines(data.get('key') or None)
         self.files, self.warnings, self.note = list(data['files']), list(data['warnings']), data.get('note', '')
         self.given = [d for d in data.get('sections') or () if isinstance(d, dict)]
-        self.hidden = len(cp.hidden_active_ops())
+        self.stopped = len(cp.stopped_active_ops())      # opérations actives tout à l'arrêt : hors du programme
         self.highlighter.set_kind(data.get('extension', ''))
         self._folded = {}
         self._sections_of = {}                           # les plages des parcours : à rechercher
@@ -736,23 +781,23 @@ class ProgramPanel(QWidget):
         parts = []
         if 0 <= i < len(self.files):
             parts.append(tr('{0} — {1} ligne(s)').format(self.files[i][0], len(text.splitlines())))
-        hidden = getattr(self, 'hidden', 0)
-        if hidden:
-            parts.append('⚠ ' + tr('{0} opération(s) active(s) cachée(s) : hors du programme').format(hidden))
+        stopped = getattr(self, 'stopped', 0)
+        if stopped:
+            parts.append('⚠ ' + tr('{0} opération(s) active(s) à l’arrêt : hors du programme').format(stopped))
         if self.warnings:
             parts.append(tr('{0} avertissement(s)').format(len(self.warnings)))
         if self.note:
             parts.append(self.note)
         self.status.setText(' ; '.join(parts))
         self.status.setToolTip('\n'.join('• ' + str(w) for w in self.warnings[:30]))
-        self.buttons['all'].setVisible(bool(hidden))
+        self.buttons['all'].setVisible(bool(stopped))
         self.buttons['copy'].setEnabled(bool(text))
         for key in ('fold', 'unfold'):
             self.buttons[key].setEnabled(bool(self.text.regions))
 
     def show_all(self) -> None:
-        """Les opérations actives cachées de nouveau montrées : le programme est entier."""
-        self.win.cam_panel.show_all_paths()
+        """« Tout en marche » : les parcours à l'arrêt des opérations de nouveau en marche — le programme entier."""
+        self.win.cam_panel.all_paths_on()
         self.refresh()
 
     # --- le lien avec le panneau FAO ---------------------------------------------------------------------------------
@@ -821,10 +866,70 @@ class ProgramPanel(QWidget):
         tree.expandAll()
 
     def set_outline_shown(self, on: bool) -> None:
-        """Le plan du programme montré ou caché, à gauche du texte ; retenu."""
-        self.outline.setVisible(bool(on))
-        self.buttons['outline'].setChecked(bool(on))
-        self.win.settings.setValue(OUTLINE_KEY, bool(on))
+        """☰ et le menu Vue : le plan du programme déplié (`on`) ou replié en bande ; retenu."""
+        self.fold_outline(not on)
+
+    def outline_folded(self) -> bool:
+        """Le plan du programme est-il replié en sa bande étroite ?"""
+        return self.outline.isHidden()
+
+    def fold_outline(self, folded: bool, remember: bool = True) -> None:
+        """Le plan du programme replié en une bande étroite « ▸ » à gauche du texte (un clic sur elle le déplie), ou
+        déplié à sa largeur retenue — de quoi lire ses lignes, en laissant sa place au texte, même dans la colonne
+        étroite du texte. ☰ et le menu Vue suivent ; retenu (`fao/programme_plan` : vrai = déplié), sa largeur aussi."""
+        from PySide6.QtWidgets import QSizePolicy
+        folded = bool(folded)
+        col, head = self.plan_col, self.plan_head
+        if folded and remember and not self.outline.isHidden():
+            self._outline_moved()                        # la largeur dépliée, retenue (pas au démarrage)
+        self.outline.setVisible(not folded)
+        if folded:
+            col.setFixedWidth(OUTLINE_BAND)
+            total = sum(self.split.sizes())
+            if total > OUTLINE_BAND:                     # la place rendue au texte (le séparateur ne la donne pas)
+                self.split.setSizes([OUTLINE_BAND, total - OUTLINE_BAND])
+            head.setText('▸')
+            head.setToolTip(tr('Déplier le plan du programme (retenu)'))
+            head.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)   # toute la bande
+        else:
+            col.setMinimumWidth(0)
+            col.setMaximumWidth(16777215)
+            head.setText('▾ ' + tr('Plan du programme'))
+            head.setToolTip(tr('Replier le plan du programme en une bande étroite (retenu)'))
+            head.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._outline_width_back()
+        b = self.buttons.get('outline')
+        if b is not None and b.isChecked() == folded:
+            b.setChecked(not folded)
+        if remember:
+            self.win.settings.setValue(OUTLINE_KEY, not folded)
+
+    def outline_width(self) -> int:
+        """La largeur retenue du plan déplié (au moins de quoi lire ses lignes)."""
+        try:
+            w = int(float(self.win.settings.value(OUTLINE_WIDTH_KEY, 190) or 190))
+        except (TypeError, ValueError):
+            w = 190
+        return max(OUTLINE_MIN, w)
+
+    def _outline_width_back(self) -> None:
+        """Le plan déplié à sa largeur retenue, le texte gardant au moins TEXT_MIN (la colonne étroite du texte :
+        moitié moitié, le plan jamais plus étroit que sa bande)."""
+        total = sum(self.split.sizes())
+        w = self.outline_width()
+        if total <= 0:                                   # pas encore mis en page : d'après la fenêtre
+            self.split.setSizes([w, max(TEXT_MIN, 600)])
+            return
+        w = min(w, total - TEXT_MIN) if total - TEXT_MIN >= OUTLINE_MIN else max(OUTLINE_BAND + 1, total // 2)
+        self.split.setSizes([w, max(1, total - w)])
+
+    def _outline_moved(self) -> None:
+        """Le séparateur tiré (ou le plan replié) : la largeur du plan déplié, retenue."""
+        if self.outline.isHidden():
+            return
+        w = self.split.sizes()[0] if self.split.count() else 0
+        if w > OUTLINE_BAND + 4:
+            self.win.settings.setValue(OUTLINE_WIDTH_KEY, int(w))
 
     def goto_section(self, item) -> None:
         """Un clic dans le plan : la plage montrée (dépliée, surlignée, amenée à l'écran) ; son opération, s'il y en
@@ -876,7 +981,7 @@ class ProgramPanel(QWidget):
         """Les plages des parcours du fichier `i`, cherchées par leur nom (voir `sections`, qui les garde)."""
         cp = self.win.cam_panel
         written = getattr(cp, '_writable', None)         # ceux que le programme écrit : pas une opération désactivée
-        paths = [tp for tp in cp.toolpaths if getattr(tp, 'shown', True)]
+        paths = [tp for tp in cp.toolpaths if getattr(tp, 'on', True)]
         shown = [tp for tp in (written(paths) if written is not None else paths) if tp.name]
         raw = self.files[i][1].split('\n')
         if not shown or len(raw) * len(shown) > MAX_SECTION_WORK:
@@ -923,14 +1028,14 @@ class ProgramPanel(QWidget):
 
     def locate(self, op):
         """(fichier, ligne) où commence l'opération `op` dans le programme : la ligne qui porte le nom de son premier
-        parcours montré — la n-ième de ce nom si d'autres parcours montrés avant lui le portent aussi ; None si elle
-        est cachée ou introuvable."""
+        parcours en marche — la n-ième de ce nom si d'autres parcours en marche avant lui le portent aussi ; None si
+        elle n'est pas dans le programme ou introuvable."""
         for fi in range(len(self.files)):               # le post a donné ses plages : la première de l'opération
             for d in self.given_of(fi):
                 if d['op_id'] and d['op_id'] == op.id:
                     return fi, d['first']
         cp = self.win.cam_panel
-        shown = [tp for tp in cp.toolpaths if getattr(tp, 'shown', True) and tp.name]
+        shown = [tp for tp in cp.toolpaths if getattr(tp, 'on', True) and tp.name]
         mine = next((tp for tp in shown if tp.op_id == op.id), None)
         if mine is None:
             return None

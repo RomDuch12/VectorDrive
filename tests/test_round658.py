@@ -90,9 +90,9 @@ class TestStops(unittest.TestCase):
         ta, tb = self.tp(a), self.tp(b)
         r = preflight.inspect(self.doc, s, [ta], all_paths=[ta])
         self.assertTrue(any(lv == preflight.ATTENTION and '« B » est active' in t for lv, t in r.notes))
-        tb.shown = False
+        tb.on = False                                                        # à l'arrêt (round 1163)
         r = preflight.inspect(self.doc, s, [ta], all_paths=[ta, tb])
-        self.assertTrue(any(lv == preflight.INFO and '« B » : parcours décoché' in t for lv, t in r.notes))
+        self.assertTrue(any(lv == preflight.INFO and '« B » : parcours à l\'arrêt' in t for lv, t in r.notes))
         r = preflight.inspect(self.doc, s, [ta, tb])                              # sans la liste : rien
         self.assertFalse(any('« B »' in t for _lv, t in r.notes))
 

@@ -2237,6 +2237,38 @@ def _match_props(p):
     _l(p, 40, 58, 59, 58)
 
 
+def _pinceau(p):
+    """Un pinceau, la pointe des poils en (0, 0), le manche vers le haut à droite (jusqu'à 27, −29)."""
+    _gros(p, 'gold', 5, (15, -16, 27, -29))
+    _st(p, 'accent')
+    _d(p, 'M', 6.7, -13.6, 'C', 3, -11, 1, -6, 0, 0, 'C', 6, -1, 11, -4, 13.3, -7.4, 'Z')
+    _st(p, 'grey_f')
+    _pg(p, 19.3, -13.9, 12.7, -20.1, 6.7, -13.6, 13.3, -7.4)
+
+
+def _color_brush(p):
+    """Pinceau de couleur : le pinceau sur un contour, déjà à sa couleur (accent) d'un côté, bleu de l'autre."""
+    _plume(p, 'ink', 7.4)
+    _aplat(p)
+    _o(p, 18, 46, 13)
+    _plume(p, 'blue', 4, plat=True)
+    _a(p, 18, 46, 13, 225, 180)
+    _plume(p, 'accent', 4, plat=True)
+    _a(p, 18, 46, 13, 45, 180)
+    p.save()
+    p.translate(27, 37)
+    p.scale(1.2, 1.2)
+    _pinceau(p)
+    p.restore()
+
+
+def _color_brush_cursor(p):
+    """Le pointeur du pinceau de couleur : le pinceau seul, en grand, la pointe en bas à gauche (4, 60)."""
+    p.translate(4, 60)
+    p.scale(2.0, 2.0)
+    _pinceau(p)
+
+
 ICONS.update({'node': _node, 'node_delete': _node_delete, 'break': _break, 'join': _join, 'to_curves': _to_curves,
               **{k: _node_icon(k) for k in ('node_line', 'node_curve', 'node_smooth', 'node_symmetric',
                                             'node_align_h', 'node_align_v')},
@@ -2250,7 +2282,8 @@ ICONS.update({'node': _node, 'node_delete': _node_delete, 'break': _break, 'join
               'snap_tangent': _snap_kind('tangent'), 'snap_extension': _snap_kind('extension'),
               'snap_parallel': _snap_kind('parallel'), 'snap_intersection': _snap_kind('intersection'),
               'snap_nearest': _snap_kind('nearest'), 'snap_guide': _snap_kind('guide'),
-              'fx_scallop': _fx_scallop, 'match_props': _match_props})
+              'fx_scallop': _fx_scallop, 'match_props': _match_props, 'color_brush': _color_brush,
+              'color_brush_cursor': _color_brush_cursor})
 
 
 # === FAO =============================================================================================================

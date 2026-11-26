@@ -2620,7 +2620,7 @@ class Panel3D(QWidget):
         cp = getattr(self.win, 'cam_panel', None)
         if cp is None:
             return []
-        if cp.checked_paths():
+        if cp.toolpaths:                                 # tous à l'arrêt : rien (pas tous, comme en marche)
             return self._checked_paths(cp)
         tps = list(cp.toolpaths)
         if not tps and not self._active_ops():          # programme ouvert comme dessin : ses trajectoires
@@ -2632,6 +2632,18 @@ class Panel3D(QWidget):
             finally:
                 self._taking = False
         return tps
+
+    def _shown_paths(self, cp, partial: bool = False) -> list:
+        """Les trajectoires montrées : celles dont l'œil est ouvert — l'œil, pas marche/arrêt (demande du 25/11) —,
+        sauf celles d'une opération désactivée ou retirée, comme avant ; celles des opérations, d'avant un changement
+        du dessin : pas montrées (la vue ne recalcule pas), sauf celles sans opération (`partial` : posées sur la
+        pièce)."""
+        ops = {o.id: o for o in cp.setup().operations} if cp is not None and cp.toolpaths else {}
+        live = [tp for tp in (cp.toolpaths if cp is not None else []) if getattr(tp, 'shown', True)
+                and (not tp.op_id or (tp.op_id in ops and ops[tp.op_id].enabled))]
+        if any(tp.op_id for tp in live) and cp.outdated():
+            return [tp for tp in live if not tp.op_id] if partial else []
+        return live
 
     def _checked_paths(self, cp, partial: bool = False) -> list:
         """Parcours cochés que le programme écrirait (programme relu, parcours
@@ -2755,10 +2767,22 @@ class Panel3D(QWidget):
         if key in ('parcours', 'simulation'):
             extra = {'toolpaths': self._computed_paths()}
             cp = getattr(self.win, 'cam_panel', None)
-            if not extra['toolpaths'] and cp is not None and cp.checked_paths():
-                self.info.setText(tr('Aucun parcours à montrer : les parcours cochés sont ceux d\'opérations '
+            if cp is not None and hasattr(cp, 'sim_paths'):    # simulation : marche/arrêt ; trajectoires : l'œil seul
+                extra['toolpaths'] = (cp.sim_paths(extra['toolpaths']) if key == 'simulation' else
+                                      self._shown_paths(cp) if cp.toolpaths else
+                                      [tp for tp in extra['toolpaths'] if getattr(tp, 'shown', True)])
+            if not extra['toolpaths'] and cp is not None and cp.toolpaths:
+                known = {o.id: o for o in cp.setup().operations}   # le message : ce qui manque vraiment
+                pool = ([tp for tp in cp.toolpaths if getattr(tp, 'shown', True)] if key == 'parcours' else
+                        cp.checked_paths())
+                kept = [tp for tp in pool if not tp.op_id or (tp.op_id in known and known[tp.op_id].enabled)]
+                self.info.setText(tr('Aucun parcours à montrer : leur œil est fermé (panneau FAO, calque Trajectoires)')
+                                  if key == 'parcours' and not pool
+                                  else tr('Aucun parcours à simuler : tous sont à l’arrêt (bouton marche/arrêt)')
+                                  if not pool else
+                                  tr('Aucun parcours à montrer : les parcours cochés sont ceux d\'opérations '
                                      'désactivées ou supprimées depuis le calcul')
-                                  if not cp._writable(cp.checked_paths()) else
+                                  if not kept else
                                   tr('Aucun parcours à montrer : parcours calculés avant un changement du dessin '
                                      '(pièce 3D placée autrement, surface posée, session reprise) ; « Calculer » '
                                      'dans le ruban FAO'))
@@ -2814,7 +2838,7 @@ class Panel3D(QWidget):
         else:
             self.view.model, self.view.relief = m, None
         cp = getattr(self.win, 'cam_panel', None)             # trajectoires calculées, sur les volumes
-        paths = self._checked_paths(cp, partial=True)
+        paths = self._shown_paths(cp, partial=True)       # l'œil seul (pas marche/arrêt)
         if cp is not None:                                     # volumes : une seule vue, prises recomposées
             paths = self._reassembled(paths)
         self.view.model_paths = paths
@@ -3281,7 +3305,7 @@ class Panel3D(QWidget):
         elif self.view.model is not self.model:
             self.view.set_model(self.model)
         cp = getattr(self.win, 'cam_panel', None)              # trajectoires calculées, sur la pièce
-        paths = self._checked_paths(cp, partial=True)
+        paths = self._shown_paths(cp, partial=True)       # l'œil seul (pas marche/arrêt)
         if cp is not None and self.all_setups():              # toutes, recomposées sur la pièce
             paths = self._reassembled(paths)
         elif cp is not None and self.setup_view.count() > 1:   # celles de la prise montrée seulement

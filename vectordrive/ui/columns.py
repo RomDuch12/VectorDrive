@@ -7,7 +7,12 @@
   panneau rangé à part ; sa colonne est retenue. Un panneau masqué, montré par son bouton, sa commande ou le menu de Qt,
   y prend aussi son onglet : il n'est jamais empilé avec un autre, sauf « Au-dessus de » / « Au-dessous de » choisi
   (demande du 23/11). Le groupe d'onglets est toujours en bas de la colonne : les panneaux
-  rangés hors des onglets s'empilent au-dessus de lui (demande du 19/11).
+  rangés hors des onglets s'empilent au-dessus de lui (demande du 19/11). Depuis le 25/11 : jamais en onglet sur la
+  colonne Datron (la fenêtre Programme et ses parties de plugin) ; sans groupe d'onglets, son propre bloc — à côté de
+  la colonne Datron, sa propre colonne ; une colonne rouverte, la FAO rouverte ou refermée, une machine choisie, la
+  disposition d'un lancement (une fois par poste) font de même.
+- Le texte du programme fermé dans sa colonne à part : la colonne rétrécit de sa largeur, le dessin gagne la place ;
+  rouvert, elle s'élargit d'autant (demande du 25/11).
 - « En onglet avec › » un autre panneau de sa colonne (Dimensions (F2) et Calques, par exemple), « Sortir des
   onglets » : deux panneaux partagent un onglet, ou non ; retenu pour les lancements suivants. D'office, Dimensions
   (F2) et Calques partagent le même groupe d'onglets.
@@ -93,6 +98,11 @@ F2_KEY = f'{KEY}/f2_rangement'
 #: réglages de la fenêtre (sa place à la fermeture, `MainWindow.GEOMETRY_KEY` ; plein écran ou non, et la barre des
 #: tâches, écrits même en plein écran) : l'un d'eux présent, le poste a déjà servi
 USED_KEYS = ('fenetre/geometrie', 'fenetre/plein_ecran', 'fenetre/plein_ecran_barre')
+#: réglage : les panneaux restés seuls hors des onglets sans y avoir été rangés ont été remis dans le groupe de leur
+#: colonne (une fois par poste, round 1162)
+REGROUPED_KEY = f'{KEY}/regroupes'
+#: la largeur laissée au dessin, au moins, quand le texte du programme rouvert élargit sa colonne (px)
+DRAWING_MIN = 320
 
 
 class DockBar(QWidget):
@@ -145,6 +155,8 @@ class Columns(QObject):
         self._dress_due = False
         self._settling = False                           # la colonne refaite : pas de nouveau tour
         self._settle_due = False
+        self._sep_down = False                           # un séparateur de colonnes tiré à la souris (25/11)
+        self._freeing = False                            # `free_program` en cours (`put_text_dock` la rappelle)
         self._adopt_new()
         self.restore()
         win.installEventFilter(self)                     # panneaux et barres d'onglets nés plus tard
@@ -328,12 +340,26 @@ class Columns(QObject):
         self.win._docks_before_cam = None                # la disposition d'avant la FAO n'est plus à rendre
         front = [d for d in others if self.in_front(d)] if not show else []
         group = self.main_group(side, without=dock)      # son onglet dans le groupe de la colonne (demande du 19/11)
-        if not group and not [d for d in others if not d.isHidden()]:
-            group = [d for d in there if d.objectName() not in self.placed()][:1]   # colonne cachée : son groupe
+        if not group and not [d for d in others if not d.isHidden()]:   # colonne cachée : son groupe
+            group = [d for d in there if d.objectName() not in self.placed() and self.host_ok([d])][:1]
+        if self._datron(dock):                           # la colonne Datron : jamais en onglet (demande du 25/11)
+            group = []
+        # à côté d'elle : sa propre colonne, si le dessin garde sa place (sinon sous la fenêtre Programme)
+        near = not group and not self._datron(dock) and self._beside(side)
+        beside = near and self._room_beside(dock)
+        if near and not beside:
+            self.free_program()                          # en groupe (voisins cachés), le partage en ferait un onglet
 
         def do():
             dock.setFloating(False)
-            self.win.addDockWidget(AREAS[side], dock)
+            if beside:
+                self.win.removeDockWidget(dock)
+                self.win.addDockWidget(AREAS[side], dock, Qt.Orientation.Horizontal)
+            elif near:
+                self.win.removeDockWidget(dock)
+                self.win.splitDockWidget(self.win.dock_program, dock, Qt.Orientation.Vertical)
+            else:
+                self.win.addDockWidget(AREAS[side], dock)
             if group:
                 self.win.tabifyDockWidget(group[0], dock)
             if show:
@@ -344,6 +370,11 @@ class Columns(QObject):
                 for d in front:                          # les onglets qui étaient devant le restent
                     d.raise_()
         self._quiet(do)
+        text = prog.text_dock() if prog is not None and dock is getattr(self.win, 'dock_program', None) else None
+        if text is not None and prog.split_wanted():
+            prog._laid = None                            # la fenêtre Programme à parties ancrée : son texte refait
+            if not text.isHidden():                      # à côté d'elle, pas elle sous leur zone (25/11) ; caché,
+                prog.put_text_dock(side)                 # à sa réouverture
         if remember:
             st = self._st()
             st.setValue(f'{KEY}/place/{dock.objectName()}', side)
@@ -370,7 +401,8 @@ class Columns(QObject):
         for d in self.docks():
             want = str(st.value(f'{KEY}/onglet/{d.objectName()}', '') or '')
             other = next((o for o in self.docks() if o.objectName() == want), None) if want else None
-            if other is not None and self.side(other) is not None and self.side(other) == self.side(d):
+            if other is not None and self.side(other) is not None and self.side(other) == self.side(d) \
+                    and not self._program_pair(d, other):   # (avec la fenêtre Programme à parties : plus, 25/11)
                 if other not in self.win.tabifiedDockWidgets(d):
                     self.tab_with(d, other, remember=False, show=False)
         for d in self.docks():                           # au-dessus ou au-dessous d'un autre panneau
@@ -397,6 +429,121 @@ class Columns(QObject):
         out.add('programme_texte')                      # le texte du programme : sa colonne à part
         return out
 
+    def chosen(self) -> set:
+        """Les panneaux que l'utilisateur a lui-même rangés à part — sortis des onglets, mis au-dessus ou au-dessous
+        d'un autre (pas ce repère) — et le texte du programme : remontrés, ils restent où ils sont ; tout autre panneau
+        remontré prend son onglet dans le groupe (demande du 25/11 : Dimensions d'office au-dessus de Calques, ou le
+        repère d'un « Au-dessous de », aussi)."""
+        st = self._st()
+        out = set(self._shares())
+        for d in self.docks():
+            if str(st.value(f'{KEY}/seul/{d.objectName()}', '')).lower() in ('1', 'true'):
+                out.add(d.objectName())
+        out.add('programme_texte')
+        return out
+
+    def _datron(self, dock) -> bool:
+        """Le panneau fait-il la colonne Datron : le texte du programme, ou la fenêtre Programme quand des parties
+        de plugin y sont montrées (`add_panel(host='programme')`) ?"""
+        w = self.win
+        if dock is getattr(w, 'dock_program_text', None):
+            return True
+        prog = getattr(w, 'program_panel', None)
+        return dock is getattr(w, 'dock_program', None) and prog is not None and bool(prog.sections_shown())
+
+    def host_ok(self, block) -> bool:
+        """Un bloc peut-il accueillir l'onglet d'un autre panneau : pas la colonne Datron, ni un groupe d'onglets où
+        elle est (demande du 25/11 : jamais en onglet par-dessus la fenêtre Programme et ses parties)."""
+        return not any(self._datron(m) for m in block)
+
+    def _beside(self, side: str) -> bool:
+        """La colonne Datron (la fenêtre Programme et ses parties) est-elle montrée dans la colonne `side` ?"""
+        dp = getattr(self.win, 'dock_program', None)
+        return dp is not None and not dp.isHidden() and self.side(dp) == side and self._datron(dp)
+
+    def _room_beside(self, dock) -> bool:
+        """Une colonne de plus pour `dock`, à côté de la colonne Datron, laisserait-elle au dessin `DRAWING_MIN` ?"""
+        central = self.win.centralWidget()
+        need = max(dock.minimumSizeHint().width(), dock.sizeHint().width()) + self._gap()
+        return central is None or central.width() - need >= DRAWING_MIN
+
+    def free_program(self) -> bool:
+        """La fenêtre Programme devenue colonne Datron (ses parties de plugin montrées) encore en onglet avec
+        d'autres panneaux — une disposition d'avant, ancrée sous une autre machine — : sortie de son groupe, son texte
+        refait à côté d'elle ; le groupe accueille de nouveau les panneaux remontrés (25/11). Rend vrai si elle en est
+        sortie."""
+        w = self.win
+        dp, prog = getattr(w, 'dock_program', None), getattr(w, 'program_panel', None)
+        if getattr(self, '_freeing', False):             # déjà en cours (`put_text_dock` la rappelle) : une fois
+            return False
+        try:
+            if dp is None or prog is None or dp.isHidden() or dp.isFloating() or not self._datron(dp):
+                return False
+            w.layout().activate()                        # les onglets à jour avant de les lire
+            side, mates = self.side(dp), w.tabifiedDockWidgets(dp)
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            return False
+        if side is None or not (mates or self._in_tabs(dp)):
+            return False
+
+        def do():
+            w.removeDockWidget(dp)
+            w.addDockWidget(AREAS[side], dp, Qt.Orientation.Vertical)
+            dp.setVisible(True)
+            dp.raise_()
+        self._freeing = True
+        try:
+            self._quiet(do)
+            prog._laid = None
+            prog.put_text_dock(side)
+        finally:
+            self._freeing = False
+        return True
+
+    def _in_tabs(self, dock) -> bool:
+        """`dock` est-il dans un groupe d'onglets, même seul montré (ses voisins cachés) ? `tabifiedDockWidgets` ne
+        compte que les montrés ; la barre d'onglets de Qt le porte encore (vérifié au round 1162 : un panneau partagé
+        sous lui y deviendrait alors un onglet)."""
+        try:
+            import shiboken6
+            from PySide6.QtWidgets import QTabBar
+            ptr = int(shiboken6.getCppPointer(dock)[0])
+            bars = self.win.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly)
+            return any(int(bar.tabData(i) or 0) == ptr for bar in bars for i in range(bar.count()))
+        except (ImportError, TypeError, ValueError, RuntimeError):
+            return False
+
+    def _program_pair(self, *docks) -> bool:
+        """La fenêtre Programme ou son texte parmi `docks`, des parties de plugin existant (la colonne Datron) : une
+        clé `onglet/` d'avant qui les met en onglet n'est pas réappliquée au lancement (25/11)."""
+        w = self.win
+        if not getattr(getattr(w, 'program_panel', None), 'hosted', None):
+            return False
+        mine = (getattr(w, 'dock_program', None), getattr(w, 'dock_program_text', None))
+        return any(d is not None and d in mine for d in docks)
+
+    def _joined(self, dock, group) -> None:
+        """`dock` remontré a pris son onglet : ce qui le rangeait à part ne le ressort pas au lancement suivant — un
+        panneau rangé au-dessus ou au-dessous de lui reste à part, seul ; Dimensions d'office au-dessus de Calques
+        est retenu en onglet."""
+        st, name = self._st(), dock.objectName()
+        for k, target in self._shares().items():
+            if target == name:
+                st.remove(f'{KEY}/partage/{k}')
+                st.setValue(f'{KEY}/seul/{k}', True)
+        if name == 'dims' and str(st.value(F2_KEY, '') or '') == 'dessus' and not st.value(f'{KEY}/onglet/dims', ''):
+            other = next((d for d in group if d.objectName() == 'layers'), group[0])
+            st.setValue(f'{KEY}/onglet/dims', other.objectName())
+
+    def _in_program_column(self, dock) -> bool:
+        """`dock` est-il empilé dans la colonne de la fenêtre Programme ou dans celle de son texte ?"""
+        x = dock.mapTo(self.win, QPoint(0, 0)).x()
+        for d in (getattr(self.win, 'dock_program', None), getattr(self.win, 'dock_program_text', None)):
+            if d is not None and not d.isHidden() and not d.isFloating() and \
+                    abs(d.mapTo(self.win, QPoint(0, 0)).x() - x) <= 2:
+                return True
+        return False
+
     def blocks(self, side: str) -> list:
         """Les blocs montrés de la colonne `side`, de haut en bas : un panneau seul, ou un groupe d'onglets (celui de
         devant d'abord)."""
@@ -419,14 +566,15 @@ class Columns(QObject):
 
     def main_group(self, side: str, without=None) -> list:
         """Le groupe d'onglets de la colonne : le plus fourni des blocs montrés, sauf un panneau seul rangé à part
-        (le plus bas à égalité) ; [] : aucun. `without` : un panneau qui n'y compte pas."""
+        et la colonne Datron, seule ou en onglets (le plus bas à égalité) ; [] : aucun. `without` : un panneau qui n'y
+        compte pas."""
         placed = self.placed()
         best = []
         for b in self.blocks(side):
             b = [m for m in b if m is not without]
             # des onglets (même avec un panneau rangé à part d'office, Dimensions avec la FAO), ou un panneau seul
             # que l'utilisateur n'a pas rangé à part
-            if b and (len(b) > 1 or b[0].objectName() not in placed) and len(b) >= len(best):
+            if b and (len(b) > 1 or b[0].objectName() not in placed) and len(b) >= len(best) and self.host_ok(b):
                 best = b
         return best
 
@@ -453,7 +601,8 @@ class Columns(QObject):
         front = [b[0] for b in order]
         placed = self.placed()
         # les panneaux cachés de la colonne (la FAO fermée…) : leur onglet dans le groupe, pour quand ils reviennent
-        asleep = [d for d in self.column(side) if d.isHidden() and d.objectName() not in placed]
+        asleep = [d for d in self.column(side) if d.isHidden() and d.objectName() not in placed
+                  and not self._datron(d)]                # (ni la colonne Datron cachée : jamais en onglet, 25/11)
 
         def do():
             for b in order:
@@ -732,8 +881,8 @@ class Columns(QObject):
     def _join_group(self, dock) -> bool:
         """Un panneau masqué vient d'être montré hors de nos fonctions (son bouton, sa commande, le menu de Qt) : son
         onglet dans le groupe d'onglets de sa colonne, comme par l'œil de la fenêtre de la colonne — jamais empilé avec
-        un autre panneau (demande du 23/11). Laissé où il est : détaché, rangé à part (« Au-dessus de »,
-        « Au-dessous de », sorti des onglets, Dimensions au-dessus de Calques), déjà en onglet, ou seul groupe de sa
+        un autre panneau (demande du 23/11). Laissé où il est : détaché, rangé à part par l'utilisateur
+        (« Au-dessus de », « Au-dessous de », sorti des onglets : `chosen`), déjà en onglet, ou seul groupe de sa
         colonne ; déjà en onglet, il est mis devant. Rend vrai s'il a été mis en onglet."""
         try:
             if self._busy or self._settling or dock.isHidden() or dock.isFloating() or not self.win.isVisible():
@@ -741,17 +890,77 @@ class Columns(QObject):
         except RuntimeError:                             # panneau ou fenêtre détruits entre-temps
             return False
         side = self.side(dock)
-        if side is None or dock is getattr(self.win, 'dock_program_text', None) or dock.objectName() in self.placed():
+        if side is None or dock is getattr(self.win, 'dock_program_text', None) or dock.objectName() in self.chosen():
             return False
-        if self.win.tabifiedDockWidgets(dock):           # déjà dans des onglets : mis devant, puisque montré
+        return self._take_tab(dock, side)
+
+    def _take_tab(self, dock, side: str) -> bool:
+        """`dock`, montré dans la colonne `side`, y prend son onglet dans le groupe d'onglets (demande du 25/11) : déjà
+        dans des onglets (sans la colonne Datron), il est mis devant ; en onglet avec la colonne Datron, il en sort ;
+        sans groupe d'onglets, il forme son propre bloc — à côté de la colonne Datron, sa propre colonne. La colonne
+        Datron elle-même (la fenêtre Programme et ses parties de plugin) n'est jamais mise en onglet. Qt
+        ne compte que les panneaux montrés dans `tabifiedDockWidgets` (vérifié au round 1162). Rend vrai s'il a été
+        mis en onglet."""
+        w = self.win
+        if self._datron(dock):                           # la colonne Datron elle-même : jamais en onglet — en onglet
+            if dock is getattr(w, 'dock_program', None):   # (rangée cachée dans un groupe), elle en sort
+                self.free_program()
+            return False
+        mates = w.tabifiedDockWidgets(dock)
+        if mates and self.host_ok(mates):                # déjà dans des onglets : mis devant, puisque montré
             self._quiet(dock.raise_)
             return False
         group = self.main_group(side, without=dock)
-        if not group:
-            return False
-        self._quiet(lambda: (self.win.tabifyDockWidget(group[0], dock), dock.raise_()))
-        self.settle(side)                                # le groupe d'onglets toujours en bas
-        return dock in self.win.tabifiedDockWidgets(group[0])
+        if group:
+            self._quiet(lambda: (w.tabifyDockWidget(group[0], dock), dock.setVisible(True), dock.raise_()))
+            self._joined(dock, group)
+            self.settle(side)                            # le groupe d'onglets toujours en bas
+            return dock in w.tabifiedDockWidgets(group[0])
+        beside = self._beside(side) and self._room_beside(dock)   # (le dessin garde sa place : sinon sous la colonne)
+        if mates or (beside and self._in_program_column(dock)):
+            dp = getattr(w, 'dock_program', None)
+            under = not beside and self._beside(side)    # pas la place d'une colonne : sous la fenêtre Programme
+            if under:
+                self.free_program()                      # en groupe (voisins cachés), le partage en ferait un onglet
+
+            def own():                                   # son propre bloc (sa colonne, à côté de la colonne Datron)
+                w.removeDockWidget(dock)
+                if under:
+                    w.splitDockWidget(dp, dock, Qt.Orientation.Vertical)
+                else:
+                    w.addDockWidget(AREAS[side], dock,
+                                    Qt.Orientation.Horizontal if beside else Qt.Orientation.Vertical)
+                dock.setVisible(True)
+                dock.raise_()
+            self._quiet(own)
+        return False
+
+    def regroup(self, docks) -> int:
+        """Les panneaux `docks`, remontrés ensemble par nos fonctions (la colonne rouverte, la FAO rouverte par son
+        onglet ou refermée, la disposition d'un lancement) : chacun resté seul hors des onglets sans y avoir été rangé
+        (« Au-dessus de », « Au-dessous de », sorti des onglets, Dimensions d'office au-dessus de Calques : `placed`)
+        prend son onglet dans le groupe de sa colonne, comme un panneau remontré seul (demande du 25/11). Rend le
+        nombre de panneaux mis en onglet."""
+        try:
+            if not self.win.isVisible() or self.win.isMinimized():
+                return 0
+        except RuntimeError:
+            return 0
+        placed, n = self.placed(), 0
+        for d in docks:
+            try:
+                if d is getattr(self.win, 'dock_program', None) and self._datron(d):
+                    self.free_program()                  # remontrée encore en onglet (rangée cachée) : elle en sort
+                if d.isHidden() or d.isFloating() or d.objectName() in placed or self._datron(d):
+                    continue
+            except RuntimeError:                         # panneau détruit entre-temps
+                continue
+            side = self.side(d)
+            mates = self.win.tabifiedDockWidgets(d)
+            if side is None or (mates and self.host_ok(mates)):
+                continue
+            n += bool(self._take_tab(d, side))
+        return n
 
     def show_in(self, dock, side: str, on: bool) -> None:
         """L'œil de la fenêtre d'une colonne : `dock` montré dans la colonne `side` (la FAO ouverte pour ses
@@ -774,10 +983,8 @@ class Columns(QObject):
         else:
             was_hidden = dock.isHidden()
             self._quiet(lambda: (dock.setVisible(True), dock.raise_()))
-            if was_hidden and dock.objectName() not in self.placed() and not self.win.tabifiedDockWidgets(dock):
-                group = self.main_group(side, without=dock)   # revenu seul, hors des onglets : son onglet dans le groupe
-                if group:
-                    self._quiet(lambda: (self.win.tabifyDockWidget(group[0], dock), dock.raise_()))
+            if was_hidden and dock.objectName() not in self.chosen():
+                self._take_tab(dock, side)               # revenu : son onglet dans le groupe (demande du 25/11)
             self.settle(side)
 
     # --- montrer, cacher une colonne -----------------------------------------------------------------------------
@@ -831,6 +1038,7 @@ class Columns(QObject):
                         d.raise_()
             if back:
                 self._quiet(do)
+                self.regroup(back)                       # revenus seuls hors des onglets : leur onglet (25/11)
                 self.settle(side)
             self._st().remove(key)                       # revenue : plus rien de retenu pour elle
         self.sync()
@@ -952,7 +1160,9 @@ class Columns(QObject):
             a.triggered.connect(lambda _=False, s=side: self.move(dock, s))
         if here in AREAS:                                # partager un onglet avec un autre panneau de la colonne
             group = self.win.tabifiedDockWidgets(dock)
-            others = [d for d in self.column(here) if d is not dock and not d.isHidden() and d not in group]
+            others = [d for d in self.column(here) if d is not dock and not d.isHidden() and d not in group
+                      and self.host_ok([d] + self.win.tabifiedDockWidgets(d))   # jamais la colonne Datron, ni
+                      ] if self.host_ok([dock] + group) else []                 # son groupe (25/11)
             if others:
                 sub = QMenu(tr('En onglet avec'), m)     # enfant du menu : vit autant que lui
                 sub.setObjectName('en_onglet_avec')
@@ -1024,6 +1234,9 @@ class Columns(QObject):
     def eventFilter(self, obj, ev) -> bool:              # noqa: N802 (API Qt)
         t = ev.type()
         if obj is self.win:
+            if t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease) \
+                    and ev.button() == Qt.MouseButton.LeftButton:
+                self._sep_down = t == QEvent.Type.MouseButtonPress   # (un séparateur tiré : `_hand_check`)
             if t == QEvent.Type.ChildAdded and not self._scan_due:
                 self._scan_due = True
                 QTimer.singleShot(0, self._scan)
@@ -1034,6 +1247,13 @@ class Columns(QObject):
         if isinstance(obj, QDockWidget):
             if t in (QEvent.Type.Resize, QEvent.Type.Show):
                 self._place_grip(obj)                    # la poignée reste dans le coin
+            if obj is getattr(self.win, 'dock_program_text', None):
+                if t == QEvent.Type.HideToParent and obj.isHidden() and not obj.isWindow():
+                    self._text_closed(obj)               # sa colonne rétrécit d'autant (demande du 25/11)
+                elif t == QEvent.Type.Show:
+                    self._text_opened(obj)               # elle s'élargit d'autant
+            elif t == QEvent.Type.Resize:
+                self._hand_check(obj)                    # une voisine du texte fermé réglée à la souris ?
             if t == QEvent.Type.HideToParent and obj.isHidden() and not obj.isWindow():
                 # fermé ancré, fenêtre montrée ou non (pas la fenêtre réduite ; pas détaché : Qt masque aussi un
                 # panneau qu'on repose à la souris, ou qu'on ancre de nouveau, pendant qu'il est encore une fenêtre)
@@ -1057,8 +1277,151 @@ class Columns(QObject):
 
     def settle_all(self) -> None:
         try:
+            self._regroup_once()
             for side in SIDES:
                 self.settle(side)
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            pass
+
+    def _regroup_once(self) -> None:
+        """Une fois par poste, à la première fenêtre montrée (round 1162) : les panneaux montrés restés seuls hors
+        des onglets sans y avoir été rangés — une disposition d'avant, une session où ils s'empilaient — prennent leur
+        onglet dans le groupe de leur colonne. Une colonne rangée côte à côte à la souris est laissée."""
+        st = self._st()
+        if str(st.value(REGROUPED_KEY, '')).lower() in ('1', 'true') or not self.win.isVisible() \
+                or self.win.isMinimized():
+            return
+        self.free_program()                              # la colonne Datron encore en onglet : sortie d'abord
+        for side in SIDES:
+            blocks = self.blocks(side)
+            if len(blocks) > 1 and not self._side_by_side([b for b in blocks if self.host_ok(b)]):
+                self.regroup([b[0] for b in blocks if len(b) == 1])
+        st.setValue(REGROUPED_KEY, True)
+
+    # --- le texte du programme fermé : sa colonne rétrécit d'autant (demande du 25/11) -------------------------------
+    def _widths(self, side: str, without=None) -> list:
+        """[(panneau, largeur)] : un panneau montré devant par colonne de panneaux côte à côte, du côté `side`."""
+        out, xs = [], []
+        for d in self.column(side):
+            if d is without or d.isHidden() or not self.in_front(d):
+                continue
+            x = d.mapTo(self.win, QPoint(0, 0)).x()
+            if any(abs(x - o) <= 2 for o in xs):
+                continue
+            xs.append(x)
+            out.append((d, d.width()))
+        return out
+
+    def _text_closed(self, dock) -> None:
+        """Le texte du programme fermé dans sa colonne (sa croix, l'œil, la fenêtre Programme fermée, plus de
+        parties de plugin…) : les colonnes voisines gardent leur largeur, le dessin gagne la sienne ; retenu pour la
+        réouverture. Rien pendant une disposition refaite par nous (la colonne cachée, l'onglet CAD) ni pendant que le
+        programme va au centre (▣ : il en revient à la même largeur) ; détaché, rien ne bouge."""
+        w, self._sep_down = self.win, False              # (un appui resté sans relâchement : plus compté)
+        try:
+            if not w.isVisible() or w.isMinimized():
+                return
+        except RuntimeError:
+            return
+        side = self.side(dock)
+        if side is None:
+            return
+        keep = self._widths(side, without=dock)          # (lues avant que Qt ne leur donne sa place)
+        shrink = not (self._busy or self._settling or getattr(w, '_program_moving', False))
+        span = (dock.mapTo(w, QPoint(0, 0)).x(), dock.width())
+        central = w.centralWidget()
+        floor = min(DRAWING_MIN, central.width()) if central is not None else 0   # le dessin, au moins, rouvert
+        dock._vd_room = (dock.width(), keep, shrink, floor)
+        # les largeurs laissées par `_shrink` ; sans rétrécir, celles d'à présent (un réglage à la souris d'ici la
+        # réouverture n'est pas écrasé)
+        dock._vd_after = None if shrink else {id(d): wd for d, wd in keep}
+        if shrink:
+            QTimer.singleShot(0, lambda: self._shrink(dock, span, keep))
+
+    def _gap(self) -> int:
+        """La largeur d'un séparateur entre deux colonnes de panneaux (px)."""
+        from PySide6.QtWidgets import QStyle
+        return self.win.style().pixelMetric(QStyle.PixelMetric.PM_DockWidgetSeparatorExtent, None, self.win)
+
+    def _shrink(self, dock, span, keep) -> None:
+        """Les colonnes du côté du texte fermé à leur largeur d'avant : celle lue à la fermeture, sinon (un onglet
+        venu devant entre-temps) celle d'à présent moins la place du texte, pour la colonne qui l'a prise."""
+        try:
+            if not dock.isHidden():                      # rouvert entre-temps
+                return
+            w = self.win
+            w.layout().activate()                        # les places d'après la fermeture
+            known = {id(d): wd for d, wd in keep}
+            x, width = span
+            docks, widths = [], []
+            for d, now in self._widths(self.side(dock) or '', without=dock):
+                at = d.mapTo(w, QPoint(0, 0)).x()
+                if id(d) in known:
+                    want = known[id(d)]
+                elif at <= x + width and at + now >= x:  # elle a pris la place du texte
+                    want = now - width - self._gap()
+                else:
+                    want = now
+                docks.append(d)
+                widths.append(max(1, want))
+            if docks:
+                w.resizeDocks(docks, widths, Qt.Orientation.Horizontal)
+                w.layout().activate()
+                dock._vd_after = {id(d): d.width() for d in docks}
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            pass
+
+    def _hand_check(self, dock) -> None:
+        """Le texte du programme fermé : une voisine qui change de largeur pendant qu'un séparateur de colonnes est
+        tiré à la souris (bouton appuyé sur la fenêtre elle-même) — la largeur retenue est oubliée, sa réouverture
+        laisse Qt faire sa place ; venu de Qt (autre panneau, fenêtre), sa nouvelle largeur est suivie. Lu à la
+        volée : à la réouverture, Qt a déjà repris de la place aux voisines."""
+        text = getattr(self.win, 'dock_program_text', None)
+        after = getattr(text, '_vd_after', None) if text is not None else None
+        if not after or id(dock) not in after or self._busy or self._settling \
+                or getattr(self.win, '_program_moving', False):
+            return
+        try:
+            if not text.isHidden() or dock.isHidden() or dock.isFloating():
+                return
+            if not getattr(self, '_sep_down', False):
+                after[id(dock)] = dock.width()           # venu de Qt : suivi
+            elif abs(dock.width() - after[id(dock)]) > 4:
+                text._vd_room = text._vd_after = None    # à la souris : oubliée
+        except RuntimeError:                             # fenêtre détruite entre-temps
+            pass
+
+    def _text_opened(self, dock) -> None:
+        """Le texte du programme rouvert dans sa colonne : la largeur qu'il avait, les voisines la leur — la colonne
+        s'élargit d'autant, le dessin gardant au moins `DRAWING_MIN` (ou la largeur qu'il avait, moindre) ; revenu
+        sans avoir rétréci la colonne (▣, la colonne cachée), les largeurs d'avant sa fermeture. Une largeur réglée à
+        la souris entre-temps : rien de retenu, Qt fait sa place."""
+        self._sep_down = False                           # (un appui resté sans relâchement : plus compté)
+        room, dock._vd_room = getattr(dock, '_vd_room', None), None
+        after, dock._vd_after = getattr(dock, '_vd_after', None), None
+        if room is None or dock.isFloating():
+            return
+        width, keep, shrunk, floor = room
+        side = self.side(dock)
+        if shrunk and side is not None:                  # les voisines à leur largeur d'avant la réouverture (suivie
+            keep = [(d, (after or {}).get(id(d), wd))    # par `_hand_check` : Qt leur reprend déjà de la place)
+                    for d, wd in self._widths(side, without=dock)]
+        QTimer.singleShot(0, lambda: self._widen(dock, width, keep, floor))
+
+    def _widen(self, dock, width, keep, floor) -> None:
+        w = self.win
+        try:
+            if dock.isHidden() or dock.isFloating() or not w.isVisible():
+                return
+            side = self.side(dock)
+            live = [(d, wd) for d, wd in keep if not d.isHidden() and not d.isFloating() and self.side(d) == side]
+            w.layout().activate()                        # les largeurs données par Qt à la réouverture
+            grow = width + sum(wd for _d, wd in live) - dock.width() - sum(d.width() for d, _w in live)
+            central = w.centralWidget()
+            free = (central.width() if central is not None else 0) - floor
+            if grow > free:                              # le dessin garde son minimum
+                width = max(dock.minimumSizeHint().width(), width - (grow - free))
+            w.resizeDocks([dock] + [d for d, _w in live], [width] + [wd for _d, wd in live], Qt.Orientation.Horizontal)
         except RuntimeError:                             # fenêtre détruite entre-temps
             pass
 
@@ -1124,6 +1487,8 @@ class Columns(QObject):
                 if not d.isFloating() and d.objectName() in front:
                     d.raise_()
         self._quiet(do)
+        if self.regroup(back):                           # revenus seuls hors des onglets : leur onglet (25/11)
+            self._quiet(lambda: [d.raise_() for d in back if not d.isFloating() and d.objectName() in front])
 
 
 #: les trois places d'un panneau (demande du 15/11, 19 h 35) : clé, libellé, bulle

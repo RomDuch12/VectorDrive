@@ -70,11 +70,14 @@ class LooseRows(unittest.TestCase):
         self.assertIn('TypeEdit', self.cell(2, 1))
         self.assertEqual(self.cell(2, 3), '0.3')
         self.assertTrue(p.ops.item(2, 0).font().italic())
-        self.assertFalse(p.ops.item(2, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertTrue(p.ops.item(2, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable)    # marche/arrêt (1163)
         self.assertIs(p.ops.item(3, p.EYE_COL).data(Qt.ItemDataRole.UserRole), True)   # son œil, ouvert
         p.toggle_op_paths(3)                                                     # l'œil : caché
         self.assertFalse(p.toolpaths[3].shown)
         self.assertIs(p.ops.item(3, p.EYE_COL).data(Qt.ItemDataRole.UserRole), False)
+        self.assertIn(p.toolpaths[3], p.checked_paths())                         # caché : au programme (1163)
+        p.ops.item(3, 0).setCheckState(Qt.CheckState.Unchecked)                  # son bouton marche/arrêt
+        self.assertFalse(p.toolpaths[3].on)
         self.assertNotIn(p.toolpaths[3], p.checked_paths())
         p.refresh()                                                              # le réglage relu : elles restent
         self.assertEqual(p.ops.rowCount(), 4)

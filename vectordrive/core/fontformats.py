@@ -28,6 +28,7 @@ class FontFormat:
     dirs: tuple = ()                                 # dossiers où chercher ses polices
     clonable: bool = False                           # l'éditeur de polices peut partir d'elles
     reader: str = ''                                 # le lecteur (module et version du plugin) : changé, l'inventaire est refait
+    filter_label: str = ''                           # libellé court de son filtre dans la liste des polices (« TypeEdit »)
 
 
 #: extension → format
@@ -58,6 +59,24 @@ def of(path) -> FontFormat | None:
 def registered() -> list:
     """Les formats enregistrés, chacun une fois."""
     return list({id(f): f for f in FORMATS.values()}.values())
+
+
+def group_of_file(path) -> str:
+    """Le libellé du filtre (« TypeEdit ») du format qui a le sien et dont un dossier contient ce fichier (une police
+    TrueType livrée avec ses polices), sinon ''. Chemins comparés en texte : aucun accès au disque."""
+    import os
+    try:
+        p = os.path.normcase(os.path.abspath(str(path)))
+    except (TypeError, ValueError):
+        return ''
+    for fmt in registered():
+        if not fmt.filter_label:
+            continue
+        for d in fmt.dirs:
+            k = os.path.normcase(os.path.abspath(str(d))).rstrip('\\/')
+            if p.startswith(k + os.sep):
+                return fmt.filter_label
+    return ''
 
 
 #: métriques d'une police dont le lecteur est en défaut : hauteur 1, boîte 1,25 / 0,75 (le texte reste)

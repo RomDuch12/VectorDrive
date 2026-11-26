@@ -69,7 +69,7 @@ class OneTable(Base):
         p.ops.cellClicked.emit(1, p.EYE_COL)                                 # un clic sur l'œil : parcours caché
         self.assertEqual([tp.shown for tp in p.toolpaths], [True, False])
         self.assertEqual([self.eye(0), self.eye(1)], [True, False])
-        self.assertEqual([tp.name for tp in p.checked_paths()], ['Un'])      # ni dessiné, ni écrit
+        self.assertEqual([tp.name for tp in p.checked_paths()], ['Un', 'Deux'])   # caché : écrit (1163)
         p.ops.cellClicked.emit(1, 0)                                         # un clic ailleurs sur la ligne : rien
         self.assertEqual(self.eye(1), False)
         p.ops.cellClicked.emit(1, p.EYE_COL)

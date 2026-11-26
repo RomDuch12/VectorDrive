@@ -171,7 +171,7 @@ class TestWindow(unittest.TestCase):
         tps = cp.compute()
         side = next(tp for tp in tps if self.names([tp]) == ['Côté'])
         x0 = min(m.x for m in side.moves)
-        cp.toolpaths[0].shown = False                                            # « Un » décoché
+        cp.toolpaths[0].on = False                                               # « Un » arrêté (1163)
         doc.plate = Plate(x=0, y=0, width=200, height=100)                     # comme apply_plate :
         self.assertEqual(S2.follow(doc), 1)                                      # la surface suit tout de suite
         out = cp.current_paths()

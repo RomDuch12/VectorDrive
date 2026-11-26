@@ -103,6 +103,39 @@ class ProofInfo:
     image_dpi: int = 300             # résolution de cette image (points par pouce)
     open_folder: bool = False        # après l'écriture du PDF : son dossier ouvert, le fichier montré
 
+#: champs du cartouche propres au dessin (round 1160, demande « BaT ne pas garder en mémoire champs clients et ref (sauf
+#: si plusieurs édition de bat dans un même fichier) car user doit choisir dans carnet client ») : jamais dans les
+#: réglages ; gardés dans le dessin (`doc.extra[DOC_KEY]`) pour sa prochaine édition du BAT. `logo2` : le logo du
+#: client (second logo de l'en-tête), posé par le choix dans le carnet
+DOC_FIELDS = ('client', 'reference', 'designation', 'material', 'bat_number', 'logo2')
+DOC_KEY = 'bat'
+
+
+def doc_fields(doc) -> dict:
+    """Champs du cartouche du dernier BAT édité de ce dessin ({} : aucun BAT encore)."""
+    kept = doc.extra.get(DOC_KEY) if isinstance(getattr(doc, 'extra', None), dict) else None
+    return {k: str(kept[k]) for k in DOC_FIELDS if isinstance(kept, dict) and kept.get(k) is not None}
+
+
+def keep_doc_fields(doc, info) -> bool:
+    """Les champs du cartouche de `info` gardés dans le dessin (rien si tous sont vides) ; rend vrai s'ils ont
+    changé. La matière de la plaque, que le BAT reprend d'office, n'est pas gardée : le cartouche la reprend de la
+    plaque, et elle seule ne rend pas le cartouche « rempli »."""
+    if not isinstance(getattr(doc, 'extra', None), dict):
+        return False
+    new = {k: str(getattr(info, k) or '') for k in DOC_FIELDS}
+    plate = getattr(doc, 'plate', None)
+    if plate is not None and new['material'] == str(getattr(plate, 'material', '') or ''):
+        new['material'] = ''
+    if not any(v for k, v in new.items() if k != 'bat_number') and new['bat_number'] in ('', '1'):
+        # cartouche vide (le n° d'office n'y compte pas) : rien à garder, ni compagnon pour lui
+        return doc.extra.pop(DOC_KEY, None) is not None
+    if doc.extra.get(DOC_KEY) == new:
+        return False
+    doc.extra[DOC_KEY] = new
+    return True
+
+
 LAYOUT_FIELDS = ('content', 'fit_selection', 'page', 'orientation', 'scale_mode', 'scale', 'margin',
                  'title_block', 'dims', 'legend', 'mono', 'enlarge_below', 'enlarge', 'fill', 'dims_each', 'prices',
                  'company', 'logo', 'fill_mode', 'title_color', 'theme_all', 'decimals', 'keep_zeros', 'logo2',

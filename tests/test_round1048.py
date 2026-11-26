@@ -132,7 +132,7 @@ class Folding(unittest.TestCase):
         self.assertIsNotNone(fold, 'avant : le texte d’aide de la palette ne se replie pas')
         self.addCleanup(self.w.settings.remove, 'fao/palette/aide_repliee')
         full = pal.hint.text()
-        self.assertIn('Un clic sur un parcours', full)
+        self.assertIn('Un double clic sur un parcours', full)               # round 1163
         tall = pal.hint.heightForWidth(250)
         self.assertEqual(pal.hint_fold.text(), '▾')
         pal.hint_fold.click()

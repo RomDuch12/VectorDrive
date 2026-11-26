@@ -520,6 +520,8 @@ FIXED_KEYS = (
     ('Mode Point', '−, Suppr, Retour arrière', 'Supprimer les points choisis'),
     ('Ruban', 'Maj + clic droit sur un bouton', 'Le menu du bouton (favoris, onglets à soi, mode simple), même pour '
                                                 'un outil qui a ses réglages au clic droit'),
+    ('Liste des parcours du panneau FAO', 'Ctrl + Espace', 'Mettre en marche ou arrêter le parcours choisi (dans '
+                                                           'le programme ou non) ; Espace : son œil'),
 )
 
 #: vues de la table des commandes : clé → libellé
@@ -535,7 +537,7 @@ FIXED_SEQS = {
     'Shift+Down': 'Maj + flèches', 'Ctrl+Left': 'Ctrl + flèche', 'Ctrl+Right': 'Ctrl + flèche',
     'Ctrl+Up': 'Ctrl + flèche', 'Ctrl+Down': 'Ctrl + flèche', 'Esc': 'Échap', 'Return': 'Entrée',
     'Enter': 'Entrée', 'Backspace': 'Retour arrière', 'Tab': 'Tab', 'Shift+Tab': 'Maj + Tab', 'Shift+Backtab': 'Maj + Tab',
-    'Ctrl+Return': 'Ctrl + Entrée', '+': '+', '-': '−', 'Del': 'Suppr',
+    'Ctrl+Return': 'Ctrl + Entrée', '+': '+', '-': '−', 'Del': 'Suppr', 'Ctrl+Space': 'Ctrl + Espace',
 }
 
 

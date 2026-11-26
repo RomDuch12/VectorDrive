@@ -31,16 +31,22 @@ table d'outils, calques, objets : `differences`). À l'ouverture : fichier
 inchangé (même empreinte) — le dessin VectorDrive entier du compagnon est
 repris ; fichier retouché ailleurs — il fait foi, et seuls le réglage FAO,
 les guides et l'état des calques sont repris.
+
+Une origine posée (`doc.extra['origine']`) devient le zéro du VND
+(`vnd_write.at_origin`), pas celui du compagnon : à la relecture, le dessin
+du VND est remis dans le repère de VectorDrive (+origine) avant d'y reprendre
+le compagnon — même dessin, même origine, et le VND réécrit au même endroit.
 """
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import hashlib
 import json
 import pathlib
 import zipfile
 
-from ..core.document import Document, Group, Text
+from ..core.document import Document, Group, Image, Text
 from . import native
 
 LINK = 'compagnon.json'
@@ -111,12 +117,46 @@ def rich(it, native: tuple = NATIVE) -> bool:
     paramétrique (réglages dans `extra`), ou groupe qui en contient. `native` : les réglages qui ne comptent pas."""
     if (it.extra or {}).get('vnd_obj') is not None:
         return False                                  # objet TypeEdit d'origine : le VND le garde
-    if isinstance(it, Text):
+    if isinstance(it, Text) or (isinstance(it, Image) and image_rich(it)):
         return True
     if any(not k.startswith('vnd') and k not in native and v not in (None, '', [], {})
            for k, v in (it.extra or {}).items()):
         return True
     return isinstance(it, Group) and any(rich(c, native) for c in it.children)
+
+
+def image_rich(it) -> bool:
+    """Image que le VND ne rend pas telle quelle (round 1160) : tournée ou inclinée (TypeEdit la pose droite), ou
+    transparente (le VND l'écrit en DIB sur fond blanc). Seulement retournée : le VND garde le signe de sa largeur et
+    de sa hauteur (`vnd_write._vnimage`, relu tel quel), elle n'en a pas besoin."""
+    m = it.matrix
+    if abs(m.b) > 1e-9 or abs(m.c) > 1e-9:
+        return True
+    data = it.data or b''
+    if it.fmt != 'png' or data[:8] != b'\x89PNG\r\n\x1a\n' or len(data) < 26:
+        return False
+    idat = data.find(b'IDAT')
+    if data[25] not in (4, 6) and b'tRNS' not in data[:idat if idat > 0 else 64]:
+        return False                                     # ni canal alpha ni couleur transparente
+    return _see_through(bytes(data))
+
+
+@functools.lru_cache(maxsize=32)
+def _see_through(data: bytes) -> bool:
+    """Un PNG à canal alpha (ou à couleur transparente) a-t-il un pixel qui n'est pas tout à fait opaque ? (Un PNG
+    RGBA entièrement opaque passe dans le VND sans perte.) Illisible ici : oui, dans le doute."""
+    import numpy as np
+    from PySide6.QtGui import QImage
+    from .raster import _app
+    _app()
+    q = QImage.fromData(data, 'PNG')
+    if q.isNull():
+        return True
+    if not q.hasAlphaChannel():
+        return False
+    q = q.convertToFormat(QImage.Format.Format_Alpha8)
+    px = np.frombuffer(q.constBits(), np.uint8, count=q.sizeInBytes()).reshape(q.height(), q.bytesPerLine())
+    return bool((px[:, :q.width()] != 255).any())
 
 
 def only_coloured(it) -> bool:
@@ -139,13 +179,20 @@ def reasons(doc: Document) -> list[str]:
         out.append('données VectorDrive (' + ', '.join(sorted(extra)) + ')')
     texts = sum(1 for L in doc.layers for it in L.items if isinstance(it, Text))
     coloured = sum(1 for L in doc.layers for it in L.items if only_coloured(it))
-    others = sum(1 for L in doc.layers for it in L.items if rich(it) and not isinstance(it, Text)) - coloured
+    pictures = sum(1 for L in doc.layers for it in L.items if isinstance(it, Image) and image_rich(it))
+    others = sum(1 for L in doc.layers for it in L.items
+                 if rich(it) and not isinstance(it, Text)) - coloured - pictures
+    if pictures:
+        out.append(f'{pictures} image(s) tournée(s) ou transparente(s)')
+    grouped = any(isinstance(x, Image) and image_rich(x) for L in doc.layers for it in L.items
+                  if isinstance(it, Group) for x in _walk(it.children))
     if texts:
         out.append(f'{texts} texte(s) modifiable(s)')
     if coloured:
         out.append(f'{coloured} contour(s) de couleur propre')
     if others:
-        out.append(f'{others} objet(s) paramétrique(s) ou groupe(s) avec textes')
+        out.append(f'{others} objet(s) paramétrique(s) ou groupe(s) avec textes'
+                   + (' ou images' if grouped else ''))
     if any(not L.visible or L.locked for L in doc.layers):
         out.append('calques masqués ou verrouillés')
     from ..core import surface2d
@@ -345,6 +392,9 @@ def apply(doc: Document, vnd_path) -> list[str]:
         return [f'{cp.name} accompagne {link.get("fichier")}, pas ce VND : ignoré']
     if not te_native(vnd_path):
         return _apply_foreign(doc, vnd_path, cp, link, comp)
+    shift = _origin_shift(comp.extra)                    # le zéro du VND est l'origine du dessin : on y revient
+    if shift and not (isinstance(doc.extra, dict) and 'origine' in doc.extra):     # (pas deux fois)
+        _to_drawing(doc, shift)                          # dès lors, VND relu et compagnon dans le même repère
     held = _held_plates(comp, link)                      # plaques de reprise : le VND ne les a pas reçues
     comp.layers = [C for C in comp.layers if not any(C is P for _i, P in held)]
     msgs = []
@@ -357,19 +407,22 @@ def apply(doc: Document, vnd_path) -> list[str]:
     real = {k: (p['original'] if p['sorte'] == 'devant' else p['copie']) for k, p in info.items()
             if p['sorte'] in ('devant', 'derriere')}     # écrits montré / caché : leur état à eux est dans le compagnon
     order = _in_vnd_order(doc.layers, written, ordre)
+    same = _sha(vnd_path) == link.get('sha256')          # le VND tel qu'il a été écrit (pas retouché dans TypeEdit)
+    twins = _twins(doc.layers, written, ordre if same else None, order)     # noms en double, ordre pas sûr
+    if twins:                                            # dit dans les remarques de l'ouverture, sans fenêtre
+        msgs.append(f'calque(s) de même nom ({", ".join(sorted(twins))}) : rien n\'en est repris du compagnon '
+                    '(ordre des calques non vérifiable) — renommer les calques')
     if len(written) == len(doc.layers):
         for L, C in zip(doc.layers, (written[i] for i in order)):
-            if L.name != C.name:                         # pas le même calque (ordre pas retrouvé) : rien n'en est repris
-                continue
+            if L.name != C.name or L.name in twins:      # pas sûrement le même calque : rien n'en est repris (ni son
+                continue                                 # état, ni son id : les opérations FAO le désignent)
             R = real.get(id(C), C)
             L.visible, L.locked = R.visible, R.locked
-            if L.name == C.name:                         # même calque : son id (rattachements FAO) et ses données
-                if doc.active == L.id:                   # (surface posée…), le VND ne les a pas
-                    doc.active = C.id
-                L.id = C.id
-                L.extra = {**R.extra, **L.extra}
-                _outlines(L, C)
-    same = _sha(vnd_path) == link.get('sha256')
+            if doc.active == L.id:                       # même calque : son id (rattachements FAO) et ses données
+                doc.active = C.id                        # (surface posée…), le VND ne les a pas
+            L.id = C.id
+            L.extra = {**R.extra, **L.extra}
+            _outlines(L, C)
     n = 0
     back, hid = {}, {}
     if same and len(written) == len(doc.layers):
@@ -386,6 +439,8 @@ def apply(doc: Document, vnd_path) -> list[str]:
                 hid[id(L)] = (p['copie'], C)             # sa copie cachée, pas écrite : elle revient aussi
             if L.name != C.name or len(L.items) != len(C.items) or (k < len(counts) and counts[k] != len(C.items)):
                 continue                                 # jamais les objets d'un calque dans un autre
+            if L.name in twins or not all(_written(it) for it in C.items):
+                continue                                 # nom en double, objet masqué (pas écrit) : rangs douteux
             for it, cit in zip(L.items, C.items):
                 _copy_ids(it, cit)                       # les opérations FAO désignent les objets par leur id
             for i in (wanted[k] if k < len(wanted) else []):
@@ -406,6 +461,8 @@ def apply(doc: Document, vnd_path) -> list[str]:
                 else:
                     out.append(L)
             doc.layers[:] = out
+    if same:                                             # images : le VND écrit un calque par outil (round 1160)
+        n += _images_back(doc, written, ordre, twins)
     kept = ', '.join(link.get('raisons') or [])
     if same:
         more = []
@@ -425,6 +482,163 @@ def apply(doc: Document, vnd_path) -> list[str]:
     return msgs
 
 
+def _images_back(doc: Document, comp_layers: list, ordre: str | None, cited=frozenset()) -> int:
+    """Les images que le VND a dégradées (tournées, inclinées, transparentes : `image_rich`) reprises du compagnon
+    (round 1160), calque par calque : les calques du compagnon partagés comme à l'écriture (un calque TypeEdit par
+    outil, `vnd_write._tool_layers` : « nom (n° d'outil) ») et remis dans l'ordre du VND (`_in_vnd_order`) ; un calque
+    du VND prend les images du sien s'ils ont le même nom et autant d'images, une à une dans l'ordre (matrice et
+    pixels ; côté compagnon, seulement les images écrites : visibles, dans des groupes visibles). Une image déjà
+    reprise du compagnon (rang des objets) n'est pas retouchée ; dans le doute (nombre de calques, noms différents ou
+    en double, nombre d'images différent), rien n'est remplacé ; ni d'un calque cité dans la remarque des noms en
+    double d'`apply` (`cited`), même partagé par outil. Rend leur nombre."""
+    from .vnd_write import _tool_layers
+    subs = [L for L, _tool in _tool_layers(comp_layers)]
+    if len(subs) != len(doc.layers):
+        return 0
+    order = _in_vnd_order(doc.layers, subs, ordre)
+    twins = _twins(doc.layers, subs, ordre, order)       # l'ordre direct seulement, comme dans `apply`
+    skip = {C.id for C in comp_layers if C.name in cited}   # un calque partagé garde l'id du sien
+    from_comp = {id(it) for C in subs for it in _walk(C.items) if isinstance(it, Image)}
+    n = 0
+    for L, k in zip(doc.layers, order):
+        C = subs[k]
+        mine = [it for it in _walk(L.items) if isinstance(it, Image)]
+        theirs = [it for it in _walk_written(C.items) if isinstance(it, Image)]
+        if L.name != C.name or L.name in twins or C.id in skip or len(mine) != len(theirs):
+            continue                                     # jamais les images d'un calque dans un autre
+        for a, b in zip(mine, theirs):
+            if id(a) in from_comp or not image_rich(b):
+                continue
+            if a.data != b.data or a.matrix != b.matrix:
+                a.data, a.fmt, a.matrix = b.data, b.fmt, b.matrix
+                n += 1
+    return n
+
+
+def _written(it) -> bool:
+    """L'objet est-il écrit dans le VND (`vnd_write._zone`) : visible, et pour un groupe au moins un enfant écrit
+    (ou zone vide de la source) ; un objet TypeEdit d'origine (`vnd_obj` : texte, trou, solide, point ou axe de
+    construction, sans enfants) est réécrit tel quel — dans le compagnon la clé reste, à None ; déplacé ou retouché
+    (`vnd_moved`), il est redessiné, ou réécrit translaté (`vnd_shift`) : compté écrit de même ; une image sans données
+    ne l'est pas (round 1160)."""
+    if not getattr(it, 'visible', True):
+        return False
+    if isinstance(getattr(it, 'extra', None), dict) and 'vnd_obj' in it.extra:
+        return True
+    if isinstance(it, Group):
+        return any(_written(c) for c in it.children) or bool((it.extra.get('vnd') or {}).get('empty_zone'))
+    return not isinstance(it, Image) or bool(it.data)
+
+
+def _walk_written(items):
+    """Comme `_walk`, sans les objets que le VND n'écrit pas (masqués, ou dans un groupe masqué)."""
+    for it in items:
+        if _written(it):
+            yield it
+            yield from _walk_written(getattr(it, 'children', ()) or ())
+
+
+def _origin_shift(extra) -> tuple[float, float] | None:
+    """L'origine posée (`doc.extra['origine']`) dont l'écriture a fait le zéro du VND (`vnd_write.at_origin`) ; le
+    compagnon, lui, reste dans le repère du dessin. None : pas d'origine, posée au zéro, ou invalide (NaN, infinie,
+    hors bornes : écartée par `vnd_write.clean_document`, le VND n'a pas été décalé)."""
+    from .vnd_write import _point_ok
+    o = extra.get('origine') if isinstance(extra, dict) else None
+    try:
+        if not o or not _point_ok(o):
+            return None
+        x, y = float(o[0]), float(o[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    return (x, y) if abs(x) >= 1e-9 or abs(y) >= 1e-9 else None   # les seuils de `at_origin`
+
+
+def _to_drawing(doc: Document, o: tuple[float, float]) -> None:
+    """Le dessin relu d'un VND écrit avec l'origine `o` pour zéro, remis dans le repère de VectorDrive (+o) :
+    objets (un objet TypeEdit d'origine cumule la translation, `vnd_write.source_object`), plaque, page. À
+    l'enregistrement suivant, `at_origin` le redécale de −o : le VND est réécrit au même endroit."""
+    import dataclasses
+    from ..core.geom import Affine
+    m = Affine.translation(o[0], o[1])
+    for L in doc.layers:
+        L.items = [it.transformed(m) for it in L.items]
+    if doc.plate is not None:
+        doc.plate = dataclasses.replace(doc.plate, x=doc.plate.x + o[0], y=doc.plate.y + o[1])
+    page = doc.extra.get('page_mm') if isinstance(doc.extra, dict) else None
+    if page and len(page) == 6:                          # VND sans réglages : la page de travail (x0, y0, z0, x1…)
+        doc.extra['page_mm'] = (page[0] + o[0], page[1] + o[1], page[2], page[3] + o[0], page[4] + o[1], page[5])
+
+
+BOX_TOL = 0.05                                           # mm : boîtes d'un objet relu du VND et de son modèle
+
+
+def _same_kinds(L, C) -> bool:
+    """Le calque relu du VND a-t-il, rang pour rang, des objets de même nature (image ou non) que ceux que le VND a
+    reçus du calque du compagnon (ses objets écrits, `_written`) ? Le même nombre, donc."""
+    return [isinstance(it, Image) for it in L.items] == [isinstance(it, Image) for it in C.items if _written(it)]
+
+
+def _box(it):
+    try:
+        b = it.bbox()
+    except Exception:                                    # noqa: BLE001 — chemin vide… : pas de boîte
+        return None
+    return tuple(float(v) for v in b) if b else None
+
+
+def _same_boxes(L, C) -> bool:
+    """Rang pour rang, les objets du calque relu (sauf les images, que le VND dégrade) ont-ils la boîte englobante,
+    à `BOX_TOL` près, des objets écrits du calque du compagnon ? Origine posée ou non : `apply` a remis le dessin
+    relu dans le repère du compagnon (`_to_drawing`)."""
+    for a, b in zip(L.items, [it for it in C.items if _written(it)]):
+        if isinstance(a, Image) or isinstance(b, Image):
+            continue
+        p, q = _box(a), _box(b)
+        if (p is None) != (q is None) or (p and any(abs(u - v) > BOX_TOL for u, v in zip(p, q))):
+            return False
+    return True
+
+
+def _verified(layers: list, comp_layers: list, order: list | None, names: set) -> bool:
+    """L'ordre refait des calques en ordre 'premier' se vérifie-t-il pour les calques jumeaux (`names`) ? Seulement
+    s'il est l'ordre que l'écriture donne directement aux calques du compagnon (`vnd_write.write_order`), jamais
+    retrouvé par le repli de `_in_vnd_order` (rotations, rang pour rang) : `_written` peut compter écrit un objet que
+    le VND n'écrit pas (texte vide, chemin vide, image que `to_dib` refuse), et les noms y collent par hasard. Puis
+    chaque calque jumeau du VND a les objets du sien : même nombre et même nature (`_same_kinds`), mêmes boîtes
+    (`_same_boxes`, toujours : avec une origine posée aussi, le dessin relu étant remis dans le repère du dessin)."""
+    from . import vnd_write
+    if order is None or not len(order) == len(layers) == len(comp_layers):
+        return False
+    try:
+        direct = vnd_write.write_order(comp_layers, lambda C: any(_written(it) for it in C.items), True)
+    except Exception:                                    # noqa: BLE001 — compagnon abîmé : pas vérifié
+        return False
+    if list(order) != list(direct):
+        return False
+    return all(L.name == comp_layers[k].name and _same_kinds(L, comp_layers[k])
+               and _same_boxes(L, comp_layers[k]) for L, k in zip(layers, order) if L.name in names)
+
+
+def _twins(layers: list, comp_layers: list, ordre: str | None, order: list | None = None) -> set:
+    """Noms de calque en double, dans le VND relu ou dans le compagnon (round 1160) : l'ordre retrouvé ne se vérifie
+    pas par le nom, rien n'est repris de ces calques (ni objets, ni images, ni leur état). En ordre 'dessin' (réglage
+    d'office), l'écriture garde l'ordre du dessin (`vnd_write.write_order` : l'identité) : le calque k du VND est à
+    coup sûr le calque k du compagnon, aucun n'est écarté. Cette certitude ne vaut que pour le VND tel qu'il a été
+    écrit (même empreinte) : retouché dans TypeEdit, `apply` passe `ordre` à None et la règle s'applique. En ordre
+    'premier' (VND tel qu'écrit), aucun n'est écarté si l'ordre refait (`order`) se vérifie (`_verified` : l'ordre
+    direct de l'écriture, et les contenus des calques jumeaux ; round 989 : deux « Plan », le premier masqué). Compagnon
+    sans ordre (d'avant 0.956) : la règle, toujours."""
+    if ordre == 'dessin':
+        return set()
+    out = set()
+    for group in (layers, comp_layers):
+        names = [L.name for L in group]
+        out |= {n for n in names if names.count(n) > 1}
+    if out and ordre == 'premier' and _verified(layers, comp_layers, order, out):
+        return set()                                     # ordre refait vérifié par les contenus
+    return out
+
+
 def _in_vnd_order(layers: list, comp_layers: list, ordre: str | None = None) -> list[int]:
     """Rang dans le compagnon (ses calques tels que le VND les a écrits) de chaque calque relu du VND. On refait sur
     le compagnon l'ordre que l'écriture a donné (`ordre` du lien : 'dessin' — l'ordre du dessin, 'premier' — le premier
@@ -437,7 +651,8 @@ def _in_vnd_order(layers: list, comp_layers: list, ordre: str | None = None) -> 
         return k
     from . import vnd_write
     try:                                                 # l'ordre que l'écriture a donné à ces calques
-        order = (vnd_write.write_order(comp_layers, None, ordre == 'premier') if ordre in ('dessin', 'premier')
+        order = (vnd_write.write_order(comp_layers, lambda C: any(_written(it) for it in C.items),
+                                       ordre == 'premier') if ordre in ('dessin', 'premier')
                  else list(vnd_write.layer_order(comp_layers)[0]))
     except Exception:                                    # noqa: BLE001 — compagnon abîmé : les essais d'après
         order = []

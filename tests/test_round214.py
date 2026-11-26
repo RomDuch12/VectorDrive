@@ -138,8 +138,10 @@ class TestWindows(unittest.TestCase):
             with self.subTest(fenetre=d.windowTitle()):
                 # rien ne défile, sauf si l'écran (800 px hors écran, polices factices) est atteint
                 self.assertTrue(fit.overflow(d) == 0 or d.width() >= limit - 2)
-                # jamais poussée au-delà de l'écran (sa largeur minimale mise à part)
-                self.assertLessEqual(d.width(), max(limit + 2, d.minimumSizeHint().width()))
+                # jamais poussée au-delà de l'écran (sa largeur minimale mise à part) ; F10 s'ouvre maximisée
+                # (round 1161) : c'est sa taille normale, celle de la fenêtre restaurée, qui ne doit pas dépasser
+                width = d.normalGeometry().width() if d.isMaximized() else d.width()
+                self.assertLessEqual(width, max(limit + 2, d.minimumSizeHint().width()))
             d.close()
             d.deleteLater()
 

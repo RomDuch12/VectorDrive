@@ -239,15 +239,16 @@ class Ribbon(Base):
         self.assertIn(SIZE, t)
         self.assertNotIn(FAV, t)
 
-    def test_mode_button_puts_its_command_in_the_favorites(self):
+    def test_mode_button_goes_to_the_favorites(self):
         w = self.w
         dup = te_button(w, mode_action(w, 'Duplication'))
         m = self.right_click(dup)
         act = next((a for a in m.actions() if a.text() == FAV), None)
         self.assertIsNotNone(act, 'avant : pas de favoris pour un bouton Mode')
         act.trigger()
-        self.assertEqual(w.favorite_keys(), ['duplicate'])
-        self.assertIn(w.A['duplicate'], w.te_quickbar.actions(), 'à la suite de la barre d’accès rapide')
+        self.assertEqual(w.favorite_keys(), ['te_mode:ID_COMPO_SHOWPALDUPLICATION'])   # (round 1164 : le bouton
+        dup_mode = mode_action(w, 'Duplication')                                          # Mode même)
+        self.assertIn(dup_mode, w.te_quickbar.actions(), 'à la suite de la barre d’accès rapide')
         m = self.right_click(dup)
         self.assertIn(UNFAV, texts(m))
         next(a for a in m.actions() if a.text() == UNFAV).trigger()

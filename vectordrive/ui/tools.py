@@ -4606,6 +4606,114 @@ class StartPointTool(Tool):
         self.hover = None
 
 
+def brush_cursor():
+    """Le pointeur du pinceau de couleur : un pinceau, la pointe des poils au point cliqué (en bas à gauche)."""
+    from PySide6.QtGui import QCursor
+    from .icons import icon
+    return QCursor(icon('color_brush_cursor').pixmap(32, 32), 2, 30)
+
+
+class ColorBrushTool(Tool):
+    """Pinceau de couleur (demande du 26/11 : « couleurs : creer outil pinceau pour colorier manuellement les
+    contours au clic ») : chaque clic sur un contour donne à sa forme la couleur courante du panneau Couleur, comme un
+    clic du panneau la donne à la sélection (son outil) ; Maj : à tout l'objet de premier niveau touché (le groupe). Ce
+    qui sera colorié est montré à cette couleur sous la souris. Un clic dans le vide ne fait rien. L'outil reste
+    jusqu'au clic droit ou à Échap ; chaque clic s'annule à part. `fn(objets)` les colore et rend le nombre de formes
+    recoloriées ; `color()` : la couleur courante (« #rrggbb »)."""
+    cursor = Qt.CursorShape.CrossCursor                  # le pinceau, posé à la création de l'outil
+
+    def __init__(self, canvas, fn, color=None):
+        super().__init__(canvas)
+        self.fn, self.color = fn, color
+        self.hover = None                                # (objet de premier niveau, forme) sous la souris
+        self.whole = False                               # Maj tenue : tout l'objet de premier niveau
+        self.cursor = brush_cursor()
+        self.say()
+
+    def say(self) -> None:
+        from ..i18n import tr
+        self.c.measured.emit(tr('Pinceau : un clic sur un contour lui donne la couleur courante ; Maj : tout son '
+                                'groupe — clic droit ou Échap : quitter'))
+
+    def colour_changed(self) -> None:
+        """Une autre couleur choisie dans le panneau Couleur : celle du pinceau désormais (l'aperçu la prend)."""
+        self.say()
+        self.c.overlay_update()
+
+    def find(self, sp):
+        """(objet de premier niveau, forme) sous le pointeur — la forme visible touchée, dans un groupe aussi (le
+        plus haut d'abord, et dans un groupe la plus haute) ; un objet retenu sous le pointeur seulement par une image
+        ou une forme cachée laisse la place à celui du dessous. None : rien là (le vide, un objet caché, verrouillé ou
+        d'un calque verrouillé, une image)."""
+        from PySide6.QtGui import QPainterPathStroker
+        from ..core.document import Image
+        from .canvas import PICK_PX, _leaves
+        x, y = self.c.to_doc(sp)
+        st = QPainterPathStroker()
+        st.setWidth(2 * PICK_PX / max(self.c.scale, 1e-9))
+        pt = QPointF(x, y)
+        for top in self.c.pick_all(sp):
+            for leaf in reversed(list(_leaves([top], True))):
+                if isinstance(leaf, Image) or getattr(leaf, 'tool', None) is None:
+                    continue
+                q = self.c._qpath(leaf)
+                if q is not None and (st.createStroke(q).contains(pt) or (getattr(leaf, 'filled', False)
+                                                                          and q.contains(pt))):
+                    return top, leaf
+        return None
+
+    def key(self, ev):
+        """Maj enfoncée : l'aperçu montre tout le groupe, sans attendre que la souris bouge (la touche continue)."""
+        if ev.key() == Qt.Key.Key_Shift and not self.whole:
+            self.whole = True
+            self.c.overlay_update()
+        return False
+
+    def key_release(self, ev) -> bool:
+        """Maj relâchée : l'aperçu revient à la seule forme sous la souris."""
+        if ev.key() == Qt.Key.Key_Shift and self.whole:
+            self.whole = False
+            self.c.overlay_update()
+        return False
+
+    def move(self, sp, dp, ev):
+        self.hover = self.find(sp)
+        self.whole = _shift(ev)
+        self.c.overlay_update()
+
+    def press(self, sp, dp, ev):
+        from ..i18n import tr
+        got = self.find(sp)
+        if got is None:
+            self.c.measured.emit(tr('Aucun contour ici'))
+            return
+        top, leaf = got
+        n = self.fn([top] if _shift(ev) else [leaf]) if self.fn is not None else 0
+        self.c.measured.emit(tr('{0} forme(s) coloriée(s)').format(n) if n else tr('Déjà de cette couleur'))
+        self.hover = self.find(sp)
+        self.c.overlay_update()
+
+    def paint(self, p):
+        if self.hover is None:
+            return
+        from .canvas import _leaves
+        top, leaf = self.hover
+        pen = QPen(QColor(self.color() if self.color is not None else _cc('preview')), 3.0)
+        pen.setCosmetic(True)
+        p.save()
+        p.setTransform(self.c.view())
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for it in (_leaves([top], True) if self.whole else [leaf]):
+            q = self.c._qpath(it)
+            if q is not None:
+                p.drawPath(q)
+        p.restore()
+
+    def cancel(self):
+        self.hover = None
+
+
 class BlobBrushTool(EraserTool):
     """Pinceau à aplat : glisser peint une surface (rond de rayon
     canvas.eraser_radius) qui se fond avec les formes fermées de l'outil

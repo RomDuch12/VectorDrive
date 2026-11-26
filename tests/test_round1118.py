@@ -10,11 +10,12 @@ from unittest import mock
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ['VECTORDRIVE_NO_TYPEEDIT'] = '1'
 os.environ['VECTORDRIVE_NO_QUICK'] = '1'
-_SAVED = {k: os.environ.get(k) for k in ('VECTORDRIVE_SETTINGS', 'VECTORDRIVE_SESSION', 'VECTORDRIVE_CACHE')}
 _TMP = tempfile.mkdtemp(prefix='vd1118_')
-os.environ['VECTORDRIVE_SETTINGS'] = os.path.join(_TMP, 'r1118.ini')
-os.environ['VECTORDRIVE_SESSION'] = os.path.join(_TMP, 'session.json')
-os.environ['VECTORDRIVE_CACHE'] = os.path.join(_TMP, 'cache')
+# round 1159 : posés par setUpModule, plus à l'import (ils valaient alors pour tous les essais du processus)
+_ENV = {'VECTORDRIVE_SETTINGS': os.path.join(_TMP, 'r1118.ini'),
+        'VECTORDRIVE_SESSION': os.path.join(_TMP, 'session.json'),
+        'VECTORDRIVE_CACHE': os.path.join(_TMP, 'cache')}
+_SAVED = {}
 
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
@@ -30,7 +31,9 @@ UR = Qt.ItemDataRole.UserRole
 def setUpModule():
     # lancé avec d'autres essais dans un seul processus : leur dossier temporaire commun a pu être vidé
     os.makedirs(_TMP, exist_ok=True)
-    os.environ['VECTORDRIVE_CACHE'] = os.path.join(_TMP, 'cache')
+    for k, v in _ENV.items():
+        _SAVED[k] = os.environ.get(k)
+        os.environ[k] = v
 
 
 def tearDownModule():

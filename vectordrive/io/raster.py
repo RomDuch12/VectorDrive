@@ -133,7 +133,7 @@ class RasterSpec:
     filled: bool = False             # contours fermés remplis (pair-impair)
     tool_widths: bool = True         # largeur de l'outil quand elle est connue
     tool_colors: bool = True         # traits à la couleur de leur outil (sinon noirs)
-    orientation: bool = False        # sens des contours : vert anti-horaire, bleu horaire, noir ouvert
+    orientation: bool = False        # sens des contours : vert horaire, bleu anti-horaire, noir ouvert
 
 
 def _leaves(items):

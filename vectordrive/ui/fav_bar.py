@@ -44,7 +44,7 @@ def buttons(win, host, movable: bool = False) -> list:
     own = host is getattr(win, 'fav_bar', None)
     out = []
     for k in win.favorite_keys():
-        a = win.A[k]
+        a = win.favorite_action(k)                       # (un bouton Mode de TypeEdit 13 aussi : round 1164)
         if movable and not own and id(a) not in added:
             continue
         b = host.widgetForAction(a)
@@ -176,7 +176,7 @@ class Arranger(QObject):
         return False
 
     def drag(self, b) -> None:
-        key = self.win._action_key(b.defaultAction())
+        key = next((k for k, x in self.items if x is b), None)    # sa clé de favori (`te_mode:…` : round 1164)
         if key is None:
             return
         mime = QMimeData()

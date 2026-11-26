@@ -342,7 +342,7 @@ class TestOpMenu(unittest.TestCase):
 
     def test_unchecked_paths_left_out_but_those_of_the_operation(self):
         for tp in self.cp.toolpaths:
-            tp.shown = tp.op_id == self.op2.id                      # « Simuler en 2D » de la seconde : la première décochée
+            tp.on = tp.op_id == self.op2.id                         # « Simuler en 2D » de la seconde : la 1re arrêtée
         self.assertEqual(set(self.ops_of(self.opened(1))), {self.op2.id})      # le programme : sans la première
         self.assertEqual(set(self.ops_of(self.opened(0))), {self.op1.id, self.op2.id})   # la première, choisie
 
@@ -361,7 +361,7 @@ class TestOpMenu(unittest.TestCase):
 
     def test_nothing_recomputed_when_nothing_is_checked(self):
         for tp in self.cp.toolpaths:
-            tp.shown = False
+            tp.on = False                                           # tous arrêtés (round 1163)
         with mock.patch.object(self.cp, 'compute', side_effect=AssertionError('tout recalculé')):
             d = self.opened(1)
         self.assertEqual(set(self.ops_of(d)), {self.op2.id})

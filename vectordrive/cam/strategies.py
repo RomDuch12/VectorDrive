@@ -795,7 +795,7 @@ def apply_faced_all(setup, toolpaths) -> None:
     zones: dict = {}                                     # prise → [(zone, cote du fond, d'une poche ?)]
     for tp in toolpaths:
         op = ops.get(tp.op_id)
-        if op is None or not op.enabled or not getattr(tp, 'shown', True):
+        if op is None or not op.enabled or not getattr(tp, 'on', True):     # à l'arrêt : pas au programme
             continue
         if op.kind == 'instruction':                     # (un parcours sans mouvement : vu avant le test suivant)
             zones.clear()

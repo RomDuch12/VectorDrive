@@ -70,6 +70,10 @@ class TestOptions(unittest.TestCase):
         for key in list(options.BY_KEY):
             self.w.settings.remove(key)
         self.w.settings.setValue('accrochage/retenir', False)     # la graine des essais (round 1153)
+        self.w.settings.setValue('options/accrochage', False)     # … accrochage éteint, rien de retenu (round 1159)
+        from tests import SNAP_STATE
+        for key in SNAP_STATE:
+            self.w.settings.remove(key)
         self.w.modified = False
         self.w.close()
 

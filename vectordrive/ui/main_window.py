@@ -541,6 +541,11 @@ class _UpdateSignals(QObject):
     failed = Signal(str)
 
 
+class _LogoSignals(QObject):
+    """Relais entre le fil qui copie les logos d'un partage dans « Logos BAT » et l'interface (round 1164)."""
+    done = Signal(object)
+
+
 def io_colors_keep() -> bool:
     """Couleurs des fichiers lus (et des SVG collés) gardées (F10 › Fichiers) ?"""
     from ..io import colors
@@ -1194,8 +1199,8 @@ class MainWindow(QMainWindow):
           'text_under_baseline', tip=tr('Texte sous sa ligne de base : le haut des capitales vient sur la ligne'))
         a('grid', tr('Grille'), self._toggle_grid, 'Ctrl+G', 'grid', checkable=True)
         a('direction', tr('Sens'), self._toggle_direction, 'Ctrl+7', 'direction', checkable=True,
-          tip=tr('Sens des contours : fermés en vert (anti-horaire) ou en bleu (horaire), ouverts en noir ; '
-                 'flèche au départ et rang de chaque objet'))
+          tip=tr('Sens des contours : fermés en vert (horaire) ou en bleu (anti-horaire), ouverts en noir (blanc '
+                 'en thème sombre) ; rang de chaque objet. Les flèches de sens : F10 › Affichage'))
         a('tool_colors', tr('Couleurs'), self._toggle_tool_colors, 'Ctrl+8', 'select_same_tool', checkable=True,
           tip=tr('Traits et remplissages à leur couleur : celle donnée à l\'objet (Édition › Couleur…), sinon celle '
                  'de son outil (table des outils) ; décoché : tous à l\'encre'))
@@ -1389,6 +1394,7 @@ class MainWindow(QMainWindow):
                               ('punchout', tr('Emporte-pièce'), 'punch'),
                               ('smooth', tr('Lissage C∞'), 'approximate'),
                               ('blob', tr('Pinceau à aplat'), 'fill'),
+                              ('color_brush', tr('Pinceau de couleur'), 'color_brush'),
                               ('spline', tr('Courbe par points'), 'bezier'),
                               ('sym_ox', tr('Courbe symétrique (axe OX)'), 'sym_ox'),
                               ('sym_oy', tr('Courbe symétrique (axe OY)'), 'sym_oy'),
@@ -1524,6 +1530,12 @@ class MainWindow(QMainWindow):
                  'l\'outil courant qu\'elle touche ; [ et ] : taille')
         self.A['tool_blob'].setToolTip(tip)
         self.A['tool_blob'].setStatusTip(tip)
+        # le pinceau de couleur (demande du 26/11) : « Pinceau » sur son bouton du panneau Couleur
+        tip = tr('Pinceau de couleur : chaque clic sur un contour lui donne la couleur courante du panneau Couleur '
+                 '(Maj : tout son groupe) ; chaque clic s’annule à part ; clic droit ou Échap : quitter')
+        self.A['tool_color_brush'].setToolTip(tip)
+        self.A['tool_color_brush'].setStatusTip(tip)
+        self.A['tool_color_brush'].setIconText(tr('Pinceau'))
         tip = tr('Courbe par points : chaque clic est un point de passage d\'une courbe lisse ; double-clic ou '
                  'Entrée pour finir, clic sur le premier point pour la fermer')
         self.A['tool_spline'].setToolTip(tip)
@@ -3045,6 +3057,12 @@ class MainWindow(QMainWindow):
         r.set_right(r.indexOf(pages[tr('Aide')]), rank=1)
         pages[tr('Aide')].setProperty('ribbon_both', True)     # aussi dans la disposition TypeEdit 13
         pages[tr('Fichier')].setProperty('ribbon_both', True)  # bandeau Fichier complet, dans les deux
+        for title, name in self.VD_TAB_NAMES:            # le nom interne de chaque onglet (round 1164) : celui
+            if tr(title) in pages:                       # de son bouton dans l'onglet « VectorDrive » de TypeEdit 13
+                r.page(r.indexOf(pages[tr(title)])).setProperty('vd_tab_name', name)
+        for i in range(r.count()):                       # les deux CAD (même titre) : par leur vue
+            if r.page(i) is not None and r.page(i).property('vd_cad'):
+                r.page(i).setProperty('vd_tab_name', 'cad' + str(r.page(i).property('vd_cad')))
         self.file_page = pages[tr('Fichier')]
         r.setCurrentIndex(r.indexOf(pages[tr('CAD')]))
         self._plugin_ribbon(r)
@@ -5134,6 +5152,22 @@ class MainWindow(QMainWindow):
         k = act.property('vd_te_cmd') if act is not None else None
         return str(k) if k and str(k) in self.A else None
 
+    def _favorite_key(self, act) -> str | None:
+        """La clé de favori d'une commande : sa clé de `self.A` ; un bouton Mode de TypeEdit 13 : son identifiant
+        (`te_mode:<commande>`, round 1164) — le favori ouvre alors son onglet, comme le bouton."""
+        k = self._action_key(act) if act is not None else None
+        if k is None and act is not None and str(act.property('vd_ribbon_id') or '').startswith('te_mode:'):
+            k = str(act.property('vd_ribbon_id'))
+        return k
+
+    def _mode_tool(self, act):
+        """La commande d'un bouton Mode d'outil de TypeEdit 13 (Texte, Point : il la prend en ouvrant son onglet) ;
+        None pour tout autre bouton — un bouton Mode de famille compris : il ouvre seulement son onglet, sa commande
+        peut être favorite à côté de lui (round 1164)."""
+        if act is None or act.property('vd_family_cmd') or not act.property('vd_te_cmd'):
+            return None
+        return self.A.get(str(act.property('vd_te_cmd')))
+
     def _save_custom(self, tabs: list, message: str) -> None:
         from .ribbon_editor import save_all
         save_all(self.settings, tabs)
@@ -5313,10 +5347,16 @@ class MainWindow(QMainWindow):
         except ValueError:
             d = {}
         out = {}
-        for gid, items in (d.items() if isinstance(d, dict) else ()):
+        old = getattr(self, '_te_onglet_old', None) or {}    # boutons de l'onglet « VectorDrive » de TypeEdit 13
+        for gid, items in (d.items() if isinstance(d, dict) else ()):  # retenus avant le round 1164 : relus
             if isinstance(items, list):                  # une liste vide : tous ses boutons partis ailleurs
-                out[str(gid)] = [[str(it[0]), bool(it[1])] for it in items
-                                 if isinstance(it, (list, tuple)) and len(it) == 2 and it[0]]
+                gid = str(gid)
+                if gid.startswith('te:') and gid[3:] in old:
+                    gid = 'te:' + old[gid[3:]]
+                    if gid in d:                         # déjà retenu sous le nouveau : lui seul
+                        continue
+                out[gid] = [[old.get(str(it[0]), str(it[0])), bool(it[1])] for it in items
+                            if isinstance(it, (list, tuple)) and len(it) == 2 and it[0]]
         return out
 
     def _origin_listing(self, g) -> list:
@@ -5628,6 +5668,7 @@ class MainWindow(QMainWindow):
             m.addAction(tr('Réserver au mode expert') if simple else tr('Montrer aussi en mode simple'),
                         lambda _=False, k=key, to=not simple: self.move_button_mode(k, to))
             m.addSeparator()
+        fav_key = self._favorite_key(button.defaultAction())     # bouton Mode : lui-même (round 1164)
         key = key or origin                              # bouton Mode : la commande d'où il vient (round 1155)
         if key is not None:
             if self._is_favorite_button(button):         # un bouton des favoris : libellés, agencement (15/11)
@@ -5640,9 +5681,17 @@ class MainWindow(QMainWindow):
                 a.setCheckable(True)
                 a.setChecked(bool(getattr(self, '_fav_arranging', False)))
                 a.toggled.connect(self.arrange_favorites)
-            fav = key in self.favorite_keys()
-            m.addAction(tr('Retirer des favoris (barre du haut)') if fav else tr('Ajouter aux favoris (barre du haut)'),
-                        lambda _=False, k=key, on=not fav: self.add_favorite(k) if on else self.remove_favorite(k))
+            favs, act = self.favorite_keys(), button.defaultAction()
+            from .ribbon_editor import RelayAction
+            act = act.src if isinstance(act, RelayAction) else act     # (bouton renommé d'un onglet à soi)
+            held = fav_key if fav_key in favs else next((k for k in favs if self.favorite_action(k) is act), None)
+            tool = self._mode_tool(act)                  # (un bouton Mode d'outil dont la commande est favorite,
+            if held is None and tool is not None:        # retenue avant le round 1164 : on la retire)
+                held = next((k for k in favs if self.favorite_action(k) is tool), None)
+            m.addAction(tr('Retirer des favoris (barre du haut)') if held
+                        else tr('Ajouter aux favoris (barre du haut)'),
+                        lambda _=False, k=held or fav_key, on=not held:
+                        self.add_favorite(k) if on else self.remove_favorite(k))
             m.addAction(icon('star'), tr('Gérer les favoris…'), lambda: self.favorites_dialog())
             m.addSeparator()
             for rank, t in enumerate(load_all(self.settings)):
@@ -5679,6 +5728,13 @@ class MainWindow(QMainWindow):
     #: commandes de VectorDrive ajoutées au groupe d'un onglet contextuel de TypeEdit (clé → commandes), s'il ne les
     #: a pas : Cadre englobant dans Manipulation (demande du 19/11)
     TE_CONTEXT_EXTRA = {'1002': ('bbox_frame', 'bbox_frame_options'), '1010': ('bbox_frame', 'bbox_frame_options')}
+    #: noms internes des onglets de VectorDrive (titre d'origine → nom ; les deux CAD : « cad2d », « cad3d ») :
+    #: l'identifiant de leur bouton dans l'onglet « VectorDrive » de TypeEdit 13, d'une langue, d'un rangement et
+    #: d'un lancement à l'autre (round 1164)
+    VD_TAB_NAMES = (('Fichier', 'fichier'), ('Edition', 'edition'), ('Vue', 'vue'), ('FAO 2D', 'fao2d'),
+                    ('FAO 3D', 'fao3d'), ('FAO laser', 'faolaser'), ('Options', 'options'),
+                    ('Opérations', 'operations'), ('Design 3D', 'design3d'), ('Design STEP', 'designstep'),
+                    ('Aide', 'aide'))
 
     def ribbon_layout_name(self) -> str:
         """« vectordrive » ou « typeedit13 » (option, ou selon le thème)."""
@@ -5745,8 +5801,10 @@ class MainWindow(QMainWindow):
                 return i
         return next((i for i in range(r.count()) if r.isTabVisible(i)), 0)
 
-    def _vd_tab_menus(self) -> list:
-        """[(titre, [(groupe, [actions])])] des onglets de VectorDrive."""
+    def _vd_tab_menus(self, names: list | None = None) -> list:
+        """[(titre, [(groupe, [actions])])] des onglets de VectorDrive ; `names` (une liste) reçoit, dans le même
+        ordre, (nom interne de l'onglet — '' s'il n'en a pas —, première commande d'origine de ses groupes : celle
+        d'avant tout rangement) (round 1164)."""
         from PySide6.QtWidgets import QToolButton
         from .ribbon import RibbonGroup
         r = self.ribbon
@@ -5765,6 +5823,11 @@ class MainWindow(QMainWindow):
                     groups.append((g.title.text(), acts))
             if groups:
                 out.append((title, groups))
+                if names is not None:
+                    origin = next((k for g in page.findChildren(RibbonGroup) for e, _b in g._origin
+                                   if RibbonGroup._is_command(e) for k in (self._action_key(e.defaultAction()),) if k),
+                                  None)
+                    names.append((str(page.property('vd_tab_name') or ''), origin))
         return out
 
     def _build_te_tabs(self, lay) -> None:
@@ -5772,7 +5835,8 @@ class MainWindow(QMainWindow):
         from .shortcuts import TE_ACTIONS
         r = self.ribbon
         A = self.A
-        vd_menus = self._vd_tab_menus()
+        tab_names: list = []
+        vd_menus = self._vd_tab_menus(tab_names)
         back = QAction(icon('undo'), tr('Retour'), self)
         back.setToolTip(tr('Fermer cet onglet et revenir à l\'onglet TypeEdit'))
         back.triggered.connect(self.close_te_contexts)
@@ -5893,7 +5957,9 @@ class MainWindow(QMainWindow):
         page = r.insert_tab(pos, 'VectorDrive')
         g = page.group(tr('Onglets de VectorDrive'))
         named: dict = {}
-        for title, groups in vd_menus:
+        old: dict = {}                                   # {identifiant d'avant le round 1164 : le stable}
+        counts = ({}, {})
+        for (title, groups), (tab, origin) in zip(vd_menus, tab_names):
             m = QMenu(self)
             for gt, acts in groups:
                 m.addSection(gt)
@@ -5901,13 +5967,23 @@ class MainWindow(QMainWindow):
                     m.addAction(a)
             a = QAction(icon('ribbon'), title, self)
             a.setMenu(m)
-            # son identifiant (taille et place au clic droit, round 1155) : la première commande de son onglet — le
-            # même d'une langue et d'un lancement à l'autre
+            # son identifiant (taille et place au clic droit, round 1155) : le nom interne de son onglet (round 1164 ;
+            # avant : sa première commande, qui changeait si on rangeait l'onglet autrement) — le même d'une langue,
+            # d'un rangement et d'un lancement à l'autre ; un onglet sans nom : sa première commande, comme avant
             first = next((k for k in (self._action_key(x) for _gt, acts in groups for x in acts) if k), title)
-            named[first] = named.get(first, 0) + 1
-            a.setProperty('vd_ribbon_id', f'te_onglet:{first}' + (f'#{named[first]}' if named[first] > 1 else ''))
+            ident = '@' + tab if tab else first
+            named[ident] = named.get(ident, 0) + 1
+            vid = f'te_onglet:{ident}' + (f'#{named[ident]}' if named[ident] > 1 else '')
+            a.setProperty('vd_ribbon_id', vid)
+            for n, was in zip(counts, (first, origin)):  # l'identifiant d'avant (première commande affichée, ou
+                if tab and was:                          # d'origine) : relu sous le stable (`button_layout`)
+                    n[was] = n.get(was, 0) + 1
+                    k = f'te_onglet:{was}' + (f'#{n[was]}' if n[was] > 1 else '')
+                    if k != vid:
+                        old.setdefault(k, vid)
             self._te_actions.append(a)
             g.add(a)
+        self._te_onglet_old = old
         vd_tab = r.widget(pos)
         vd_tab.setProperty('te_layout', True)
         if te_fao is not None:                           # FAO le dernier des onglets de gauche
@@ -6402,7 +6478,10 @@ class MainWindow(QMainWindow):
             if self.dock_paths.isVisible() and not self.dock_paths.isFloating():
                 cols = getattr(self, 'columns', None)    # la disposition d'avant revient (Dimensions compris),
                 if cols is not None:                     # telle qu'elle était : pas d'onglet refait (round 1143)
+                    hidden = [d for d in cols.docks() if d.isHidden()]
                     cols._quiet(lambda: self.restoreState(state))
+                    cols.regroup(hidden)                 # sauf un panneau fermé entre-temps qu'elle remontre seul,
+                                                         # hors des onglets : son onglet (demande du 25/11)
                 else:
                     self.restoreState(state)
         self.dock_cam.setVisible(on)
@@ -6661,6 +6740,9 @@ class MainWindow(QMainWindow):
             w = max(420, min(760, st.width() // 2))
             d.setGeometry(tl.x() + st.width() - w, tl.y(), w, max(360, st.height()))
         d.raise_()
+        cols = getattr(self, 'columns', None)
+        if cols is not None:
+            cols.free_program()                          # à parties, encore en onglet : sortie de son groupe (25/11)
         self.program_panel.place_viewer()                # des parties montrées : le texte dans sa colonne
         self.program_panel.text_follow()
         if refresh:
@@ -6804,15 +6886,19 @@ class MainWindow(QMainWindow):
 
     def dock_full_height(self, d) -> None:
         """Un panneau ancré mis devant, sur toute la hauteur de sa colonne : le panneau Dimensions, s'il est
-        au-dessus de lui, passe en onglet à côté (un grand panneau sous Dimensions dépasserait l'écran)."""
+        au-dessus de lui, passe en onglet à côté (un grand panneau sous Dimensions dépasserait l'écran). Le panneau
+        prend d'abord son onglet dans le groupe de sa colonne, s'il était seul (demande du 25/11) ; Dimensions rangé à
+        part par l'utilisateur (sorti des onglets, au-dessus ou au-dessous d'un autre) est laissé."""
         if d is None or d.isFloating() or d.isHidden():
             return
         from PySide6.QtWidgets import QDockWidget
         dims = self.findChild(QDockWidget, 'dims')
         cols = getattr(self, 'columns', None)
+        if cols is not None:
+            cols._join_group(d)                          # pas un bloc à part avec Dimensions : son onglet
         if dims is not None and dims is not d and not dims.isHidden() and not dims.isFloating() \
                 and self.dockWidgetArea(dims) == self.dockWidgetArea(d) and dims not in self.tabifiedDockWidgets(d) \
-                and not (cols is not None and 'dims' in cols.split_names()):   # partagé en hauteur : laissé
+                and not (cols is not None and 'dims' in (cols.split_names() | cols.chosen())):   # rangé à part
             self.tabifyDockWidget(d, dims)
         d.raise_()
 
@@ -7083,8 +7169,42 @@ class MainWindow(QMainWindow):
         return out
 
     def favorite_keys(self) -> list:
-        """Les commandes des favoris (clés de `self.A`), dans l'ordre où elles ont été ajoutées."""
-        return [k for k in self._stored_favorites() if k in self.A]
+        """Les commandes des favoris (clés de `self.A`, ou boutons Mode de TypeEdit 13 : `favorite_action`), dans
+        l'ordre où elles ont été ajoutées."""
+        return [k for k in self._stored_favorites() if self.favorite_action(k) is not None]
+
+    def favorite_action(self, key: str):
+        """La commande d'un favori : celle de `self.A` ; un bouton Mode de TypeEdit 13 (`te_mode:<commande>`,
+        round 1164) : ce bouton même dans sa disposition (il ouvre son onglet, comme dans le ruban), ailleurs la
+        commande de VectorDrive d'où il vient ; None si elle n'existe pas aujourd'hui."""
+        key = str(key)
+        if key in self.A:
+            return self.A[key]
+        if not key.startswith('te_mode:'):
+            return None
+        a = next((x for x in self._te_actions if x.property('vd_ribbon_id') == key), None)
+        if a is not None:
+            return a
+        from .shortcuts import TE_ACTIONS
+        return self.A.get(TE_ACTIONS.get(key[len('te_mode:'):], ''))
+
+    def _favorite_twin(self, key: str, act, keys: list | None = None) -> bool:
+        """`act` (le favori `key` à ajouter aux favoris `keys`, d'office ceux retenus) serait-il un doublon (round
+        1164) : la même commande déjà favorite sous une autre clé, ou, dans la barre d'accès rapide de TypeEdit 13,
+        un bouton Mode d'outil et la commande qu'il prend (`_mode_tool` : Texte et l'outil Texte) ? Une commande que
+        cette barre a déjà telle quelle n'en est pas un (rien ne s'ajoute à l'écran), ni un bouton Mode de famille à
+        côté de sa commande (lui ouvre son onglet, elle se lance)."""
+        keys = self._stored_favorites() if keys is None else keys
+        others = [a for a in (self.favorite_action(k) for k in keys if k != key) if a is not None]
+        if any(a is act for a in others):
+            return True
+        te = getattr(self, 'te_quickbar', None)
+        if te is None:
+            return False
+        added = {id(a) for a in getattr(self, '_fav_added', ())}
+        near = others + [a for a in te.actions() if id(a) not in added]       # (de TypeEdit, et les favoris)
+        tool = self._mode_tool(act)
+        return any((tool is not None and a is tool) or self._mode_tool(a) is act for a in near)
 
     def _save_favorites(self, keys: list) -> None:
         if keys:
@@ -7096,11 +7216,16 @@ class MainWindow(QMainWindow):
     def add_favorite(self, key: str) -> bool:
         """La commande `key` au bout des favoris (barre du haut) ; False si elle y est déjà ou n'existe pas."""
         keys = self._stored_favorites()
-        if key not in self.A or key in keys:
+        act = self.favorite_action(key)
+        if act is None or key in keys:
+            return False
+        name = act.text().replace('&', '').replace('\n', ' ')
+        if self._favorite_twin(key, act):                # déjà là par un autre chemin : pas deux fois (round 1164)
+            self.statusBar().showMessage(tr('« {0} » : déjà dans la barre, pas ajouté une seconde fois').format(name),
+                                         6000)
             return False
         self._save_favorites(keys + [key])
-        self.statusBar().showMessage(tr('« {0} » : ajouté aux favoris (barre du haut)').format(
-            self.A[key].text().replace('&', '')), 6000)
+        self.statusBar().showMessage(tr('« {0} » : ajouté aux favoris (barre du haut)').format(name), 6000)
         return True
 
     def remove_favorite(self, key: str) -> bool:
@@ -7108,8 +7233,9 @@ class MainWindow(QMainWindow):
         if key not in keys:
             return False
         self._save_favorites([k for k in keys if k != key])
+        act = self.favorite_action(key)
         self.statusBar().showMessage(tr('« {0} » : retiré des favoris').format(
-            self.A[key].text().replace('&', '')), 6000)
+            act.text().replace('&', '').replace('\n', ' ') if act is not None else key), 6000)
         return True
 
     def move_favorite(self, key: str, before: str | None = None) -> bool:
@@ -7203,7 +7329,7 @@ class MainWindow(QMainWindow):
             return True
         return bar is getattr(self, 'te_quickbar', None) and (
             any(a is button.defaultAction() for a in getattr(self, '_fav_added', ()))
-            or self._action_key(button.defaultAction()) in self.favorite_keys())   # déjà là de TypeEdit
+            or self._favorite_key(button.defaultAction()) in self.favorite_keys())  # déjà là de TypeEdit
 
     def refresh_favorites(self):
         """Les favoris : à la suite de la barre d'accès rapide de TypeEdit 13 si elle est là, sinon dans leur barre,
@@ -7244,8 +7370,19 @@ class MainWindow(QMainWindow):
         if not keys:
             return None
         if te is not None:                               # à la suite de celle de TypeEdit 13 (rien en double)
-            have = {id(a) for a in te.actions()}
-            new = [self.A[k] for k in keys if id(self.A[k]) not in have]
+            shown = te.actions()
+            have = {id(a) for a in shown}
+            twins = {id(t) for t in map(self._mode_tool, shown) if t is not None}
+            new = []
+            for k in keys:                               # ni deux fois la même commande, ni la commande d'un bouton
+                a = self.favorite_action(k)              # Mode d'outil déjà là, ni l'inverse (round 1164 ; retenus
+                origin = self._mode_tool(a)              # avant)
+                if id(a) in have or id(a) in twins or (origin is not None and id(origin) in have):
+                    continue
+                have.add(id(a))
+                if origin is not None:
+                    twins.add(id(origin))
+                new.append(a)
             if new:                                      # un séparateur seulement s'il y a quelque chose après
                 self._fav_added.append(te.addSeparator())
             for a in new:
@@ -7268,8 +7405,12 @@ class MainWindow(QMainWindow):
             self.fav_bar = bar
         else:
             bar.clear()
+        seen = set()
         for k in keys:
-            bar.addAction(self.A[k])
+            a = self.favorite_action(k)
+            if id(a) not in seen:                        # la même commande sous deux clés : une fois (round 1164)
+                seen.add(id(a))
+                bar.addAction(a)
         return bar
 
     def _machine_tip(self, m) -> str:
@@ -7446,6 +7587,8 @@ class MainWindow(QMainWindow):
                 title = tr('FAO 2D')                     # l'onglet FAO d'avant
             page = next((r.widget(i).widget() for i in range(r.count()) if r.tabText(i) == title), None) \
                 or r.add_tab(title)
+            if not page.property('vd_tab_name'):         # un onglet à lui : nommé par le plugin (round 1164)
+                page.setProperty('vd_tab_name', 'plugin.' + str(spec.tab))
             key = (title, tr(spec.group or spec.plugin or 'Plugin'))
             if key not in groups:
                 groups[key] = page.group(key[1])
@@ -7881,6 +8024,10 @@ class MainWindow(QMainWindow):
         self.undo_limit = int(option(st, 'options/annulations'))
         self.zoom_step = option(st, 'vue/zoom_pas')
         self.canvas.handle_px = option(st, 'vue/poignees')
+        arrows = bool(option(st, 'vue/fleches_sens'))    # F10 › Affichage : flèches de sens (pas Ctrl+7)
+        if self.canvas.show_arrows != arrows:
+            self.canvas.show_arrows = arrows
+            self.canvas.update()
         self.RECENT_MAX = option(st, 'fichiers/max_recents')
         self.dims.keep.setChecked(option(st, 'options/proportions'))
         dec = option(st, 'options/decimales')
@@ -8548,6 +8695,8 @@ class MainWindow(QMainWindow):
                   'smooth': lambda: T.SmoothTool(self.canvas, self.smooth_spec(), self._smooth_keep,
                                                  self.smooth_items),
                   'blob': lambda: T.BlobBrushTool(self.canvas),
+                  'color_brush': lambda: T.ColorBrushTool(self.canvas, self.color_panel.brush,
+                                                          self.color_panel.brush_color),
                   'spline': lambda: T.SplineTool(self.canvas),
                   'sym_ox': lambda: T.SymCurveTool(self.canvas, 'ox'),
                   'sym_oy': lambda: T.SymCurveTool(self.canvas, 'oy'),
@@ -8574,6 +8723,9 @@ class MainWindow(QMainWindow):
         self.canvas.update()
         if 'text' in (key, prev):                        # le formulaire du texte : l'onglet Mise en forme
             self._text_context(raise_tab=key == 'text')
+        palette = getattr(self, 'color_panel', None)
+        if palette is not None and 'color_brush' in (key, prev):
+            palette.sync()                               # le panneau Couleur dit ce que fait son pinceau
 
     # --- annuler / refaire --------------------------------------------------
     def _snapshot(self):
@@ -9968,7 +10120,10 @@ class MainWindow(QMainWindow):
         return True
 
     def _last_dir(self, key: str) -> str:
-        return self.settings.value(f'dossier/{key}', str(pathlib.Path.home()))
+        """Le dossier de départ d'une fenêtre de fichiers : le dossier de travail fixé (F10 › Dossiers de travail)
+        s'il est là, sinon le dernier utilisé (`_remember_dir`, toujours retenu), sinon le dossier personnel."""
+        from .workdirs import start_folder
+        return start_folder(self.settings, key, str(pathlib.Path.home()))
 
     def _remember_dir(self, key: str, path: str) -> None:
         self.settings.setValue(f'dossier/{key}', str(pathlib.Path(path).parent))
@@ -10653,6 +10808,12 @@ class MainWindow(QMainWindow):
             doc.extra['vnd_textes_vivants'] = bool(value(self.settings, 'vnd/textes_vivants'))
             doc.extra['vnd_premier_plan'] = bool(value(self.settings, 'vnd/premier_plan_montre'))
 
+    def save_default_ext(self) -> str:
+        """L'extension proposée d'office à l'enregistrement d'un dessin sans fichier (round 1160, demande
+        « Enregistrement fichier vnd par défaut (vdz seul réglable) ») : '.vnd', ou '.vdz' selon F10 › Fichiers."""
+        from .options import value
+        return '.vdz' if value(self.settings, 'fichiers/format_enregistrement') == 'vdz' else '.vnd'
+
     def save_filters(self) -> list:
         """Filtres d'« Enregistrer sous » : [(libellé, extensions)] — VDZ, VND, puis tous les formats qu'on sait
         écrire (cœur et plugins ; pas les programmes machine, qui s'exportent)."""
@@ -10665,7 +10826,8 @@ class MainWindow(QMainWindow):
 
     def save_as(self) -> None:
         """Le dessin dans le format demandé : tout ce que ce format garde, et un compagnon .vdz à côté quand il ne garde
-        pas tout (`_write`). Sans extension connue : celle du filtre choisi (VDZ d'office)."""
+        pas tout (`_write`). Sans extension connue : celle du filtre choisi. Proposé : le format du fichier, sinon
+        celui de F10 › Fichiers (VND d'office, ou VDZ : `save_default_ext`)."""
         pairs = self.save_filters()
         filters = [name for name, _exts in pairs]
         start = self._last_dir('enregistrer')
@@ -10676,11 +10838,13 @@ class MainWindow(QMainWindow):
         elif self.path:
             start = str(pathlib.Path(start) / pathlib.Path(self.path).name)
         low = (self.path or '').lower()
-        current = next((name for name, exts in pairs if low.endswith(exts)), filters[0])
+        ext = self.save_default_ext()
+        default = next((name for name, exts in pairs if ext in exts), filters[0])
+        current = next((name for name, exts in pairs if low.endswith(exts)), default)
         path, chosen = QFileDialog.getSaveFileName(self, tr('Enregistrer sous'), start, ';;'.join(filters), current)
         if path:
             if not path.lower().endswith(tuple(e for _name, exts in pairs for e in exts)):
-                path += dict(pairs).get(chosen, ('.vdz',))[0]
+                path += dict(pairs).get(chosen, (ext,))[0]
             self._remember_dir('enregistrer', path)
             if self._write(path):
                 self.path = path
@@ -11267,10 +11431,13 @@ class MainWindow(QMainWindow):
             self.settings.setValue('bat/fit_selection', False)
             self.settings.setValue('bat/version', '2')
         from .options import BY_KEY, default_of
+        for k in proof.DOC_FIELDS + ('notes',):          # round 1160 : plus d'un client à l'autre par les réglages
+            self.settings.remove(f'bat/{k}')
+        kept = proof.doc_fields(self.canvas.doc)         # … mais ceux du BAT déjà édité de ce dessin
         for f in dataclasses.fields(info):
             if f.name == 'date':
                 continue
-            v = self.settings.value(f'bat/{f.name}')
+            v = kept.get(f.name) if f.name in proof.DOC_FIELDS else self.settings.value(f'bat/{f.name}')
             if v is None and f'bat/{f.name}' in BY_KEY:      # jamais réglé : le défaut de F10 › BAT (A4 portrait…)
                 v = default_of(BY_KEY[f'bat/{f.name}'])
             if v is None:
@@ -11306,9 +11473,14 @@ class MainWindow(QMainWindow):
                                          8000)
         if dlg.logos_copied:                             # un logo copié : la Bibliothèque le montre, après le BAT
             QTimer.singleShot(0, self, self._logos_kept)
+        if getattr(dlg, 'logos_pending', None):          # logos d'un partage : copiés hors du fil de l'interface
+            self._keep_logos_later(dlg.logos_pending)    # (round 1164)
         for f in dataclasses.fields(info):
-            if f.name not in ('date', 'notes'):
+            if f.name not in ('date', 'notes') + proof.DOC_FIELDS:
                 self.settings.setValue(f'bat/{f.name}', getattr(info, f.name))
+        if proof.keep_doc_fields(self.canvas.doc, info):     # client, référence… : dans le dessin (enregistrés avec
+            self.modified = True                         # lui, le compagnon d'un VND compris)
+            self._title()
         return info
 
     def _logos_kept(self) -> None:
@@ -11323,6 +11495,66 @@ class MainWindow(QMainWindow):
             panel._fill_tree()
             if shown is not None:
                 panel.select_in_tree(shown)
+
+    def _keep_logos_later(self, paths: list):
+        """Les logos d'un BAT pris sur un partage, copiés dans « Logos BAT » par un fil de calcul (round 1164) : un
+        partage lent ou hors d'atteinte ne gèle plus la fenêtre. À la fin, dans le fil de l'interface
+        (`_logos_copied_later`) : copies retenues, erreurs dans la barre d'état, Bibliothèque actualisée. Un logo
+        dont la copie est en cours n'est pas recopié en même temps. Rend le fil (None : rien à copier)."""
+        import os
+        import threading
+        from .batdialog import copy_logos
+        from .symbols import logo_library
+        busy = getattr(self, '_logos_busy', None)        # (chemins normalisés : « Logo.PNG » est « logo.png »)
+        if busy is None:
+            busy = self._logos_busy = set()
+        fresh: dict = {}
+        for p in paths:
+            fresh.setdefault(os.path.normcase(p), p)
+        paths = [p for n, p in fresh.items() if n not in busy]
+        if not paths:
+            return None
+        busy.update(os.path.normcase(p) for p in paths)
+        sig = getattr(self, '_logo_sig', None)
+        if sig is None:
+            sig = self._logo_sig = _LogoSignals(self)
+            sig.done.connect(self._logos_copied_later)
+        folder = logo_library()
+
+        def work():
+            try:
+                got = copy_logos(paths, folder)
+            except Exception as ex:                      # noqa: BLE001 — jamais levée dans le fil : dite ensuite
+                got = ({}, [str(ex)], [])
+            try:
+                sig.done.emit((paths, got))
+            except RuntimeError:                         # fenêtre fermée entre-temps : plus rien à dire
+                pass
+        th = threading.Thread(target=work, daemon=True, name='vd-logos-bat')
+        try:
+            th.start()
+        except RuntimeError as ex:                       # plus de fil possible : rien en cours, et c'est dit
+            busy.difference_update(os.path.normcase(p) for p in paths)
+            self.statusBar().showMessage(tr('Logo non copié dans la bibliothèque : {0}').format(
+                ' ; '.join(f'{os.path.basename(p)} ({ex})' for p in paths)), 8000)
+            return None
+        self._logos_thread = th
+        return th
+
+    def _logos_copied_later(self, result) -> None:
+        """Fin de la copie des logos d'un partage (fil de l'interface, round 1164) : copies retenues, erreurs dites,
+        Bibliothèque actualisée si une copie a été faite."""
+        import os
+        from .batdialog import store_logo_copies
+        paths, (copies, errors, made) = result
+        getattr(self, '_logos_busy', set()).difference_update(os.path.normcase(p) for p in paths)
+        if copies:
+            store_logo_copies(self.settings, copies)
+        if errors:
+            self.statusBar().showMessage(tr('Logo non copié dans la bibliothèque : {0}').format(' ; '.join(errors)),
+                                         8000)
+        if made:
+            self._logos_kept()
 
     def closeEvent(self, ev) -> None:
         box = getattr(self, '_font_editor_box', None)
@@ -15101,8 +15333,9 @@ class MainWindow(QMainWindow):
                     pieces, owner = [], []
                     for i in idx:
                         for r in pathops.regions(out[i][2]):
-                            pieces.append(r)
-                            owner.append(i)
+                            if any(c.closed for c in r.contours):   # un contour ouvert décalé : jamais réuni
+                                pieces.append(r)
+                                owner.append(i)
                     groups = pathops.crossing_groups(pieces, owner)
                     used = {m for g in groups for m in g}
                     for g in groups:
@@ -15111,7 +15344,7 @@ class MainWindow(QMainWindow):
                         joined, into = joined + len(g), into + 1
                     for i in {owner[m] for m in used}:
                         rest[i] = [c for m, r in enumerate(pieces) if owner[m] == i and m not in used
-                                   for c in r.contours]
+                                   for c in r.contours] + [c for c in out[i][2].contours if not c.closed]
                 kept = []
                 for i, (k, tool, p) in enumerate(out):
                     if i not in rest:

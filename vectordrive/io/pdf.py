@@ -8,6 +8,8 @@ fichier (contenu optionnel, ce que deviennent les calques d'Illustrator)
 deviennent des calques, masqués s'ils le sont dans le fichier ; le détourage
 (W n) coupe ce qu'il contient ; un aplat blanc est retiré de ce qu'il recouvre
 et rangé dans un calque masqué, sans quoi il deviendrait un contour à graver.
+Les images matricielles (XObject /Image, images en ligne) deviennent des images
+du dessin, à leur place et à leur taille (`pdf_image`, round 1160).
 
 Écriture : PDF 1.4 minimal écrit à la main, une page aux dimensions du
 dessin (ou de la plaque), un trait par outil, les images à leur pleine
@@ -56,6 +58,7 @@ def read(path) -> Document:
     texts, font_notes = 0, set()
     ocgs = _optional_groups(reader, doc.report)
     by_name: dict[str, Layer] = {}
+    seen: dict = {}                                      # images décodées : une fois par import (round 1160)
     for n, page in enumerate(reader.pages, 1):
         layer = Layer(name=f'Page {n}')
         box = page.mediabox
@@ -65,7 +68,7 @@ def read(path) -> Document:
             doc.layers.append(layer)
             continue
         _run(_operations(contents, reader), base, page.get('/Resources'), reader, layer.items, doc.report, 0,
-             colors, ocgs)
+             colors, ocgs, images=seen)
         if TEXT_REMARK in doc.report:
             n = _texts(page, base, layer.items, font_notes)
             texts += n
@@ -75,6 +78,10 @@ def read(path) -> Document:
     if texts:
         doc.report.append(f'{texts} texte(s) PDF repris en textes vivants')
         doc.report.extend(sorted(font_notes))
+    images = sum(1 for L in doc.layers for it in L.items if isinstance(it, Image))
+    if images:                                           # round 1160 : vectorisables comme une image importée
+        from ..i18n import tr
+        doc.report.append(tr('{0} image(s) matricielle(s) reprise(s) à leur place').format(images))
     if not doc.layers:
         doc.layers.append(Layer())
     from .colors import black_first
@@ -459,7 +466,7 @@ def _nonzero(p: Path, budget: list) -> Path:
 
 
 def _run(ops, ctm: Affine, resources, reader, out: list, report: list, depth: int, colors=None, ocgs=None,
-         group=None, budget=None) -> None:
+         group=None, budget=None, images=None) -> None:
     from .colors import from_operands
     stack: list = []
     b = PathBuilder(ctm)
@@ -467,11 +474,23 @@ def _run(ops, ctm: Affine, resources, reader, out: list, report: list, depth: in
     clip = None                                          # détourage courant (en mm)
     marks: list = []                                     # contenu marqué : calque de chaque niveau
     budget = [CLIP_MAX, False] if budget is None else budget
+    images = {} if images is None else images            # images déjà décodées de l'import (round 1160)
     text_seen = False
     paint = [None, None]                                 # couleurs du trait et du fond (état graphique)
 
     def current_group():
         return next((m for m in reversed(marks) if m), group)
+
+    def place_image(src, name: str, key=None, own=None):
+        """Image matricielle peinte ici (round 1160) : un objet Image du dessin, dans son calque (`own`, celui de
+        son XObject) ou celui du moment ; `key` : la même image n'est décodée qu'une fois par import."""
+        from .pdf_image import image_item
+        im = image_item(src, ctm, paint[1], resources, report, name, images, key and key + (paint[1],))
+        if im is not None:
+            g = own or current_group()
+            if g:
+                im.extra['pdf_calque'] = g
+            out.append(im)
 
     def emit(fill: bool, stroke: bool = True, nonzero: bool = False):
         nonlocal b, clip
@@ -570,6 +589,9 @@ def _run(ops, ctm: Affine, resources, reader, out: list, report: list, depth: in
                 g = current_group()
                 if g is None or g[1]:                    # le texte d'un calque masqué reste masqué
                     text_seen = True
+            elif o == 'INLINE IMAGE':                    # « BI … ID … EI » (lu par pypdf)
+                from .pdf_image import inline_source
+                place_image(inline_source(operands), 'image')
             elif o == 'Do' and resources is not None and depth < 12:
                 name = operands[0]
                 xobjs = resources.get_object().get('/XObject') if hasattr(resources, 'get_object') else resources.get('/XObject')
@@ -579,13 +601,20 @@ def _run(ops, ctm: Affine, resources, reader, out: list, report: list, depth: in
                 if xo is None:
                     continue
                 xo = xo.get_object()
+                if xo.get('/Subtype') == '/Image':        # round 1160 : avant, ignorée (page vide)
+                    from .pdf_image import xobject_source
+                    ref = getattr(xo, 'indirect_reference', None)
+                    own = _oc_group(xo.raw_get('/OC'), ocgs) if '/OC' in xo else None
+                    place_image(xobject_source(xo), str(name).lstrip('/'),
+                                (ref.idnum, ref.generation) if ref is not None else None, own)
+                    continue
                 if xo.get('/Subtype') != '/Form':
                     continue
                 m = xo.get('/Matrix')
                 fm = Affine(*(float(v) for v in m)) if m else Affine()
                 own = _oc_group(xo.raw_get('/OC'), ocgs) if '/OC' in xo else None
                 _run(_operations(xo, reader), ctm @ fm, xo.get('/Resources') or resources, reader, out,
-                     report, depth + 1, colors, ocgs, own or current_group(), budget)
+                     report, depth + 1, colors, ocgs, own or current_group(), budget, images)
         except (IndexError, ValueError, TypeError) as ex:
             report.append(f'opérateur {o} ignoré : {ex}')
     if text_seen and TEXT_REMARK not in report:
@@ -651,7 +680,7 @@ def _place_page(doc: Document, page: Layer, ocgs: dict, by_name: dict) -> None:
     un calque. Les aplats blancs vont dans un calque masqué à part (« … (blanc) »)."""
     groups: dict = {}
     for it in page.items:
-        g = it.extra.pop('pdf_calque', None) if isinstance(it, Shape) else None
+        g = it.extra.pop('pdf_calque', None) if isinstance(it, (Shape, Image)) else None
         groups.setdefault(g, []).append(it)
     if not groups:
         groups[None] = []

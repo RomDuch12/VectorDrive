@@ -2306,6 +2306,13 @@ class CamPanel(QWidget):
         self.ops.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.ops.doubleClicked.connect(lambda i: self._op_double_clicked(i))
         self.ops.itemChanged.connect(self._op_checked)
+        from .eye import IconCheckDelegate
+        # la case « active » de la colonne 0 peinte en bouton marche/arrêt : dans le programme (SimPL) ou non ; l'œil,
+        # en tête de ligne, ne fait plus que montrer ou cacher le parcours (demande du 25/11)
+        self.ops.setItemDelegateForColumn(0, IconCheckDelegate(self.ops, self._op_power_icon, self._op_on_tip))
+        self.ops.horizontalHeaderItem(0).setToolTip(tr(
+            'Opération — son bouton marche/arrêt : dans le programme (SimPL) ou non ; l’œil, en tête de ligne, ne fait '
+            'que montrer ou cacher son parcours'))
         self.ops.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.ops.customContextMenuRequested.connect(lambda pos: self.op_menu(pos))
         from PySide6.QtGui import QKeySequence, QShortcut
@@ -2344,7 +2351,7 @@ class CamPanel(QWidget):
         b = self.view3d_button = QPushButton(tr('Parcours 3D'))
         b.setToolTip(tr('Calculer les parcours et montrer en 3D, dans le calque « Trajectoires », à part du dessin, '
                         'ceux des opérations choisies dans la liste (aucune choisie : toutes les opérations actives) ; '
-                        'les autres sont cachés, donc hors du programme'))
+                        'les autres sont cachés — à l’écran seulement : le programme suit les boutons marche/arrêt'))
         b.clicked.connect(lambda _=False: self.show_chosen_3d())
         row.addWidget(b, 1)
         from PySide6.QtCore import QSize
@@ -2392,18 +2399,24 @@ class CamPanel(QWidget):
         from . import modes
         self.apply_mode(modes.current(win.settings))
         ml.addLayout(row)
-        # parcours affichés : cocher = affiché et post-traité, dans cet ordre
+        # parcours, dans leur ordre d'écriture : l'œil (la case, peinte en œil) les montre ou les cache ; le bouton
+        # marche/arrêt (l'icône de la ligne) les met dans le programme ou les en retire (demande du 25/11)
         g = QGroupBox(tr('Parcours'))
         self.paths_group = g
         gl = QVBoxLayout(g)
         self.paths = QListWidget()
         self.paths.itemChanged.connect(self._path_checked)
+        self.paths.setItemDelegate(IconCheckDelegate(self.paths, self._path_eye, self._path_eye_tip,
+                                                     extra=(self._path_on_tip, self._path_on_clicked)))
+        self.paths.installEventFilter(self)              # Ctrl+Espace : marche/arrêt du parcours choisi (Espace :
+        # son œil) ; voir `eventFilter` — un raccourci de l'utilisateur sur ces touches passe avant
         gl.addWidget(self.paths)
         gl.addLayout(self._buttons((('↑', tr('Monter'), lambda: self.move_path(-1)),
                                     ('↓', tr('Descendre'), lambda: self.move_path(1)),
                                     ('✕', tr('Retirer le parcours'), self.remove_path),
                                     ('⇄', tr('Inverser le sens du parcours'), self.reverse_path),
-                                    ('⤓', tr('Enregistrer les parcours cochés au format TypeEdit (.000, .001…)'),
+                                    ('⤓', tr('Enregistrer au format TypeEdit (.000, .001…) les parcours qui vont '
+                                             'au programme (bouton marche/arrêt)'),
                                      self.export_typeedit))))
         self.split.addWidget(mid)
         self.split.addWidget(g)
@@ -2511,7 +2524,23 @@ class CamPanel(QWidget):
                 self.win.statusBar().showMessage(tr('Parcours recalculés : le dessin a changé depuis leur calcul '
                                                     '(objets, outils, pièce 3D placée autrement, surface posée, '
                                                     'rattachements)'), 8000)
+            if tps and not any(getattr(tp, 'on', True) for tp in tps):   # recalculés, mais tous à l'arrêt
+                self.info.setText(tr('Tous les parcours sont à l’arrêt (bouton marche/arrêt) : rien pour le '
+                                     'programme'))
             return self._writable(tps)
+        if self.toolpaths and not self.checked_paths():  # tous à l'arrêt : pas un calcul qui les remettrait tous
+            from ..cam import external                   # en marche ; seules les opérations actives jamais
+            have = {tp.op_id for tp in self.toolpaths if tp.op_id}   # calculées le sont (leurs parcours neufs) —
+            have |= set(self._memo('_computed') or ())   # pas un parcours retiré par ✕ (calculé, puis retiré)
+            for o in [o for o in self.setup().operations
+                      if o.enabled and o.id not in have and not external.is_external(o)]:
+                if self.compute_op(o) is None:           # annulé : la suite aussi
+                    break
+            if not self.checked_paths():
+                self.info.setText(tr('Tous les parcours sont à l’arrêt (bouton marche/arrêt) : rien pour le '
+                                     'programme'))
+                return []
+            return self._writable(self.checked_paths())
         return self._writable(self.checked_paths() or self.compute(dates=dates))
 
     def outdated(self) -> bool:
@@ -2706,7 +2735,8 @@ class CamPanel(QWidget):
         setattr(self, name, d)
 
     def _writable(self, tps) -> list:
-        """Parcours qui vont au programme : ceux des opérations actives — une
+        """Parcours qui vont au programme : ceux en marche (leur bouton
+        marche/arrêt ; l'œil n'y est pour rien) des opérations actives — une
         opération désactivée ou supprimée depuis le calcul n'y va plus — et
         ceux sans opération (parcours TypeEdit, programme relu)."""
         from ..cam import strategies as _strategies
@@ -2716,8 +2746,7 @@ class CamPanel(QWidget):
         # les liaisons basses refaites pour CETTE liste, telle qu'elle est maintenant : une opération décochée,
         # retirée ou déplacée depuis le calcul n'abaisse plus rien dans ce qui est écrit
         _strategies.apply_faced_all(s, tps)
-        return [tp for tp in tps if getattr(tp, 'shown', True)
-                and (not tp.op_id or (tp.op_id in ops and ops[tp.op_id].enabled))]
+        return [tp for tp in tps if self.path_state(tp, ops) is True]   # la règle du bouton marche/arrêt
 
     def _recompute(self, dates: bool = True) -> list:
         """Tout recalculé, la liste gardée comme on l'avait laissée : ordre
@@ -2781,11 +2810,12 @@ class CamPanel(QWidget):
         for j in range(len(tps) - 1, -1, -1):            # depuis la fin : une nouvelle va avant la suivante gardée
             tp, hit = tps[j], hits[j]
             if hit is None:                              # retiré de la liste, ou opération nouvelle
-                tp.shown = tp.op_id not in computed
+                tp.shown = tp.on = tp.op_id not in computed
                 out.append(((nxt, -1, j), tp))
                 continue
             i, was = hit
             tp.shown = getattr(was, 'shown', True)
+            tp.on = getattr(was, 'on', True)             # son bouton marche/arrêt aussi
             if getattr(was, 'reversed', False):
                 tp = reversed_toolpath(tp)
                 tp.reversed = True
@@ -2835,7 +2865,10 @@ class CamPanel(QWidget):
                 out['note'] = tr('Le dessin a changé depuis le calcul : « Mettre à jour » refait les parcours')
         mine = post.doc_operations(key, self.doc)          # opérations propres à la machine (d'un plugin)
         if not tps and not mine:
-            out['note'] = tr('Aucun parcours montré : « Mettre à jour » les calcule')
+            out['note'] = (tr('Aucune opération active') if s.operations and not any(o.enabled for o in s.operations)
+                           else tr('Tous les parcours sont à l’arrêt (bouton marche/arrêt) : rien pour le programme')
+                           if self.toolpaths and not self.checked_paths() else
+                           tr('Aucun parcours montré : « Mettre à jour » les calcule'))
             return out
         if not tps:
             out['note'] = tr('Aucun parcours montré : le programme ne porte que les opérations propres à la machine')
@@ -2853,9 +2886,10 @@ class CamPanel(QWidget):
             if box is not None:
                 tps, origin, box = post.oriented(tps, how, (box[0], box[1], box[3], box[4]), origin, box)
             groups = post.program_groups(tps, s.program_group, self._plan_of_path)
+            out_dir = str(self.program_dir())            # une fois (un dossier fixé sur un partage : une attente)
             for gi, (suffix, part) in enumerate(groups):
                 stem = f'{title}_{suffix}' if suffix else title
-                res = post.run(key, part, s, title=title, stem=stem, box_mm=box, out_dir=str(self.program_dir()),
+                res = post.run(key, part, s, title=title, stem=stem, box_mm=box, out_dir=out_dir,
                                origin=origin, doc=mine_doc if gi == len(groups) - 1 else None, preview=True)
                 ext = ext or res.extension
                 warnings += list(res.warnings)
@@ -3101,12 +3135,13 @@ class CamPanel(QWidget):
             cell.setData(role, on)
             cell.setToolTip(tr('Parcours affiché — cliquez pour le cacher') if on else
                             tr('Parcours caché — cliquez pour l’afficher'))
+        self._sync_power(ops, by_op)
 
     def _fill_loose_rows(self) -> None:
         """Réponse 13 du 14/11 : les parcours sans opération (programme relu, parcours TypeEdit, parcours d'une
-        opération retirée) sont des lignes du tableau des opérations, après elles — en italique, sans case (rien à
-        activer : leur œil les montre ou les cache, comme une opération). `_n_ops`, `_loose` : le nombre de lignes
-        d'opérations et, ligne après ligne, le rang de ces parcours."""
+        opération retirée) sont des lignes du tableau des opérations, après elles — en italique ; leur œil les
+        montre ou les cache, leur bouton marche/arrêt les met dans le programme ou les en retire, comme une opération.
+        `_n_ops`, `_loose` : le nombre de lignes d'opérations et, ligne après ligne, le rang de ces parcours."""
         from PySide6.QtGui import QBrush
 
         from ..cam import toollib
@@ -3141,6 +3176,8 @@ class CamPanel(QWidget):
                                    'retirer').format(what))
                 if c == 0:
                     cell.setIcon(swatch(colors[i % len(colors)]))
+                    cell.setFlags(cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)       # marche/arrêt : `on`
+                    cell.setCheckState(Qt.CheckState.Checked if getattr(tp, 'on', True) else Qt.CheckState.Unchecked)
                 table.setItem(n + k, c, cell)
         self._loading = was
 
@@ -3203,8 +3240,9 @@ class CamPanel(QWidget):
         return True
 
     def toggle_op_paths(self, r: int, on: bool | None = None):
-        """L'œil de l'opération de la ligne `r` : ses parcours calculés montrés ou cachés (dessin, durée, vue 3D,
-        programme écrit : comme leurs cases de la liste des parcours). Rend l'état obtenu ; None sans parcours."""
+        """L'œil de l'opération de la ligne `r` : ses parcours calculés montrés ou cachés — à l'écran seulement
+        (dessin, calque Trajectoires, vue 3D), comme leurs yeux de la liste des parcours ; le programme suit le bouton
+        marche/arrêt. Rend l'état obtenu ; None sans parcours."""
         at = self.op_paths(r)
         if not at:
             return None
@@ -3318,11 +3356,112 @@ class CamPanel(QWidget):
         s.laser_marks = self.laser_marks.isChecked()
         self.save(s)
 
+    @staticmethod
+    def _on_tip(_index=None, on: bool = True) -> str:
+        """La bulle du bouton marche/arrêt (opération ou parcours)."""
+        return tr('Dans le programme (SimPL) : oui — un clic l’en retire') if on else \
+            tr('Dans le programme (SimPL) : non — un clic l’y remet')
+
+    def path_state(self, tp, ops=None):
+        """Où en est le parcours `tp` pour le programme — la règle de `_writable` : True (écrit), False (à
+        l'arrêt), 'désactivée' ou 'retirée' (en marche, mais son opération est désactivée, ou retirée — Annuler… :
+        pas écrit). `ops` : id → opération (lu au besoin)."""
+        if not getattr(tp, 'on', True):
+            return False
+        if not tp.op_id:
+            return True
+        ops = {o.id: o for o in self.setup().operations} if ops is None else ops
+        if tp.op_id not in ops:
+            return 'retirée'
+        return True if ops[tp.op_id].enabled else 'désactivée'
+
+    def _state_tip(self, state) -> str:
+        """La bulle du bouton marche/arrêt d'un parcours, d'après `path_state`."""
+        if state == 'désactivée':
+            return tr('En marche, mais son opération est désactivée : pas dans le programme (SimPL)')
+        if state == 'retirée':
+            return tr('En marche, mais son opération a été retirée : pas dans le programme (SimPL)')
+        return self._on_tip(None, state)
+
+    @staticmethod
+    def _power_of(state):
+        """L'état du bouton peint : vert (écrit), gris (à l'arrêt), mi-teinte (opération désactivée ou retirée)."""
+        return state if isinstance(state, bool) else None
+
+    def _loose_path(self, r: int):
+        """Le parcours sans opération de la ligne `r` du tableau des opérations ; None pour une opération."""
+        n, loose = getattr(self, '_n_ops', None), getattr(self, '_loose', [])
+        if n is None or not 0 <= r - n < len(loose) or not 0 <= loose[r - n] < len(self.toolpaths):
+            return None
+        return self.toolpaths[loose[r - n]]
+
+    def _op_power_icon(self, index, on):
+        """Le bouton d'une ligne : celui de l'opération (sa case), ou l'état réel d'un parcours sans opération (une
+        opération retirée — Annuler… — : pas écrit, même en marche)."""
+        from .eye import power_icon
+        tp = self._loose_path(index.row())
+        return power_icon(on if tp is None else self._power_of(self.path_state(tp)))
+
+    def _op_on_tip(self, index, on) -> str:
+        """La bulle du bouton marche/arrêt d'une ligne d'opération ; mi-teinte (`on` None) : opération active dont
+        des parcours — ou tous — sont à l'arrêt."""
+        tp = self._loose_path(index.row())
+        if tp is not None:
+            return self._state_tip(self.path_state(tp))
+        if on is not None:
+            return self._on_tip(index, on)
+        ops = self.setup().operations
+        r = index.row()
+        at = [tp for tp in self.toolpaths if r < len(ops) and tp.op_id == ops[r].id]
+        if at and not any(getattr(tp, 'on', True) for tp in at):
+            return tr('Opération active, tous ses parcours à l’arrêt : hors du programme (SimPL) — un clic les '
+                      'remet en marche')
+        return tr('En partie hors du programme (SimPL) : des parcours sont à l’arrêt — un clic les remet tous en '
+                  'marche')
+
+    def _sync_power(self, ops, by_op) -> None:
+        """Le bouton marche/arrêt de chaque opération active suit ses parcours : en marche s'ils le sont tous (ou
+        pas encore calculés), mi-teinte si certains — ou tous — sont à l'arrêt ; désactivée : à l'arrêt, quels que
+        soient ses parcours."""
+        table = self.ops
+        n = getattr(self, '_n_ops', None)
+        n = table.rowCount() if n is None else min(n, table.rowCount())
+        was, self._loading = self._loading, True         # (pas un clic : rien n'est activé ni désactivé)
+        try:
+            for r in range(n):
+                cell = table.item(r, 0)
+                if cell is None or cell.checkState() == Qt.CheckState.Unchecked:
+                    continue
+                at = by_op.get(ops[r].id, []) if r < len(ops) else []
+                part = any(not getattr(self.toolpaths[i], 'on', True) for i in at)
+                want = Qt.CheckState.PartiallyChecked if part else Qt.CheckState.Checked
+                if cell.checkState() != want:
+                    cell.setCheckState(want)
+            from .eye import power_icon                  # la liste des parcours : l'état réel (opération
+            known = {o.id: o for o in ops}               # désactivée ou retirée : mi-teinte, pas écrit)
+            for i in range(min(self.paths.count(), len(self.toolpaths))):
+                self.paths.item(i).setIcon(power_icon(self._power_of(self.path_state(self.toolpaths[i], known))))
+        finally:
+            self._loading = was
+        table.viewport().update()                        # les parcours sans opération : repeints d'après elles
+
     def _op_checked(self, item) -> None:
+        """Le bouton marche/arrêt d'une ligne (la case de la colonne 0) : une opération active ou non (`enabled` :
+        calculée et écrite, ou non) — son plugin prévenu — ; rallumée (ou mi-teinte cliquée), ses parcours à l'arrêt
+        remis en marche ; un parcours sans opération en marche ou non."""
         if self._loading or item.column() != 0:
             return
         s = self.setup()
         r = item.row()
+        self._sim_only = ''
+        loose = getattr(self, '_loose', [])
+        if 0 <= r - len(s.operations) < len(loose):      # un parcours sans opération : son marche/arrêt
+            self.set_path_on(loose[r - len(s.operations)], item.checkState() == Qt.CheckState.Checked)
+            return
+        if r < len(s.operations) and item.checkState() == Qt.CheckState.Checked:
+            for i, tp in enumerate(self.toolpaths):      # rallumée : ses parcours remis en marche
+                if tp.op_id == s.operations[r].id and not getattr(tp, 'on', True):
+                    self.set_path_on(i, True)
         if r < len(s.operations):
             o = s.operations[r]
             o.enabled = item.checkState() == Qt.CheckState.Checked
@@ -3330,6 +3469,8 @@ class CamPanel(QWidget):
             if external.is_external(o) and external.active(o, s.post):   # le plugin la (dé)coche chez lui aussi
                 external.call(o, 'set_enabled', self.doc, external.ref_of(o), o.enabled)
             self.save(s)
+            if self.toolpaths:                           # le temps estimé : ce qui est écrit
+                self._report()
 
     def _row(self, table) -> int:
         """Première ligne choisie de `table` ; -1 sans. Dans le tableau des opérations, une ligne d'opération
@@ -3976,8 +4117,16 @@ class CamPanel(QWidget):
             b.setVisible(mode != 'simple')
 
     def eventFilter(self, obj, ev) -> bool:
-        """Ctrl+I et Ctrl+T quand la liste des opérations a la main (TE) : Ctrl+I reste Importer partout ailleurs."""
+        """Ctrl+I et Ctrl+T quand la liste des opérations a la main (TE) : Ctrl+I reste Importer partout ailleurs.
+        Ctrl+Espace dans la liste des parcours : marche/arrêt du parcours choisi (une fois par appui, pas en
+        répétition) — la touche n'arrive ici qu'à défaut d'un raccourci qui la prend : celui de l'utilisateur passe
+        avant."""
         from PySide6.QtCore import QEvent
+        if obj is getattr(self, 'paths', None) and ev.type() == QEvent.Type.KeyPress \
+                and ev.key() == Qt.Key.Key_Space and ev.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            if not ev.isAutoRepeat():                    # (touche tenue : une fois, pas un va-et-vient)
+                self._path_on_clicked(self.paths.currentIndex())
+            return True
         if obj is self.ops and ev.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress) \
                 and ev.modifiers() == Qt.KeyboardModifier.ControlModifier and ev.key() in (Qt.Key.Key_I, Qt.Key.Key_T):
             ev.accept()
@@ -4062,10 +4211,26 @@ class CamPanel(QWidget):
         if not any(t.op_id == op.id for t in self.toolpaths):
             if self.compute_op(op) is None:
                 return None
-        for tp in self.toolpaths:
-            tp.shown = tp.op_id == op.id
-        self.display(self.toolpaths)
-        return self.win.show_toolpaths(where)
+        self._sim_only, self._sim_doc = op.id, id(self.doc)   # la simulation : la sienne seule (pas d'après les yeux,
+        return self.win.show_toolpaths(where)                  # qui restent comme ils étaient)
+
+    def sim_paths(self, tps) -> list:
+        """Les parcours à simuler parmi `tps` (ceux qui vont au programme : le bouton marche/arrêt, pas l'œil) ;
+        après « Simuler » d'une seule opération (menu de sa ligne), les siens seulement, jusqu'au prochain œil ou
+        marche/arrêt touché, calcul, opération retirée ou changement d'onglet ; s'il n'en reste aucun (à l'arrêt…) :
+        tous, et la barre d'état le dit."""
+        only = getattr(self, '_sim_only', '')
+        if only and getattr(self, '_sim_doc', None) != id(self.doc):   # un autre onglet : plus d'opération seule
+            only = self._sim_only = ''
+        if not only:
+            return list(tps)
+        mine = [tp for tp in tps if tp.op_id == only]
+        if not mine:
+            self._sim_only = ''
+            self.win.statusBar().showMessage(tr('L’opération à simuler seule n’a pas de parcours en marche : tous '
+                                                'les parcours en marche sont simulés'), 8000)
+            return list(tps)
+        return mine
 
     def simulate_after_op(self, exec_dialog: bool = True):
         """La simulation du programme — les parcours qui vont au programme (cochés, des opérations actives, et ceux
@@ -4311,6 +4476,8 @@ class CamPanel(QWidget):
                 s = self.setup()
             gone = s.operations[r].id
             del s.operations[r]
+            if getattr(self, '_sim_only', '') == gone:  # sa simulation seule : finie
+                self._sim_only = ''
             self.save(s)
             if any(t.op_id == gone for t in self.toolpaths):     # son parcours disparaît aussi
                 self.display([t for t in self.toolpaths if t.op_id != gone])
@@ -5224,6 +5391,7 @@ class CamPanel(QWidget):
     def compute_op(self, op: model.Operation):
         """Parcours d'une seule opération (le formulaire validé) : calculé et
         mis à sa place dans la liste des parcours, les autres gardés."""
+        self._sim_only = ''
         if self.refresh_dates():                         # textes datés changés : les autres parcours aussi
             self._remember('_placement_states', '')      # (refaits avant l'écriture)
             self._remember('_surface_states', ('?',))
@@ -5893,17 +6061,28 @@ class CamPanel(QWidget):
 
     # --- parcours ------------------------------------------------------------------------------------
     def display(self, toolpaths) -> None:
+        from .eye import power_icon
+        old, rank = {}, {}                               # marche/arrêt d'avant, par (opération, rang)
+        for tp in getattr(self, 'toolpaths', None) or ():
+            if tp.op_id:
+                rank[tp.op_id] = rank.get(tp.op_id, -1) + 1
+                old[(tp.op_id, rank[tp.op_id])] = bool(getattr(tp, 'on', True))
+        rank = {}
         self.toolpaths = list(toolpaths)
         for tp in self.toolpaths:
             if not hasattr(tp, 'shown'):
                 tp.shown = True
-        self._loading = True
+            if tp.op_id:
+                rank[tp.op_id] = rank.get(tp.op_id, -1) + 1
+            if not hasattr(tp, 'on'):                    # marche/arrêt : comme son devancier (même opération, même
+                tp.on = old.get((tp.op_id, rank.get(tp.op_id)), True) if tp.op_id else True   # rang), sinon en
+        self._loading = True                             # marche — un calcul, une retouche ne le rallument pas
         self.paths.clear()
         ops = self.setup().operations if self.toolpaths else []
         linked = {o.id for o in ops if o.link_previous}
         known = {o.id for o in ops}
         for i, tp in enumerate(self.toolpaths):
-            it = QListWidgetItem(swatch(path_colors()[i % len(path_colors())]),
+            it = QListWidgetItem(power_icon(tp.on),       # l'icône : marche/arrêt ; la case : l'œil
                                  ('↳ ' if tp.op_id and tp.op_id in linked else '') +
                                  ('TE ' if tp.source == 'typeedit' else '') + (tp.name or '—'))
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -5937,13 +6116,62 @@ class CamPanel(QWidget):
                                        for i, tp in enumerate(self.toolpaths) if tp.shown])
 
     def checked_paths(self) -> list:
-        return [tp for tp in self.toolpaths if tp.shown]
+        """Les parcours en marche (leur bouton marche/arrêt) : ceux qui vont au programme, à sa simulation, à ses
+        contrôles — montrés ou cachés (l'œil ne compte que pour l'écran)."""
+        return [tp for tp in self.toolpaths if getattr(tp, 'on', True)]
+
+    def set_path_on(self, i: int, on: bool) -> bool:
+        """Le bouton marche/arrêt du parcours `i` (liste des parcours, ligne d'un parcours sans opération) : dans le
+        programme écrit (SimPL…), son aperçu, ses contrôles et la simulation, ou non — l'œil, lui, ne fait que le
+        montrer ou le cacher. Rend vrai s'il a changé."""
+        if not 0 <= i < len(self.toolpaths) or bool(getattr(self.toolpaths[i], 'on', True)) == bool(on):
+            return False
+        from .eye import power_icon
+        self.toolpaths[i].on = bool(on)
+        self._sim_only = ''
+        was, self._loading = self._loading, True
+        try:
+            if i < self.paths.count():
+                self.paths.item(i).setIcon(power_icon(bool(on)))
+            loose = getattr(self, '_loose', [])
+            if i in loose:                               # sa ligne dans la liste des opérations
+                cell = self.ops.item(getattr(self, '_n_ops', 0) + loose.index(i), 0)
+                want = Qt.CheckState.Checked if on else Qt.CheckState.Unchecked
+                if cell is not None and cell.checkState() != want:
+                    cell.setCheckState(want)
+        finally:
+            self._loading = was
+        self._sync_eyes()                                # le bouton de son opération (mi-teinte…)
+        self._report()                                   # durée, compte rendu, programme (prévenu)
+        self._schedule_3d()
+        return True
+
+    def _path_eye(self, index, on: bool):
+        from .eye import eye_icon
+        colors = path_colors()
+        return eye_icon(on, colors[index.row() % len(colors)])
+
+    @staticmethod
+    def _path_eye_tip(_index, on: bool) -> str:
+        return tr('Parcours affiché — cliquez pour le cacher') if on else tr('Parcours caché — cliquez pour l’afficher')
+
+    def _path_on_tip(self, index) -> str:
+        r = index.row()
+        state = self.path_state(self.toolpaths[r]) if 0 <= r < len(self.toolpaths) else False
+        return self._state_tip(state) + ' (' + tr('Ctrl+Espace') + ')'
+
+    def _path_on_clicked(self, index) -> None:
+        r = index.row()
+        if 0 <= r < len(self.toolpaths):
+            self.set_path_on(r, not getattr(self.toolpaths[r], 'on', True))
 
     def _path_checked(self, item) -> None:
+        """L'œil d'un parcours (la case de sa ligne) : montré ou caché, à l'écran seulement."""
         if self._loading:
             return
         r = self.paths.row(item)
         if 0 <= r < len(self.toolpaths):
+            self._sim_only = ''
             self.toolpaths[r].shown = item.checkState() == Qt.CheckState.Checked
             self._sync_eyes()
             self._repaint_paths()
@@ -6361,30 +6589,33 @@ class CamPanel(QWidget):
             return [ops[r] for r in rows if ops[r].enabled]
         return [o for o in ops if o.enabled]
 
-    def hidden_active_ops(self) -> list:
-        """Les opérations actives dont tous les parcours calculés sont cachés : hors du programme écrit."""
-        shown: dict = {}
+    def stopped_active_ops(self) -> list:
+        """Les opérations actives dont tous les parcours calculés sont à l'arrêt (bouton marche/arrêt) : hors du
+        programme écrit — le compte rendu du panneau et la fenêtre Programme le disent."""
+        on: dict = {}
         for tp in self.toolpaths:
             if tp.op_id:
-                shown[tp.op_id] = shown.get(tp.op_id, False) or bool(getattr(tp, 'shown', True))
-        return [o for o in self.setup().operations if o.enabled and o.id in shown and not shown[o.id]]
+                on[tp.op_id] = on.get(tp.op_id, False) or bool(getattr(tp, 'on', True))
+        return [o for o in self.setup().operations if o.enabled and o.id in on and not on[o.id]]
 
-    def show_all_paths(self) -> int:
-        """Tous les parcours des opérations de nouveau montrés (dans le programme) ; rend leur nombre."""
+    def all_paths_on(self) -> int:
+        """Tous les parcours des opérations de nouveau en marche (le programme entier) ; rend leur nombre."""
         n = 0
         for tp in self.toolpaths:
-            if tp.op_id and not getattr(tp, 'shown', True):
-                tp.shown = True
+            if tp.op_id and not getattr(tp, 'on', True):
+                tp.on = True
                 n += 1
         if n:
+            self._sim_only = ''
             self.display(self.toolpaths)
         return n
 
     def show_chosen_3d(self, show: bool = True) -> list:
         """« Parcours 3D » : les parcours calculés (ou refaits si le dessin a changé), puis ceux des opérations choisies
-        dans la liste (`chosen_ops`) montrés — eux seuls : les autres sont cachés, donc hors du programme écrit, et le
-        panneau le dit — en 3D, dans le calque Trajectoires (`show`). Rend ces parcours."""
+        dans la liste (`chosen_ops`) montrés — eux seuls : les autres sont cachés, à l'écran seulement (le programme
+        suit les boutons marche/arrêt) — en 3D, dans le calque Trajectoires (`show`). Rend ces parcours."""
         self._cancelled = False
+        self._sim_only = ''
         chosen = self.chosen_ops()
         if not chosen:
             self.info.setText(tr('Aucune opération active parmi celles choisies dans la liste')
@@ -6451,6 +6682,7 @@ class CamPanel(QWidget):
         """Tous les parcours ; `only` : objets à usiner (mode sélection) au
         lieu de la sélection du moment ; `every` : tous les objets, même en
         mode sélection (recalcul d'un calcul fait en mode couleur)."""
+        self._sim_only = ''
         self._cancelled = False
         if dates:
             self.refresh_dates()
@@ -6496,30 +6728,37 @@ class CamPanel(QWidget):
         from ..cam import timing as TM
         s = self.setup()
         lines = []
-        est = TM.estimate(self.toolpaths, s, TM.spec_from_settings(self.win.settings))
+        known = {o.id: o for o in s.operations}
+        state = {id(tp): self.path_state(tp, known) for tp in self.toolpaths}
+        run = [tp for tp in self.toolpaths if state[id(tp)] is True]   # le temps : ce qui est écrit, seulement
+        est = TM.estimate(run, s, TM.spec_from_settings(self.win.settings))
         secs = {id(tp): sec for tp, sec in est['paths']}
+        out = {False: tr('{0} : à l’arrêt, hors du programme et du temps estimé'),
+               'désactivée': tr('{0} : opération désactivée, hors du programme et du temps estimé'),
+               'retirée': tr('{0} : opération retirée, hors du programme et du temps estimé')}
         for tp in self.toolpaths:
             feed_len, rapid_len = tp.lengths()
             lines.append(tr('{0} : {1} mm en avance, {2} mm en rapide, ~{3}').format(
-                tp.name or '—', f'{feed_len:.0f}', f'{rapid_len:.0f}', TM.format_duration(secs.get(id(tp), 0.0))))
+                tp.name or '—', f'{feed_len:.0f}', f'{rapid_len:.0f}', TM.format_duration(secs.get(id(tp), 0.0)))
+                if state[id(tp)] is True else out[state[id(tp)]].format(tp.name or '—'))
             lines += ['  ⚠ ' + w for w in tp.warnings]
         if self.toolpaths:
             lines.append(tr('Temps estimé : ~{0}, dont {1} changement(s) d\'outil (~{2})').format(
                 TM.format_duration(est['total']), est['changes'], TM.format_duration(est['change_s'])))
         self.last_estimate = est
         total = lines[-1] if self.toolpaths else None    # replié : la ligne du temps estimé
-        hidden = self.hidden_active_ops()
-        if hidden:                                       # un programme partiel ne s'écrit pas sans qu'on le sache
-            lines.append('⚠ ' + tr('{0} opération(s) active(s) cachée(s) : hors du programme (œil de leur ligne ; '
-                                    '« Parcours 3D » sans ligne choisie les montre toutes)').format(len(hidden)))
+        stopped = self.stopped_active_ops()
+        if stopped:                                      # un programme partiel ne s'écrit pas sans qu'on le sache
+            lines.append('⚠ ' + tr('{0} opération(s) active(s) à l’arrêt : hors du programme (bouton marche/arrêt de '
+                                    'leur ligne)').format(len(stopped)))
         self.info.setText('\n'.join(lines), total)
         self.info_area.show_end()                        # déplié et long : la fin en vue (temps estimé, avertissement)
         self._program_changed()
 
     def simulate(self, exec_dialog: bool = True):
-        """Simulation d'enlèvement de matière des parcours cochés (calculés
-        au besoin)."""
-        tps = self.current_paths(dates=False)
+        """Simulation d'enlèvement de matière des parcours qui vont au programme
+        (bouton marche/arrêt, pas l'œil ; calculés au besoin)."""
+        tps = self.sim_paths(self.current_paths(dates=False))
         if not tps:
             return None
         from ..cam import simulate as SIM
@@ -6648,10 +6887,10 @@ class CamPanel(QWidget):
         res.warnings = ([mine_note] if mine_note else []) + [w for _p, r in results for w in r.warnings]
         msg = tr('Programme écrit : {0}').format(', '.join(written))
         msg += '\n' + tr('Dossier : {0}').format(out.parent)
-        hidden = self.hidden_active_ops()
-        if hidden:
-            msg += '\n\n⚠ ' + tr('Programme partiel : {0} opération(s) active(s) cachée(s) n\'y sont pas ({1}).').format(
-                len(hidden), ', '.join(self.op_label(o) for o in hidden[:8]))
+        stopped = self.stopped_active_ops()
+        if stopped:
+            msg += '\n\n⚠ ' + tr('Programme partiel : {0} opération(s) active(s) à l’arrêt n’y sont pas ({1}).').format(
+                len(stopped), ', '.join(self.op_label(o) for o in stopped[:8]))
         jpath = self.write_journal(out, key, tps, written)
         if jpath is not None:
             msg += '\n' + tr('Journal : {0}').format(jpath.name)
@@ -6773,16 +7012,19 @@ class CamPanel(QWidget):
         return written
 
     def program_dir(self) -> pathlib.Path:
-        """Dossier proposé pour un programme : celui du dessin, sinon le
+        """Dossier proposé pour un programme : le dossier de travail fixé
+        (F10 › Dossiers de travail, s'il est là), sinon celui du dessin, sinon le
         dernier utilisé, sinon Documents — jamais le dossier de VectorDrive
         (installation ou sources : un programme n'a rien à y faire)."""
         from PySide6.QtCore import QStandardPaths
         app = pathlib.Path(__file__).resolve().parents[2]
         src = self.win.path or self.doc.source_path
-        cands = [str(pathlib.Path(src).parent) if src else '',
-                 str(self.win.settings.value('dossier/programmes', '') or ''),
-                 QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)]
-        for c in cands:
+        from . import workdirs as WD                     # noté (WD.issue) : pathmemory garde le dossier rendu, et
+        cands = [(WD.fixed_folder(self.win.settings, 'programmes'), WD.FIXED),   # « Autres fenêtres » n'y vaut pas
+                 (str(pathlib.Path(src).parent) if src else '', WD.LAST),
+                 (str(self.win.settings.value('dossier/programmes', '') or ''), WD.LAST),
+                 (QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation), 'repli')]
+        for c, how in cands:
             if not c:
                 continue
             p = pathlib.Path(c)
@@ -6791,7 +7033,9 @@ class CamPanel(QWidget):
             except (OSError, ValueError):
                 inside = True
             if p.is_dir() and not inside:
+                WD.issue('programmes', p, how)
                 return p
+        WD.issue('programmes', pathlib.Path.home(), 'repli')
         return pathlib.Path.home()
 
     def journal_enabled(self) -> bool:

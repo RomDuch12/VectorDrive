@@ -1485,7 +1485,10 @@ class ToolLibraryDialog(QDialog):
 
     def _import_start(self) -> str:
         s = getattr(self.parent(), 'settings', None)
-        return str(s.value('dossier/import_outils', '') or '') if s is not None else ''
+        if s is None:
+            return ''
+        from .workdirs import start_folder              # F10 › Dossiers de travail : fixé, sinon le dernier
+        return start_folder(s, 'import_outils')
 
     def _remember_import(self, path) -> None:
         s = getattr(self.parent(), 'settings', None)

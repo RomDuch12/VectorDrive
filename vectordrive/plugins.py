@@ -190,9 +190,12 @@ class Api:
 
     def add_font_format(self, label: str, extensions, *, font_name: Callable, glyph: Callable, metrics: Callable,
                         kerning: Callable | None = None, characters: Callable | None = None,
-                        clear: Callable | None = None, dirs=(), clonable: bool = False) -> None:
+                        clear: Callable | None = None, dirs=(), clonable: bool = False,
+                        filter_label: str = '') -> None:
         """Un format de polices propriétaire, lu sur le poste (jamais redistribué) : `extensions` ('.xyz', …) ;
-        `label` : l'infobulle de ses polices dans les listes ; `font_name(chemin)` → nom ou None ;
+        `label` : l'infobulle de ses polices dans les listes ; `filter_label` : le libellé court (« TypeEdit ») de
+        leur filtre et de leur section dans la liste des polices — les formats d'un même libellé se partagent le
+        filtre ; sans lui, elles vont avec « Plugins » ; `font_name(chemin)` → nom ou None ;
         `glyph(chemin, caractère)` → (Path, avance) ; `metrics(chemin)` → {'upem', 'ascent', 'descent', 'cap'} ;
         `kerning(chemin, gauche, droite)` ; `characters(chemin)` → codes ; `clear()` : oublier ce qui est lu ;
         `dirs` : ses dossiers ; `clonable` : l'éditeur de polices peut partir de ses polices."""
@@ -202,7 +205,7 @@ class Api:
         fontformats.register(fontformats.FontFormat(
             label=label, extensions=exts, font_name=font_name, glyph=glyph, metrics=metrics, kerning=kerning,
             characters=characters, clear=clear, dirs=tuple(pathlib.Path(d) for d in dirs), clonable=clonable,
-            reader=f'{self.info.module} {self.info.version}'))
+            reader=f'{self.info.module} {self.info.version}', filter_label=str(filter_label or '').strip()))
 
     def add_symbol_root(self, path) -> None:
         self._r.symbol_roots.append(pathlib.Path(path))
@@ -353,6 +356,13 @@ class Api:
     def set_defaults(self, family: str, values: dict) -> None:
         """Réglages par défaut d'une famille (« cljob », « datron »…)."""
         self._r.defaults.setdefault(family, {}).update(values)
+
+    def add_work_folder(self, key: str, label: str, *, last_key: str = '', tip: str = '') -> None:
+        """Une ligne de F10 › Dossiers de travail (dossiers clients…) : le dernier utilisé ou toujours ce dossier.
+        Le plugin prend son dossier de départ par `vectordrive.ui.workdirs.start_folder(settings, key, …)` et retient
+        son dernier dossier dans `last_key` (vide : « dossier/<key> »)."""
+        from .ui import workdirs
+        workdirs.register(key, label, last_key=last_key, tip=tip)
 
     # --- fichiers, distribution ----------------------------------------------------------
     def set_vnd_template(self, path) -> None:

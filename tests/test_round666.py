@@ -144,7 +144,7 @@ class TestWindow(unittest.TestCase):
         prog = model.Toolpath('', '', [model.Move('feed', 0, 0, 0), model.Move('feed', 5, 0, 0)], name='prog.nc')
         prog.shown = True
         for tp in cp.toolpaths:
-            tp.shown = False
+            tp.on = False                                                         # arrêtés (round 1163)
         cp.display([prog] + list(cp.toolpaths))
         self.move_part()
         calls, patch = self.counted()

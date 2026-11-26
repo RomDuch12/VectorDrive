@@ -1,4 +1,4 @@
-"""Round 444 : Ctrl+7 sens des contours (vert anti-horaire, bleu horaire, noir ouvert),
+"""Round 444 : Ctrl+7 sens des contours (vert horaire, bleu anti-horaire, noir ouvert : round 1169),
 Ctrl+8 couleurs des outils, Ctrl+9 remplissage ; mêmes réglages à l'export ; 3D filaire par défaut."""
 import os
 import tempfile
@@ -44,8 +44,8 @@ class TestOrient(unittest.TestCase):
 
         def px(x, y):                                            # mm du dessin → pixel (y vers le haut)
             return QColor(img.pixel(int((x + 1) * k), int((11 - y) * k)))
-        self.assertGreater(px(0, 5).green(), px(0, 5).blue())        # anti-horaire : vert
-        self.assertGreater(px(20, 5).blue(), px(20, 5).green())      # horaire : bleu
+        self.assertGreater(px(0, 5).blue(), px(0, 5).green())        # anti-horaire : bleu (round 1169)
+        self.assertGreater(px(20, 5).green(), px(20, 5).blue())      # horaire : vert
         self.assertLess(px(45, 5).lightness(), 80)                   # ouvert : noir
 
 

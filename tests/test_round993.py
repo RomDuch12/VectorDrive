@@ -101,7 +101,7 @@ class Window(unittest.TestCase):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix='vd993_'))
 
     def tearDown(self):
-        for k in ('fenetre', 'format', 'echelle', 'quoi'):
+        for k in ('fenetre', 'format', 'echelle', 'quoi', 'couleurs'):
             self.win.settings.remove(f'impression/{k}')
 
     def test_shortcuts(self):
@@ -115,7 +115,7 @@ class Window(unittest.TestCase):
 
     def test_first_time_from_f10(self):
         from vectordrive.ui.print_dialog import PrintDialog
-        for k in ('fenetre', 'format', 'orientation', 'marge', 'plaque', 'echelle', 'quoi'):
+        for k in ('fenetre', 'format', 'orientation', 'marge', 'plaque', 'echelle', 'quoi', 'couleurs'):
             self.win.settings.remove(f'impression/{k}')
         self.assertEqual(self.win._print_seed(), {})                          # rien réglé : tout d'office
         self.win.settings.setValue('impression/format', 'A3')

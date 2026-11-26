@@ -98,6 +98,7 @@ class TestView(unittest.TestCase):
             tps = [model.Toolpath(down.id, '', [model.Move('feed', 45, 5, 0)], name='a'),
                    model.Toolpath(top.id, '', [model.Move('feed', 5, 5, 0)], name='b')]
             cp.checked_paths = lambda: list(tps)
+            cp.toolpaths = list(tps)                                            # la vue montre l'œil ouvert
             p.refresh()
             self.assertGreaterEqual(p.setup_view.findData(V3.ALL_SETUPS), 0)
             p.setup_view.setCurrentIndex(p.setup_view.findData('-Z|1'))

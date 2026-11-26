@@ -49,6 +49,44 @@ def paint_page(prims, PW: float, PH: float, w: int = PREVIEW_W, h: int = PREVIEW
     return pm
 
 
+def copy_logos(paths, folder) -> tuple:
+    """Chaque logo de `paths` gardé une fois dans `folder` (`symbols.keep_copy`) : rend ({logo d'origine, chemin
+    normalisé : nom de sa copie}, erreurs de copie, copies faites). Sans Qt : se fait aussi dans un fil de calcul
+    (logos d'un partage, round 1164)."""
+    import os
+    import pathlib
+    from .symbols import keep_copy
+    copies, errors, made = {}, [], []
+    for p in paths:
+        try:
+            kept = keep_copy(p, folder, made)
+        except OSError as ex:
+            errors.append(f'{pathlib.Path(p).name} ({ex})')
+            continue
+        if kept is not None and os.path.normcase(str(kept)) != os.path.normcase(p):
+            copies[os.path.normcase(p)] = kept.name
+    return copies, errors, made
+
+
+def store_logo_copies(settings, copies: dict) -> None:
+    """Les copies retenues (`bat/logos_copies`) complétées par `copies`, gardées pour les derniers logos employés
+    (`bat/logos`) seulement."""
+    import json
+    import os
+    v = settings.value(BatDialog.LOGOS_KEY, [])
+    if isinstance(v, str):
+        v = [v] if v else []
+    keys = {os.path.normcase(str(p)) for p in (v or [])}
+    try:
+        old = json.loads(str(settings.value(BatDialog.COPIES_KEY, '') or '{}'))
+    except ValueError:
+        old = {}
+    old = {str(k): str(x) for k, x in old.items()} if isinstance(old, dict) else {}
+    old.update(copies)
+    settings.setValue(BatDialog.COPIES_KEY, json.dumps({k: x for k, x in old.items() if k in keys},
+                                                       ensure_ascii=False))
+
+
 class BatDialog(QDialog):
     """Cartouche (client, référence…) et mise en page (format, orientation,
     échelle, marge, éléments affichés) ; aperçu mis à jour en direct."""
@@ -85,6 +123,8 @@ class BatDialog(QDialog):
             e.textChanged.connect(self._later)
             f1.addRow(tr(label), e)
             self.edits[key] = e
+        # round 1160 : un dessin sans BAT ouvre un cartouche vide ; le client se choisit dans le carnet
+        self.edits['client'].setPlaceholderText(tr('Choisir dans le carnet de clients'))
         self.notes = QPlainTextEdit(info.notes)
         self.notes.setFixedHeight(64)
         self.notes.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -248,7 +288,7 @@ class BatDialog(QDialog):
         right.addWidget(g0)
         self._mem_presets: dict = {}
         self._fill_presets()
-        self._fill_clients()
+        self._fill_clients(str(info.client or ''))         # le client du dessin, s'il est au carnet
         self.preview = QLabel()
         self.preview.setFixedSize(PREVIEW_W, PREVIEW_H)
         right.addWidget(self.preview)
@@ -622,12 +662,11 @@ class BatDialog(QDialog):
     def remember_logos(self) -> list:
         """Les logos employés reviennent dans les listes des prochains BAT, et chacun est copié une fois dans
         « Logos BAT » de la bibliothèque interne : il reste disponible même si l'original bouge. Rend les erreurs de
-        copie (jamais levées : le BAT se fait) ; `logos_copied` : le nombre de copies faites cette fois."""
-        import json
-        import os
-        import pathlib
-        from .symbols import keep_copy, logo_library
-        self.logos_copied = 0
+        copie (jamais levées : le BAT se fait) ; `logos_copied` : le nombre de copies faites cette fois ;
+        `logos_pending` : les logos d'un partage, pas copiés ici (lecture lente, ou hors d'atteinte : la fenêtre
+        gèlerait) mais par un fil de calcul (`MainWindow._keep_logos_later`, round 1164)."""
+        from .symbols import is_remote, logo_library
+        self.logos_copied, self.logos_pending = 0, []
         s = getattr(self.parent(), 'settings', None)
         if s is None:
             return []
@@ -635,18 +674,9 @@ class BatDialog(QDialog):
         used = list(dict.fromkeys(used))                 # (le même logo en en-tête et en filigrane : une fois)
         recent = (used + [p for p in self._recent_logos() if p not in used])[:self.LOGOS_MAX]
         s.setValue(self.LOGOS_KEY, recent)
-        copies, errors, made = self._logo_copies(), [], []
-        folder = logo_library()
-        for p in used:
-            try:
-                kept = keep_copy(p, folder, made)
-            except OSError as ex:
-                errors.append(f'{pathlib.Path(p).name} ({ex})')
-                continue
-            if kept is not None and os.path.normcase(str(kept)) != os.path.normcase(p):
-                copies[os.path.normcase(p)] = kept.name
-        keys = {os.path.normcase(p) for p in recent}     # (seuls les derniers employés ont besoin de leur copie)
-        s.setValue(self.COPIES_KEY, json.dumps({k: v for k, v in copies.items() if k in keys}, ensure_ascii=False))
+        self.logos_pending = [p for p in used if is_remote(p)]
+        copies, errors, made = copy_logos([p for p in used if p not in self.logos_pending], logo_library())
+        store_logo_copies(s, copies)                     # (seuls les derniers employés ont besoin de leur copie)
         self.logos_copied = len(made)
         return errors
 

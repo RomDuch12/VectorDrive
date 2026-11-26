@@ -113,10 +113,10 @@ class Pocketed(unittest.TestCase):
         self.pocket.enabled = True
         S.apply_faced_all(self.setup, tps)
         self.assertTrue(self.low(eng))
-        tps[0].shown = False                                                 # son parcours décoché
+        tps[0].on = False                                                    # à l'arrêt (round 1163)
         S.apply_faced_all(self.setup, tps)
         self.assertFalse(self.low(eng))
-        tps[0].shown = True
+        tps[0].on = True
         S.apply_faced_all(self.setup, tps)
         self.assertTrue(self.low(eng))
         S.apply_faced_all(self.setup, tps[::-1])                             # la poche passée après : rien n'est vidé
