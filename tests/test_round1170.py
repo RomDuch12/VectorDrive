@@ -251,6 +251,8 @@ class Window(unittest.TestCase):
         self.assertEqual(len(opened), 1, BEFORE)
         self.assertTrue(near(opened[0].start, (-5, 9)) and near(opened[0].end, (15, 9)))
         ref, _ok = parallel.offset_checked(square.path, 3.0)
+        from vectordrive.core import curvefit
+        ref = curvefit.minimal_path(ref, curvefit.TOLERANCE)       # aux points minimaux (F10 › Dessin, d'office)
         closed = [it for it in items if all(k.closed for k in it.path.contours)]
         self.assertEqual(len(closed), 1)
         self.assertEqual(closed[0].path.contours, ref.contours)    # le carré : exactement comme avant

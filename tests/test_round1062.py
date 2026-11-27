@@ -108,8 +108,10 @@ class Rows(WithWindow):
         d = dock(self.w, 'dims')
         m = self.cols.menu(d)
         self.addCleanup(m.deleteLater)
-        first = m.actions()[0]
-        self.assertEqual(first.objectName(), 'panneaux')                     # en tête du clic droit d'un panneau
+        sub = next(a.menu() for a in m.actions() if a.menu() is not None   # rcol2 : au bas du menu court,
+                   and a.menu().objectName() == 'tous_les_panneaux')         # « Tous les panneaux › » (27/11)
+        first = sub.actions()[0]
+        self.assertEqual(first.objectName(), 'panneaux')
         tables = first.defaultWidget().findChildren(C.PanelRows)
         self.assertEqual(len(tables), 1)
         self.assertEqual(set(tables[0].choices), set(p.body.choices))

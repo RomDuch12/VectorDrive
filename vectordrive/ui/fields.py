@@ -13,6 +13,10 @@ lignes de saisie numériques) :
   changent toujours ;
 * la virgule, le point et le point du pavé numérique sont tous acceptés
   comme séparateur décimal, quelle que soit la langue du poste ;
+* à l'ouverture d'une fenêtre de dialogue, son premier champ de saisie prend
+  le focus, toute sa valeur sélectionnée (K en Mode Point : le rayon du
+  congé, la valeur tapée le remplace ; demande du 27/11), sauf si la fenêtre
+  a choisi elle-même son champ ;
 * la touche = ouvre un calcul (core.calc : « 25,4*3 », « (120-10)/7 »,
   « 50*tan(30) », unités « 1in », « 3/4" », « 1'6" », « 2cm ») dont le
   résultat remplace la valeur ; les calculs précédents y sont proposés et
@@ -25,8 +29,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QLocale, QObject, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
-from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSpinBox, QApplication, QDateTimeEdit, QDoubleSpinBox,
-                               QLineEdit, QScrollArea)
+from PySide6.QtWidgets import (QAbstractScrollArea, QAbstractSpinBox, QApplication, QDateTimeEdit, QDialog,
+                               QDoubleSpinBox, QLineEdit, QScrollArea)
 
 
 def numeric_editor(w) -> QLineEdit | None:
@@ -56,9 +60,11 @@ def decimal_point(w: QLineEdit) -> str:
 _POLISH, _FOCUS_IN = QEvent.Type.Polish, QEvent.Type.FocusIn
 _RELEASE, _DOUBLE, _KEY, _WHEEL = (QEvent.Type.MouseButtonRelease, QEvent.Type.MouseButtonDblClick,
                                    QEvent.Type.KeyPress, QEvent.Type.Wheel)
+_SHOW = QEvent.Type.Show
 #: les seuls événements regardés (le filtre voit passer tous ceux de l'application) ; pas la sortie d'un champ, que
-#: Qt envoie aussi pendant la destruction d'une fenêtre (chaque entrée réarme ou désarme le clic)
-_WATCHED = frozenset((_POLISH, _FOCUS_IN, _RELEASE, _DOUBLE, _KEY, _WHEEL))
+#: Qt envoie aussi pendant la destruction d'une fenêtre (chaque entrée réarme ou désarme le clic) ; l'ouverture d'une
+#: fenêtre de dialogue (son premier champ, sélectionné)
+_WATCHED = frozenset((_POLISH, _FOCUS_IN, _RELEASE, _DOUBLE, _KEY, _WHEEL, _SHOW))
 _NO_BUTTONS = QAbstractSpinBox.ButtonSymbols.NoButtons
 
 
@@ -151,12 +157,67 @@ def focus_first(widgets) -> None:
         return
 
 
+def first_field(win):
+    """Le premier élément de `win` (et de ses enfants) qui prend le focus au clavier, dans l'ordre de Tab : montré,
+    actif ; un champ numérique plutôt que sa ligne de saisie ; une zone qui défile (`QScrollArea` et ses sous-classes,
+    un formulaire) ne compte pas, on passe à son contenu — c'est là le seul écart avec l'élément que Qt donne à une
+    fenêtre qui n'a choisi aucun champ. None : aucun."""
+    top = win.window()
+    cur = win
+    for _ in range(100000):
+        cur = cur.nextInFocusChain()
+        if cur is None or cur is win:
+            return None
+        f = _field_of(cur)
+        if f is win or f.window() is not top or not win.isAncestorOf(f) or not f.isEnabled() \
+                or not f.isVisibleTo(win) or not f.focusPolicy() & Qt.FocusPolicy.TabFocus \
+                or isinstance(f, QScrollArea):
+            continue
+        return f
+    return None
+
+
+def select_first_field(win) -> bool:
+    """À l'ouverture d'une petite fenêtre de saisie (K en Mode Point : le rayon du congé ; demande du 27/11) : son
+    premier élément, quand c'est un champ de saisie (numérique, ou ligne de texte), prend le focus, toute sa valeur
+    sélectionnée — la frappe la remplace, Entrée valide, comme F2 (`focus_first`). Rien quand la fenêtre a déjà
+    choisi son champ (`setFocus` avant de s'ouvrir) ou commence par autre chose (liste, case, bouton, onglets) : Qt
+    lui donne alors le même élément qu'avant (une zone qui défile mise à part, voir `first_field`). True : un champ
+    sélectionné."""
+    fw = win.focusWidget()
+    if fw is not None and fw is not win:
+        return False
+    f = first_field(win)
+    if f is None or not (is_value_field(f) or (isinstance(f, QLineEdit) and not f.isReadOnly())):
+        return False
+    focus_first([f])
+    return True
+
+
+def _own_dialog(obj) -> bool:
+    """Une fenêtre de dialogue de l'application (ou d'un plugin), ouverte comme fenêtre et pour être activée : pas
+    une boîte toute faite de Qt ni une de ses sous-classes (QInputDialog, QMessageBox, QFileDialog… gardent leur
+    propre focus), ni une fenêtre posée dans un panneau."""
+    if not isinstance(obj, QDialog) or not obj.isWindow() \
+            or obj.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating):
+        return False
+    return not any(c is not QDialog and issubclass(c, QDialog) and c.__module__.startswith('PySide6')
+                   for c in type(obj).__mro__)
+
+
 class NumericInputFilter(QObject):
     """Filtre d'événements de l'application (voir le module)."""
 
     def eventFilter(self, obj, ev) -> bool:                      # noqa: N802 (API Qt)
         t = ev.type()
         if t not in _WATCHED:
+            return False
+        if t == _SHOW:                                              # une fenêtre de dialogue qui s'ouvre : son
+            if not ev.spontaneous() and _own_dialog(obj):           # premier champ, toute sa valeur sélectionnée
+                try:                                                # (demande du 27/11 ; pas au retour d'une
+                    select_first_field(obj)                         # fenêtre réduite)
+                except RuntimeError:                                # (un élément déjà détruit côté Qt : rien)
+                    pass
             return False
         if t == _POLISH:                                            # jamais de flèches (demande du 15/11)
             if isinstance(obj, QAbstractSpinBox) and obj.buttonSymbols() != _NO_BUTTONS:
@@ -260,6 +321,10 @@ def calculate(le: QLineEdit, expr: str | None = None) -> float | None:
                                         [cur] + [h for h in hist if h != cur], 0, True)
         if not ok:
             return None
+        if box is not None and box.specialValueText() and box.value() == box.minimum() \
+                and expr.strip() == cur == box.specialValueText().strip():
+            return None                                 # le texte spécial validé tel quel (valeur de l'outil d'un
+        #                                                 champ « 0 = l'outil », « libre »…) : rien de figé ni calculé
     try:
         v = evaluate(expr, ans)
     except ValueError as ex:

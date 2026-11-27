@@ -114,16 +114,33 @@ class Installed(NamedTuple):
     reused: bool
 
 
+class Book(NamedTuple):
+    """Le carnet de clients du BAT d'une reprise (`carry_book`) : `added`, les clients ajoutés, dont `logos` avec leur
+    logo ; `kept`, ceux déjà là, gardés tels quels ; `chosen`, le dossier choisi par l'ancienne version (rien n'est
+    alors copié) ; `shared`, le dossier choisi ici, où rien n'est versé d'office, et `waiting`, les clients de
+    l'ancienne alors laissés chez elle ; `replaced`, la copie de secours (« fichier → copie ») ; `failed`."""
+    added: int = 0
+    logos: int = 0
+    kept: int = 0
+    chosen: str = ''
+    shared: str = ''
+    waiting: int = 0
+    replaced: list = []
+    failed: list = []
+
+
 class Carried(NamedTuple):
     """La reprise : `copied`, le nombre de fichiers copiés ; `failed`, ceux qui n'ont pas pu l'être (« chemin :
     raison ») ; `skipped`, ceux que la nouvelle version avait déjà, différents, et qu'elle garde ; `files`, la liste
     [chemin relatif au dossier de l'application, taille, date en ns] des fichiers de l'ancienne version repris tels
     quels (copiés, ou déjà là à l'identique). `failed` ou `skipped` non vide : la reprise n'est pas complète, et
-    c'est dit (l'ancienne version, elle, reste toujours, avec ses fichiers)."""
+    c'est dit (l'ancienne version, elle, reste toujours, avec ses fichiers). `book` : le carnet de clients du BAT
+    (`carry_book` ; ses échecs sont aussi dans `failed`)."""
     copied: int
     failed: list
     skipped: list
     files: list
+    book: Book = Book()
 
 
 # --- dossiers ---------------------------------------------------------------------------------------------------
@@ -770,7 +787,65 @@ def _untouched(path, key: str, ship: dict | None, st) -> bool:
     return want is not None and want[0] == st.st_size and _crc(path) == want[1]
 
 
-def carry_settings(old_app_dir, new_app_dir) -> Carried:
+#: le carnet de clients du BAT (`io.clients`), dans `donnees` : son `clients.json` et ses logos ne sont jamais copiés
+#: fichier par fichier — fusionnés (`carry_book`, demande du 27/11 : « maj garder le carnet client ») ; ses autres
+#: fichiers suivent la règle des données
+BOOK_SUB = 'clients'
+
+
+def _book_file(rel: pathlib.Path, name: str) -> bool:
+    """`donnees/<rel>/<name>` est un fichier du carnet de clients : son `clients.json` ou un de ses logos."""
+    from .io import clients as CL
+    parts = [p.lower() for p in rel.parts]
+    return bool(parts) and parts[0] == BOOK_SUB and ((len(parts) == 1 and name.lower() == CL.FILE)
+                                                     or (len(parts) > 1 and parts[1] == CL.LOGOS))
+
+
+def chosen_book(where) -> str:
+    """Le dossier du carnet de clients choisi par une version (réglage `bat/clients`, F10 › BAT : un dossier partagé…)
+    — `where` : ses réglages (QSettings) ou son VectorDrive.ini, lu seulement ; '' : celui de ses données."""
+    from PySide6.QtCore import QSettings
+    from .io import clients as CL
+    s = where if hasattr(where, 'value') else QSettings(str(where), QSettings.Format.IniFormat)
+    return str(s.value(CL.SETTING, '') or '').strip().strip('"')
+
+
+def book_taken(book: Book, where) -> bool:
+    """Le dossier choisi par l'ancienne version (`book.chosen`) est celui de cette version (`where` : ses réglages ou
+    son VectorDrive.ini) — chemins comparés comme texte, sans accès au réseau."""
+    return bool(book.chosen) and _norm(chosen_book(where)) == _norm(book.chosen)
+
+
+def carry_book(old_app, new_app, here: str | None = None) -> Book:
+    """Le carnet de clients du BAT de l'ancienne version (demande du 27/11 : « maj garder le carnet client ») :
+    - elle pointait vers un dossier choisi (réseau…) : rien n'est copié, son réglage suit les autres (`chosen`) ;
+    - cette version a un dossier choisi (`here`, d'office lu dans son VectorDrive.ini) : peut-être partagé par
+      d'autres postes — rien n'y est versé d'office, ni copie de secours (`shared`, `waiting`, dit dans le bilan) ;
+    - sinon son carnet (`donnees/clients`) va dans `donnees/clients` d'ici : copié s'il n'y en a pas, sinon fusionné
+      (`io.clients.merge`) — clients d'ici gardés tels quels, ceux qui manquent ajoutés avec leur logo, rien
+      d'écrasé, le `clients.json` d'ici copié d'abord (`….avant_reprise`) ; illisible : jamais perdu (dit).
+    Rien n'est écrit dans l'ancien dossier."""
+    from .io import clients as CL
+    old, new = pathlib.Path(old_app), pathlib.Path(new_app)
+    chosen = chosen_book(old / INI)
+    if chosen:
+        return Book(chosen=chosen)
+    src = old / DATA / BOOK_SUB
+    if _is_link(src) or not (src / CL.FILE).is_file():
+        return Book()
+    here = chosen_book(new / INI) if here is None else here
+    if here:
+        return Book(shared=here, waiting=len(CL.load(src)))
+    target = new / DATA / BOOK_SUB
+    try:
+        m = CL.merge(src, target, backup=lambda f: f'{f} → {_backup(f).name}')
+    except OSError as ex:
+        return Book(failed=[f'{target} : {ex.strerror or ex}'])
+    return Book(len(m.added), m.logos, m.kept, replaced=m.replaced, failed=m.failed)
+
+
+def carry_settings(old_app_dir, new_app_dir, *, ini: bool = True, keep: bool = False,
+                   stop: list | None = None, book_here: str | None = None) -> Carried:
     """« Reprendre ses paramètres » : `VectorDrive.ini`, le dossier `donnees` et la bibliothèque interne
     (`bibliotheque`, à côté de l'exécutable : symboles ajoutés, « Logos BAT », « Favoris ») de l'application en cours
     (portable) copiés dans la nouvelle. Fusion prudente : dans `donnees`, un fichier déjà là n'est remplacé que s'il
@@ -781,7 +856,12 @@ def carry_settings(old_app_dir, new_app_dir) -> Carried:
     place du fichier (`os.replace`). Un fichier gardé par la nouvelle version, de contenu différent, n'est pas repris
     (`skipped`) — sauf s'il est celui de l'archive de l'ancienne, tel quel (livré, pas à l'utilisateur). Application
     en cours non portable (`old_app_dir` None, ou sans VectorDrive.ini : réglages dans le registre du poste) : rien à
-    copier. Rend `Carried` : rien n'est passé sous silence."""
+    copier. `ini` faux : `VectorDrive.ini` laissé (la reprise d'une ancienne version pose ses réglages un par un,
+    `merge_settings`) ; `keep` : aucun fichier de `donnees` déjà là n'est remplacé. Fichiers provisoires (`.tmp`,
+    `.vd_copie`) jamais repris. `stop` (une liste) : Annuler, pris entre deux fichiers, n'est pas levé — la copie
+    s'arrête, `stop` reçoit vrai et ce qui a été copié est rendu tel quel. Le carnet de clients du BAT n'est pas
+    copié fichier par fichier : `carry_book` (`book_here` : le dossier choisi du carnet de cette version, '' : ses
+    données ; None : lu dans son VectorDrive.ini). Rend `Carried` : rien n'est passé sous silence."""
     failed: list[str] = []
     skipped: list[str] = []
     files: list[list] = []
@@ -824,36 +904,686 @@ def carry_settings(old_app_dir, new_app_dir) -> Carried:
         files.append([inner, st.st_size, st.st_mtime_ns])
         count[0] += 1
 
-    if settings_state(old / INI) is not False:           # des réglages (ou illisible : la copie le dira)
+    if ini and settings_state(old / INI) is not False:   # des réglages (ou illisible : la copie le dira)
         put(old / INI, new / INI, INI, lambda d, s: not has_settings(d) or _older(d, s),
             lambda d: settings_state(d) is not False)
+    try:
+        for sub in (DATA, LIBRARY):
+            base = old / sub
+            if not os.path.lexists(base):
+                continue
+            if _is_link(base) or not base.is_dir():          # jonction : jamais suivie, donc pas reprise
+                skipped.append(str(base))
+                continue
+            def bad(ex, failed=failed):
+                failed.append(f'{ex.filename} : {ex.strerror}')
+            for folder, dirs, names in os.walk(base, onerror=bad):
+                here = pathlib.Path(folder)
+                rel = here.relative_to(base)
+                if sub == DATA and not rel.parts:
+                    dirs[:] = [d for d in dirs if d not in NOT_CARRIED]
+                for d in list(dirs):
+                    if _is_link(here / d):
+                        dirs.remove(d)
+                        skipped.append(str(here / d))
+                for name in names:
+                    P.check()
+                    if name.lower().endswith(('.lock', '.tmp', PART)):     # verrous, fichiers en cours d'écriture
+                        continue
+                    if sub == DATA and _book_file(rel, name):        # le carnet de clients : fusionné à part
+                        continue
+                    src = here / name
+                    if _is_link(src):
+                        skipped.append(str(src))
+                        continue
+                    put(src, new / sub / rel / name, (pathlib.PurePosixPath(sub) / rel.as_posix() / name).as_posix(),
+                        lambda d, s: not keep and sub == DATA and _older(d, s), lambda d: d.stat().st_size > 0)
+    except P.Cancelled:
+        if stop is None:
+            raise
+        stop.append(True)                                # Annuler : ce qui est copié est rendu
+    if stop:                                             # arrêtée : le carnet n'est pas fusionné (dit par `stopped`)
+        return Carried(count[0], failed, skipped, files, Book(chosen=chosen_book(old / INI)))
+    book = carry_book(old, new, book_here)
+    return Carried(count[0], failed + list(book.failed), skipped, files, book)
+
+
+# --- reprendre une ancienne version portable (demandes du 27/11) ----------------------------------------------------
+#: les dossiers favoris (fenêtre Ouvrir) et les dossiers de la bibli : comptés dans le bilan d'une reprise
+FAVORITES_KEY, BIBLI_KEY = 'navigateur/favoris', 'navigateur/dossiers'
+#: dans `donnees` : ce qui ne dit rien de l'usage d'une version (caches, journal) — pas compté dans son contenu
+_NOT_CONTENT = {'polices.json', 'favoris_index.json', 'symboles_textes.json', 'erreurs.txt', 'formes_polices'}
+#: la session d'une version portable, dans `donnees`
+SESSION_SUB = 'session'
+#: « Mes outils », dans `donnees` : fusionnés à la reprise (jamais remplacés ni perdus)
+TOOLS_REL = ('outils', 'tools.json')
+#: une version servie pour de vrai : une session et au moins autant de réglages (une version lancée pour essai n'a que
+#: ceux de sa fenêtre)
+REAL_KEYS = 10
+#: reprise coupée : au plus autant de tentatives (la marque les compte), puis abandon, dit dans le bilan
+ADOPT_TRIES = 2
+#: reprise à la main (cette version a déjà ses réglages) : ces listes sont réunies, celles d'ici d'abord, sans
+#: doublon — listes de réglages, listes en texte « ; », listes en JSON ; les autres réglages déjà posés ici restent
+UNION_LISTS = ('navigateur/favoris', 'navigateur/dossiers', 'symboles/favoris', 'symboles/dossiers', 'ruban/favoris')
+UNION_JOINED = ('polices/dossiers', 'symboles/dossiers_extra', 'plugins/dossiers')
+UNION_JSON = ('outils/favoris',)
+#: parmi elles, celles qui ne sont pas des chemins (des commandes du ruban) : comparées telles quelles
+UNION_NOT_PATHS = ('ruban/favoris',)
+#: reprise à la main : ces réglages, vides ici (la fenêtre des options écrit chaque champ, vide compris : « vide » y
+#: dit « d'office »), prennent la valeur de l'ancienne version — le dossier choisi du carnet de clients (seulement si
+#: le carnet des données d'ici est vide : `adopt_previous`)
+FILL_EMPTY = ('bat/clients',)
+
+
+class Adopted(NamedTuple):
+    """Une reprise d'ancienne version (`adopt_previous`) : `name`, son nom (le dossier décompressé) ; `folder`, son
+    dossier d'application ; `copied`, les fichiers copiés (réglages compris) ; `tabs`, les onglets passés avec leurs
+    parcours et le mémo de leur calcul ; `handover`, leur passage (`donnees/session_maj/…`) ou None ; `favorites`,
+    `bibli` : les dossiers favoris et les dossiers de la bibli repris ; `failed` (« chemin : raison ») et `skipped`
+    (fichiers que cette version garde) ; `replaced` : les fichiers de cette version remplacés, chacun avec sa copie de
+    secours (« fichier → copie ») ; `stopped` : la copie a été arrêtée (Annuler) ; `kept` : réglages déjà posés ici,
+    gardés (reprise à la main) ; `language` : la langue reprise, qui ne s'applique qu'au prochain lancement ('' :
+    inchangée) ; `book`, le carnet de clients du BAT (`Book`), `book_taken`, le dossier choisi par l'ancienne version
+    repris ici, `book_here`, le dossier choisi ici (gardé), `book_local`, les clients du carnet des données d'ici,
+    gardé parce qu'il n'est pas vide (le dossier choisi par l'ancienne n'est alors pas repris) — rien n'est passé
+    sous silence."""
+    name: str
+    folder: str
+    copied: int
+    tabs: int
+    handover: pathlib.Path | None
+    favorites: int
+    bibli: int
+    failed: list
+    skipped: list
+    replaced: list = []
+    stopped: bool = False
+    kept: int = 0
+    language: str = ''
+    book: Book = Book()
+    book_taken: bool = False
+    book_here: str = ''
+    book_local: int = 0
+
+
+class Candidate(NamedTuple):
+    """Une ancienne version portable proposée à la reprise : son dossier d'application, son nom, sa version (lue de
+    sa marque ou de son nom ; '' : inconnue), sa dernière utilisation (date, 0 : inconnue), les onglets de sa session,
+    les fichiers de sa bibliothèque, ses dossiers favoris, les dossiers de sa bibli, ses réglages, ses fichiers de
+    données (hors session, récupération, caches), son édition ('' : sans)."""
+    app: pathlib.Path
+    name: str
+    version: str
+    last_use: float
+    tabs: int
+    library: int
+    favorites: int
+    bibli: int
+    keys: int
+    files: int
+    edition: str = ''
+
+
+def same_place(a, b) -> bool:
+    """Le même dossier : chemins comparés tels quels, puis résolus (jonction, lien, lecteur réseau ou chemin UNC)."""
+    if _norm(a) == _norm(b):
+        return True
+    try:
+        return _real(a) == _real(b)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def version_label(app) -> str:
+    """Le nom d'une version portable : le dossier décompressé (celui qui contient `VectorDrive/`)."""
+    app = pathlib.Path(app)
+    return app.parent.name if app.name.lower() == 'vectordrive' else app.name
+
+
+def _listed(value) -> list:
+    """Une liste des réglages (INI : une liste d'un seul élément relue en texte)."""
+    if value is None or value == '':
+        return []
+    return [value] if isinstance(value, str) else [v for v in value if v]
+
+
+def old_app_of(folder) -> pathlib.Path | None:
+    """Le dossier d'application d'une version portable de VectorDrive qui a servi : `folder` lui-même ou son
+    `VectorDrive/` — VectorDrive.exe et un VectorDrive.ini qui a des valeurs. None : ce n'en est pas une."""
+    folder = pathlib.Path(folder)
+    for cand in (folder, folder / 'VectorDrive'):
+        try:
+            if (cand / EXE).is_file() and has_settings(cand / INI):
+                return cand
+        except OSError:
+            pass
+    return None
+
+
+def _count_files(base: pathlib.Path, skip=(), cap: int = 200_000) -> int:
+    """Les fichiers d'un dossier (liens jamais suivis) ; `skip` : noms de dossiers ou de fichiers du premier niveau
+    laissés de côté."""
+    n = 0
+    if not base.is_dir() or _is_link(base):
+        return 0
+    for folder, dirs, names in os.walk(base):
+        here = pathlib.Path(folder)
+        top = here == base
+        dirs[:] = [d for d in dirs if not _is_link(here / d) and not (top and d in skip)]
+        n += sum(1 for x in names if not (top and x in skip))
+        if n >= cap:
+            break
+    return n
+
+
+def describe(app) -> Candidate:
+    """Ce qu'une ancienne version portable a à reprendre (retour terrain du 27/11 : la version reprise d'office
+    n'était pas celle de tous les jours) — lu seulement, rien n'est écrit dans son dossier."""
+    from PySide6.QtCore import QSettings
+    app = pathlib.Path(app)
+    s = QSettings(str(app / INI), QSettings.Format.IniFormat)
+    keys = [k for k in s.allKeys() if k != ADOPTED_KEY]
+    index = app / DATA / SESSION_SUB / 'session.json'
+    tabs = 0
+    try:
+        data = json.loads(index.read_text(encoding='utf-8'))
+        tabs = sum(1 for e in data.get('docs') or [] if isinstance(e, dict) and (e.get('file') or e.get('path')))
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    stamps = []
+    for p in (app / INI, index):
+        try:
+            stamps.append(p.stat().st_mtime)
+        except OSError:
+            pass
+    info = read_mark(app.parent) or read_mark(app) or {}
+    m = re.search(VERSION_RE, version_label(app))
+    version = str(info.get('version') or (m.group(0) if m else ''))
+    d = DIR_RE.match(version_label(app))
+    edition = str(info.get('edition') or (d['ed'] if d and d['ed'] else ''))
+    return Candidate(app, version_label(app), version, max(stamps, default=0.0), tabs,
+                     _count_files(app / LIBRARY), len(_listed(s.value(FAVORITES_KEY))),
+                     len(_listed(s.value(BIBLI_KEY))), len(keys),
+                     _count_files(app / DATA, set(NOT_CARRIED) | _NOT_CONTENT), edition)
+
+
+def user_content(c: Candidate) -> int:
+    """Ce que l'utilisateur a mis dans une version : onglets, bibliothèque, favoris, dossiers de la bibli, données."""
+    return c.tabs + c.library + c.favorites + c.bibli + c.files
+
+
+def real_use(c: Candidate) -> bool:
+    """La version a servi pour de vrai : une session et de vrais réglages (`REAL_KEYS`)."""
+    return c.tabs > 0 and c.keys >= REAL_KEYS
+
+
+def _band(n: int) -> int:
+    """Des contenus proches (à moitié près) tombent dans la même tranche : la dernière utilisation les départage."""
+    import math
+    return 0 if n <= 0 else 1 + int(math.log(n) / math.log(1.5))
+
+
+def preferred(cands, edition: str = '') -> list:
+    """Les versions proposées, la présélectionnée d'abord (2e relecture du 27/11) : celles de la même édition que
+    cette version (`edition`) ; puis celles qui ont servi pour de vrai (`real_use`), la plus récemment utilisée en
+    tête — une vieille version très remplie ne passe plus devant la plus récente qui a une session et de vrais
+    réglages ; sinon le plus de contenu à l'utilisateur (`user_content`, par tranches : des contenus proches sont
+    départagés par la dernière utilisation), puis le plus de réglages. Une version lancée une fois pour essai
+    (réglages de fenêtre, aucune donnée) ne passe jamais devant celle de tous les jours parce que son VectorDrive.ini
+    est plus récent. Toutes sont montrées : l'utilisateur choisit."""
+    ed = (edition or '').lower()
+
+    def rank(c):
+        real = real_use(c)
+        return ((c.edition or '').lower() == ed, real, c.last_use if real else 0.0, _band(user_content(c)),
+                c.last_use, c.keys)
+    return sorted(cands, key=rank, reverse=True)
+
+
+def guess_previous(app, versions_root=None) -> pathlib.Path | None:
+    """Le dossier proposé par « Reprendre d’une ancienne version… » : la version portable posée à côté, sinon la plus
+    récente du dossier VD qui a servi — jamais celle-ci (chemins résolus : `same_place`)."""
+    from .portable import previous_portable
+    app = pathlib.Path(app)
+    near = previous_portable(app)
+    if near is not None:
+        return near
+    best = None
+    try:
+        subs = list(pathlib.Path(versions_root).iterdir()) if versions_root else []
+    except OSError:
+        subs = []
+    for d in subs:
+        m = DIR_RE.match(d.name)
+        if m is None or _is_link(d) or not d.is_dir():
+            continue
+        cand = old_app_of(d)
+        if cand is None or same_place(cand, app):
+            continue
+        v = parse_version(m.group('v'))
+        if best is None or v > best[0]:
+            best = (v, cand)
+    return best[1] if best else None
+
+
+def read_settings(old_ini) -> tuple[dict, list]:
+    """Les réglages de l'ancienne version, lus seulement : ({clé : valeur}, échecs)."""
+    from PySide6.QtCore import QSettings
+    old_ini = pathlib.Path(old_ini)
+    if settings_state(old_ini) is None:
+        return {}, [f'{old_ini} : {tr("illisible")}']
+    old = QSettings(str(old_ini), QSettings.Format.IniFormat)
+    return {k: old.value(k) for k in old.allKeys() if not k.startswith('portable/')}, []
+
+
+def _dedup(items, paths: bool = True) -> list:
+    """Sans doublon, dans l'ordre ; `paths` : des chemins, comparés sans casse ni séparateur (`os.path.normcase`) ;
+    sinon tels quels (des noms de commandes : « Copier » et « copier » restent deux)."""
+    seen, out = set(), []
+    for x in items:
+        s = str(x).strip()
+        k = os.path.normcase(s) if paths else s
+        if s and k not in seen:
+            seen.add(k)
+            out.append(s)
+    return out
+
+
+def _union(key: str, here, theirs):
+    """La réunion d'une liste connue (`UNION_*`), celle d'ici d'abord, sans doublon ; None : pas une de ces listes,
+    ou rien de neuf à y ajouter."""
+    paths = key not in UNION_NOT_PATHS
+    if key in UNION_LISTS:
+        a, b = _listed(here), _listed(theirs)
+        out = _dedup(list(map(str, a)) + list(map(str, b)), paths)
+        return out if len(out) > len(_dedup(map(str, a), paths)) else None
+    if key in UNION_JOINED:
+        a = [x for x in str(here or '').split(';')]
+        out = _dedup(a + str(theirs or '').split(';'), paths)
+        return ';'.join(out) if len(out) > len(_dedup(a, paths)) else None
+    if key in UNION_JSON:
+        def load(v):
+            try:
+                got = json.loads(v) if isinstance(v, str) and v else []
+            except ValueError:
+                got = []
+            return [str(k) for k in got] if isinstance(got, list) else []
+        a = load(here)
+        out = list(dict.fromkeys(a + load(theirs)))
+        return json.dumps(out, ensure_ascii=False) if len(out) > len(dict.fromkeys(a)) else None
+    return None
+
+
+def merge_settings(values: dict, settings, label: str, tag: str = '') -> tuple[int, list, list, int]:
+    """Les réglages de l'ancienne version (`values`, `read_settings`) posés dans `settings` (ceux de cette version).
+    Premier lancement (aucun réglage ici) : tous. Reprise à la main (2e relecture du 27/11 : des favoris ajoutés ici
+    se perdaient) : un réglage déjà posé ici reste, sauf les listes de favoris et de dossiers connues (`UNION_*`),
+    réunies, celles d'ici d'abord, sans doublon, et ceux de `FILL_EMPTY` restés vides ici (le dossier choisi du
+    carnet de clients). Le fichier de cette version, s'il avait déjà des valeurs, est d'abord
+    copié (`….avant_reprise`) ; sans cette copie, rien n'est changé. La note de reprise (`ADOPTED_KEY`, et l'étiquette
+    `tag` sous `DONE_KEY` : la marque « reprise en cours » ne compte plus, même si elle n'a pas pu être effacée) est
+    posée en dernier. Rend (1 si repris, sinon 0 ; échecs ; remplacés « fichier → copie » ; réglages d'ici gardés)."""
+    from PySide6.QtCore import QSettings
+    from .portable import DONE_KEY
+    mine = pathlib.Path(settings.fileName())
+    replaced = []
+    here = {k for k in settings.allKeys() if not k.startswith('portable/')}
+    if values and settings.format() == QSettings.Format.IniFormat and mine.is_file() and has_settings(mine):
+        try:
+            settings.sync()
+            replaced.append(f'{mine} → {_backup(mine).name}')
+        except OSError as ex:
+            return 0, [f'{mine} : {ex.strerror or ex}'], [], 0
+    kept = 0
+    for k, v in values.items():
+        if k in here and not (k in FILL_EMPTY and _blank(settings.value(k)) and not _blank(v)):
+            merged = _union(k, settings.value(k), v)
+            if merged is None:
+                if str(settings.value(k)) != str(v):
+                    kept += 1
+                continue
+            v = merged
+        settings.setValue(k, v)
+    settings.sync()
+    settings.setValue(ADOPTED_KEY, label)
+    if tag:
+        settings.setValue(DONE_KEY, tag)
+    settings.sync()
+    if settings.status() != QSettings.Status.NoError:
+        return 0, [f'{mine} : {tr("réglages non enregistrés")}'], replaced, kept
+    return (1 if values else 0), [], replaced, kept
+
+
+def _blank(value) -> bool:
+    """Un réglage vide (rien, ou un texte d'espaces et de guillemets)."""
+    return value is None or str(value).strip().strip('"') == ''
+
+
+def session_kept(values: dict) -> bool:
+    """L'ancienne version gardait sa session (option « Fermer sans question et tout rouvrir », d'office oui) : sinon
+    son `donnees/session` est celle d'autrefois, jamais rouverte."""
+    return str(values.get('options/session', True)).strip().lower() not in ('false', '0', 'non', 'no', 'off')
+
+
+def _copy_in(src: pathlib.Path, dst: pathlib.Path) -> None:
+    """Copie sous un nom provisoire, vérifiée (taille), puis mise en place d'un coup (`os.replace`)."""
+    part = dst.with_name(dst.name + PART)
+    try:
+        shutil.copy2(src, part)
+        if part.stat().st_size != src.stat().st_size:
+            raise OSError(tr('copie incomplète'))
+        os.replace(part, dst)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+
+
+def _tagged_handover(new_app, tag: str) -> tuple[pathlib.Path | None, dict | None]:
+    """Le passage déjà écrit par une reprise interrompue (`tag` dans son index), pas encore rouvert."""
+    if not tag:
+        return None, None
+    for f in pending_handovers(handover_root(new_app)):
+        try:
+            data = json.loads((f / 'session.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get('reprise') == tag:
+            return f, data
+    return None, None
+
+
+def pass_session(old_app, new_app, version: int, tag: str = '') -> tuple[int, pathlib.Path | None, list]:
+    """La session de l'ancienne version (`donnees/session` : ses onglets enregistrés ou non, épinglés, renommés, leur
+    ordre, l'onglet actif, les parcours calculés et le mémo de leur calcul) passée comme une mise à jour : copiée
+    dans un passage neuf de cette version (`new_handover`), que `MainWindow.reopen_after_update` rouvre — jamais dans
+    sa propre session, jamais un verrou ni un fichier en cours d'écriture. L'index (celui qui a été lu et vérifié)
+    est écrit en dernier : un passage à moitié copié n'est jamais vu. L'index de l'ancienne est relu après la copie :
+    changé entre-temps (« Reprendre sans attendre » : l'ancienne, ouverte, enregistre sa session toute seule), la
+    copie est refaite une fois, puis c'est dit. `tag` : la reprise en cours (`ADOPTING`) — un passage qu'elle a déjà
+    écrit avant d'être interrompue est repris tel quel, jamais doublé. Sans index lisible, ou sans onglet : rien
+    n'est passé, sans erreur. Annulée (entre deux fichiers) : le passage commencé est effacé. Rend (onglets passés,
+    passage ou None, échecs)."""
+    done, data = _tagged_handover(new_app, tag)
+    if done is not None:
+        return len(data.get('docs') or []), done, []
+    src = pathlib.Path(old_app) / DATA / SESSION_SUB
+    failed: list[str] = []
+    for attempt in (1, 2):
+        index = read_handover(src, version)
+        if index is None:
+            if (src / 'session.json').exists():          # illisible, ou d'une version plus récente : dit
+                failed.append(f'{src / "session.json"} : ' + tr('session illisible ou d’une version plus récente : '
+                                                               'onglets non repris'))
+            return 0, None, failed
+        docs = [e for e in index['docs'] if e.get('file') or e.get('path')]
+        if not docs:
+            return 0, None, failed
+        try:
+            folder = new_handover(new_app)
+        except (OSError, AppUpdateError) as ex:
+            return 0, None, failed + [f'{handover_root(new_app)} : {getattr(ex, "strerror", None) or ex}']
+        bad = []
+        try:
+            try:
+                names = sorted(src.iterdir())
+            except OSError as ex:
+                names = []
+                bad.append(f'{src} : {ex.strerror or ex}')
+            for f in names:
+                P.check()                                # Annuler : entre deux fichiers
+                low = f.name.lower()
+                if low == 'session.json' or low.endswith(('.lock', '.tmp', PART)) or low in (WITNESS, TRIES) \
+                        or _is_link(f) or not f.is_file():
+                    continue
+                try:
+                    _copy_in(f, folder / f.name)
+                except OSError as ex:
+                    bad.append(f'{f} : {ex.strerror or ex}')
+        except BaseException:
+            drop_handover(folder)
+            raise
+        again = read_handover(src, version)
+        if again == index:
+            break
+        if attempt == 1:
+            drop_handover(folder)                        # enregistrée pendant la copie : refaite une fois
+            continue
+        bad.append(f'{src} : ' + tr('session enregistrée par l’ancienne version pendant la copie, deux fois : '
+                                    'onglets repris tels qu’au début de la copie, peut-être incomplets'))
+    failed += bad
+    try:
+        part = folder / ('session.json' + PART)
+        body = {**index, 'docs': docs}
+        if tag:
+            body['reprise'] = tag
+        part.write_text(json.dumps(body, ensure_ascii=False, indent=1), encoding='utf-8')
+        os.replace(part, folder / 'session.json')
+    except OSError as ex:
+        drop_handover(folder)
+        return 0, None, failed + [f'{src / "session.json"} : {ex.strerror or ex}']
+    return len(docs), folder, failed
+
+
+def merge_tools(old_app, new_app) -> tuple[bool, list, list]:
+    """« Mes outils » (`donnees/outils/tools.json`) déjà là dans cette version : ceux de l'ancienne y sont ajoutés,
+    sans doublon (comme l'import d'un .vdparam ; un identifiant déjà pris ici est renouvelé), ses dossiers aussi,
+    après la copie de secours du fichier — jamais un outil ajouté ici n'est perdu. Rend (fait, remplacés
+    « fichier → copie », échecs)."""
+    from .cam import toollib
+    src = pathlib.Path(old_app).joinpath(DATA, *TOOLS_REL)
+    dst = pathlib.Path(new_app).joinpath(DATA, *TOOLS_REL)
+    try:
+        if not src.is_file() or _is_link(src) or not dst.is_file() or filecmp.cmp(src, dst, shallow=False):
+            return False, [], []
+        theirs, mine = toollib.load(src), toollib.load(dst)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as ex:
+        return False, [], [f'{src} : {tr("Mes outils non fusionnés")} ({ex})']
+    ids = {t.id for t in mine}
+    added = []
+    for t in theirs:
+        if toollib.find_duplicate(t, mine + added) is None:
+            if t.id in ids:
+                t.id = toollib.new_id()
+            ids.add(t.id)
+            added.append(t)
+    folders = toollib.load_folders(dst)
+    extra = [f for f in toollib.load_folders(src) if f not in folders]
+    if not added and not extra:
+        return True, [], []
+    try:
+        bk = _backup(dst)
+        toollib.save(mine + added, dst, folders + extra)
+    except OSError as ex:
+        return False, [], [f'{dst} : {ex.strerror or ex}']
+    return True, [f'{dst} → {bk.name}'], []
+
+
+def _run_direct(fn):
+    return fn()
+
+
+#: Annuler : le temps laissé au fichier en cours pour finir avant le bilan (secondes)
+STOP_WAIT_S = 120.0
+#: dossiers des données jamais balayés par `sweep_parts` : ceux que la fenêtre ouverte écrit elle-même
+_SWEEP_SKIP = ('session', 'session_maj', 'recuperation', 'sauvegardes', 'onglets_fermes')
+
+
+def sweep_parts(new_app) -> list:
+    """Une reprise coupée reprise : les copies à moitié écrites (`PART`, `.vd_copie`) restées dans les données et la
+    bibliothèque de cette version sont effacées (jamais dans les dossiers que la fenêtre écrit elle-même). Rend les
+    échecs (« chemin : raison »)."""
+    failed: list = []
     for sub in (DATA, LIBRARY):
-        base = old / sub
-        if not os.path.lexists(base):
+        root = pathlib.Path(new_app) / sub
+        if not root.is_dir():
             continue
-        if _is_link(base) or not base.is_dir():          # jonction : jamais suivie, donc pas reprise
-            skipped.append(str(base))
-            continue
-        for folder, dirs, names in os.walk(base, onerror=lambda ex: failed.append(f'{ex.filename} : {ex.strerror}')):
-            here = pathlib.Path(folder)
-            rel = here.relative_to(base)
-            if sub == DATA and not rel.parts:
-                dirs[:] = [d for d in dirs if d not in NOT_CARRIED]
-            for d in list(dirs):
-                if _is_link(here / d):
-                    dirs.remove(d)
-                    skipped.append(str(here / d))
-            for name in names:
-                P.check()
-                if name.endswith('.lock'):
-                    continue
-                src = here / name
-                if _is_link(src):
-                    skipped.append(str(src))
-                    continue
-                put(src, new / sub / rel / name, (pathlib.PurePosixPath(sub) / rel.as_posix() / name).as_posix(),
-                    lambda d, s: sub == DATA and _older(d, s), lambda d: d.stat().st_size > 0)
-    return Carried(count[0], failed, skipped, files)
+        for here, dirs, files in os.walk(root):
+            if pathlib.Path(here) == root:
+                dirs[:] = [d for d in dirs if d.lower() not in _SWEEP_SKIP]
+            for f in files:
+                if f.lower().endswith(PART):
+                    p = pathlib.Path(here) / f
+                    try:
+                        p.unlink()
+                    except OSError as ex:
+                        failed.append(f'{p} : {ex.strerror or ex}')
+    return failed
+
+
+def wait_done(done, timeout_s: float) -> bool:
+    """Après Annuler, le fichier en cours finit (`done`, un `threading.Event`) : attendu `timeout_s` secondes au plus.
+    Sur le fil de l'interface, jamais figé sans rien montrer : une petite fenêtre « Fin du fichier en cours… » et une
+    boucle d'évènements (comme `ui.progress.run`). Rend vrai si fini."""
+    if done.is_set():
+        return True
+    from PySide6.QtCore import QThread
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None or QThread.currentThread() is not app.thread():
+        return done.wait(timeout_s)
+    from PySide6.QtCore import QEventLoop, Qt, QTimer
+    from PySide6.QtWidgets import QProgressDialog
+
+    class Box(QProgressDialog):
+        def reject(self):                                # Échap : l'attente reste (bornée)
+            pass
+
+        def closeEvent(self, e):                         # la croix : de même
+            e.ignore()
+    box = Box(tr('Fin du fichier en cours…'), '', 0, 0)
+    box.setWindowTitle(tr('Reprise de l’ancienne version'))
+    box.setCancelButton(None)
+    box.setWindowModality(Qt.WindowModality.ApplicationModal)
+    box.setMinimumDuration(0)
+    box.show()
+    loop = QEventLoop()
+    end = time.monotonic() + timeout_s
+    timer = QTimer()
+    timer.setInterval(100)
+    timer.timeout.connect(lambda: (done.is_set() or time.monotonic() >= end) and loop.quit())
+    timer.start()
+    try:
+        loop.exec()
+    finally:
+        timer.stop()
+        box.hide()
+        box.deleteLater()
+    return done.is_set()
+
+
+def adopt_previous(old_app, new_app, *, settings=None, keep: bool = True, session_version: int | None = None,
+                   progress=None) -> Adopted:
+    """Reprendre une ancienne version portable (premier lancement : `portable.offer_previous` ; à la main : F10 ›
+    Mises à jour › « Reprendre d’une ancienne version… »). Dans cet ordre (relectures du 27/11 : une reprise coupée ne
+    doit rien perdre ni rien doubler) :
+    - la marque « reprise en cours » (`portable.ADOPTING`, dans le dossier de cette version : source, étiquette,
+      tentatives, étapes faites) ;
+    - la session de l'ancienne passée comme une mise à jour (`pass_session`), une seule fois : l'étape est retenue
+      dans la marque, jamais refaite ;
+    - ses données et sa bibliothèque (`carry_settings`, fichier par fichier, une erreur n'arrêtant pas le reste ;
+      `keep` : rien de déjà là n'est remplacé), son carnet de clients fusionné dans celui des données d'ici
+      (`carry_book` ; jamais dans un dossier choisi ici), « Mes outils » fusionnés (`merge_tools`) ;
+    - ses réglages (`merge_settings`) et la note de reprise en dernier ; la marque effacée. Le dossier choisi du
+      carnet de clients de l'ancienne n'est repris que si celui des données d'ici est vide (sinon gardé, dit).
+    Coupée (processus arrêté) : la marque reste, `portable.adoption_pending` est vrai et le lancement suivant la
+    termine ; après `ADOPT_TRIES` tentatives, elle est abandonnée (réglages posés, dit dans le bilan). Une erreur
+    pendant les copies est dite et la reprise finit quand même. Les copies passent par `progress(fn)` (d'office :
+    directement ; `portable.offer_previous` montre une fenêtre de progression) ; Annuler (entre deux fichiers) : la
+    copie s'arrête — le fichier en cours fini avant le bilan, qui compte ce qui a vraiment été copié —, les réglages
+    sont posés quand même (`stopped`). Jamais sa récupération, sa session elle-même ni un verrou ; rien n'est écrit
+    dans l'ancien dossier. `settings` : les réglages de cette version (d'office son VectorDrive.ini)."""
+    import threading
+    import uuid
+    from PySide6.QtCore import QSettings
+    from . import i18n
+    from .portable import adoption_mark, drop_adoption_mark, write_adoption_mark
+    old, new = pathlib.Path(old_app), pathlib.Path(new_app)
+    name = version_label(old)
+    if same_place(old, new):
+        return Adopted(name, str(old), 0, 0, None, 0, 0, [f'{old} : {tr("la version en cours")}'], [], [], False)
+    if settings is None:
+        settings = QSettings(str(new / INI), QSettings.Format.IniFormat)
+    values, failed = read_settings(old / INI)
+    from .io import clients as CL
+    here_book = chosen_book(settings)                    # le carnet d'ici : son dossier choisi, sinon les données
+    local = CL._raw(new / DATA / BOOK_SUB)               # avant les copies ; None : illisible, compté plein
+    mark = adoption_mark(new)
+    same = mark is not None and same_place(mark['source'], old)
+    tag = mark['tag'] if same else uuid.uuid4().hex[:12]
+    tries = (int(mark.get('tries') or 0) if same else 0) + 1
+    session_done = bool(same and mark.get('session'))
+    abandon = tries > ADOPT_TRIES
+
+    def note(**more) -> None:
+        try:
+            write_adoption_mark(new, old, tag, tries=tries, **more)
+        except OSError as ex:
+            failed.append(f'{new} : {ex.strerror or ex}')
+    if same:                                             # coupée : ses copies à moitié écrites (`PART`) effacées
+        failed.extend(sweep_parts(new))
+    if abandon:
+        failed.append(f'{old} : ' + tr('reprise abandonnée après {0} tentatives interrompues : les fichiers déjà '
+                                       'copiés restent ; « Reprendre d’une ancienne version… » (F10) la refait sans '
+                                       'rien remplacer').format(ADOPT_TRIES))
+    else:
+        note(session=session_done)                       # tentative comptée avant les copies
+    if session_version is None:
+        from .ui import session
+        session_version = session.VERSION
+    got: dict = {}
+    stop: list = []
+    done = threading.Event()
+
+    def copy_all():
+        try:
+            if session_done or abandon:                  # passée par une tentative d'avant : jamais repassée, comptée
+                folder, data = _tagged_handover(new, tag)
+                got['session'] = (len(data.get('docs') or []) if data else 0, folder, [])
+            if abandon:
+                return got
+            if not session_done and session_kept(values):
+                got['session'] = pass_session(old, new, session_version, tag)
+                note(session=True)
+            got['carried'] = carry_settings(old, new, ini=False, keep=keep, stop=stop, book_here=here_book)
+            if not stop:
+                got['tools'] = merge_tools(old, new)
+        except P.Cancelled:
+            stop.append(True)
+        except Exception as ex:                          # noqa: BLE001 — dit, et la reprise finit quand même
+            got['error'] = f'{old} : ' + tr('copie interrompue par une erreur ({0})').format(ex)
+        finally:
+            done.set()
+        return got
+
+    try:
+        (progress or _run_direct)(copy_all)
+    except P.Cancelled:                                  # la fenêtre rend la main aussitôt : le fichier en cours finit
+        stop.append(True)
+    if not wait_done(done, STOP_WAIT_S):
+        failed.append(f'{old} : ' + tr('copie encore en cours : le décompte est provisoire'))
+    tabs, folder, bad = got.get('session') or (0, None, [])
+    carried = got.get('carried') or Carried(0, [], [], [])
+    merged, replaced, tool_bad = got.get('tools') or (False, [], [])
+    skipped = list(carried.skipped)
+    if merged:
+        skipped = [s for s in skipped if not same_place(s, old.joinpath(DATA, *TOOLS_REL))]
+    if got.get('error'):
+        failed.append(got['error'])
+    old_book = '' if _blank(values.get(CL.SETTING)) else str(values[CL.SETTING]).strip().strip('"')
+    book_local = 0
+    if old_book and not here_book and (local is None or local):     # le carnet d'ici n'est pas vide : il reste
+        values = {k: v for k, v in values.items() if k != CL.SETTING}
+        book_local = len(CL.load(new / DATA / BOOK_SUB)) or len(local or [])
+    n, bad_settings, more, kept = merge_settings(values, settings, name, tag)
+    drop_adoption_mark(new)                              # raté : la note `DONE_KEY` suffit à ne plus reprendre
+    book = carried.book if carried.book.chosen or not old_book else carried.book._replace(chosen=old_book)
+    lang = str(settings.value('options/langue', '') or '')
+    language = lang if lang in i18n.LANGUAGES and lang != i18n.language() else ''
+    return Adopted(name, str(old), n + carried.copied + (1 if replaced else 0), tabs, folder,
+                   len(_listed(values.get(FAVORITES_KEY))), len(_listed(values.get(BIBLI_KEY))),
+                   failed + bad + carried.failed + tool_bad + bad_settings, skipped,
+                   more + list(book.replaced) + replaced, bool(stop), kept, language, book,
+                   book_taken(book, settings), here_book, book_local)
 
 
 def decline_settings(new_app_dir) -> bool:

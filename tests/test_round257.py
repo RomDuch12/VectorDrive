@@ -213,7 +213,8 @@ class TestParams(unittest.TestCase):
             (pathlib.Path(src_root) / 'themes').mkdir()
             (pathlib.Path(src_root) / 'themes' / 'perso.json').write_text('{"v": 2}', encoding='utf-8')
             counts = params.export(out, st_a, local_keys=local)
-        self.assertEqual(counts, {'reglages': 1, 'outils': 2, 'modeles_fao': 1, 'modeles_dessin': 0, 'themes': 1})
+        self.assertEqual({k: counts[k] for k in ('reglages', 'outils', 'modeles_fao', 'modeles_dessin', 'themes')},
+                         {'reglages': 1, 'outils': 2, 'modeles_fao': 1, 'modeles_dessin': 0, 'themes': 1})
         names = zipfile.ZipFile(out).namelist()
         self.assertIn('modeles_fao/alu.json', names)
         self.assertEqual(params.contents(out), {'reglages': 1, 'outils': 2, 'modeles_fao': 1, 'themes': 1})

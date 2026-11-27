@@ -89,7 +89,8 @@ class Smooth(unittest.TestCase):
         self.assertEqual(len(top), 2)
         smoothed = [it for it in top if it is not self.other]
         self.assertEqual(len(smoothed), 1)
-        self.assertNotIn('Line', self.corners(smoothed[0]))                 # plus de segment droit : lissé
+        self.assertIn('Cubic', self.corners(smoothed[0]))                   # coins en Bézier : lissé (côtés droits :
+        #                                                                     droites, aux points minimaux)
         self.assertIn(self.other, top)                                      # l'autre forme intacte
         self.assertEqual(len(w._undo), n_undo + 1)                          # un pas d'annulation
         self.assertIsInstance(w.canvas.tool_obj, T.SmoothTool)              # l'outil reste
@@ -103,7 +104,7 @@ class Smooth(unittest.TestCase):
         sp = self.screen(0.0, 10.0)
         tool.press(sp, w.canvas.to_doc(sp), None)
         top = [it for L in w.canvas.doc.layers for it in L.items]
-        self.assertTrue(all('Line' not in self.corners(it) for it in top))
+        self.assertTrue(all('Cubic' in self.corners(it) for it in top))
 
     def test_keys_change_and_keep_the_settings(self):
         w = self.w

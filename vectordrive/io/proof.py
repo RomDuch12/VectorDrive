@@ -102,6 +102,9 @@ class ProofInfo:
     as_image: bool = False           # PDF : le dessin écrit en image — son tracé ne peut pas en être repris
     image_dpi: int = 300             # résolution de cette image (points par pouce)
     open_folder: bool = False        # après l'écriture du PDF : son dossier ouvert, le fichier montré
+    #: dos de la gravure (demande du 27/11) : {'on', 'w', 'h', 'ep', 'trous', 'filetage', 'pos', 'x', 'y', 'dx', 'dy'}
+    #: (voir `back_spec`) ; jamais dans les réglages : propre au client (carnet) et au dessin (`doc.extra`)
+    back: dict = field(default_factory=dict)
 
 #: champs du cartouche propres au dessin (round 1160, demande « BaT ne pas garder en mémoire champs clients et ref (sauf
 #: si plusieurs édition de bat dans un même fichier) car user doit choisir dans carnet client ») : jamais dans les
@@ -109,6 +112,15 @@ class ProofInfo:
 #: client (second logo de l'en-tête), posé par le choix dans le carnet
 DOC_FIELDS = ('client', 'reference', 'designation', 'material', 'bat_number', 'logo2')
 DOC_KEY = 'bat'
+#: le dos de la gravure du dernier BAT du dessin, dans `doc.extra[DOC_KEY]` (ignoré d'une version d'avant)
+BACK_KEY = 'dos'
+
+
+def doc_back(doc) -> dict:
+    """Réglages du dos de la gravure du dernier BAT édité de ce dessin ({} : aucun)."""
+    kept = doc.extra.get(DOC_KEY) if isinstance(getattr(doc, 'extra', None), dict) else None
+    b = kept.get(BACK_KEY) if isinstance(kept, dict) else None
+    return dict(b) if isinstance(b, dict) else {}
 
 
 def doc_fields(doc) -> dict:
@@ -127,9 +139,12 @@ def keep_doc_fields(doc, info) -> bool:
     plate = getattr(doc, 'plate', None)
     if plate is not None and new['material'] == str(getattr(plate, 'material', '') or ''):
         new['material'] = ''
-    if not any(v for k, v in new.items() if k != 'bat_number') and new['bat_number'] in ('', '1'):
-        # cartouche vide (le n° d'office n'y compte pas) : rien à garder, ni compagnon pour lui
+    back = back_spec(info)
+    if not any(v for k, v in new.items() if k != 'bat_number') and new['bat_number'] in ('', '1') and not back:
+        # cartouche vide (le n° d'office n'y compte pas), sans dos : rien à garder, ni compagnon pour lui
         return doc.extra.pop(DOC_KEY, None) is not None
+    if back:                                         # le dos de la gravure, repris à la prochaine édition du BAT
+        new[BACK_KEY] = back
     if doc.extra.get(DOC_KEY) == new:
         return False
     doc.extra[DOC_KEY] = new
@@ -723,14 +738,18 @@ def _geometry(doc: Document, info: ProofInfo, items=None) -> dict:
     PW, PH = (max(pw, ph), min(pw, ph)) if landscape else (min(pw, ph), max(pw, ph))
     margin = max(0.0, float(info.margin))
     title_h = 42.0 if info.title_block else 0.0
-    room = info.dims or any(b.get('cotes') != 'aucune' for _it, b in bruts)
+    back = back_spec(info)
+    room = info.dims or any(b.get('cotes') != 'aucune' for _it, b in bruts) or bool(back)    # (le dos : ses cotes)
     pad = 12 if room else 4                          # place des cotes
     area = (margin + pad, margin + title_h + (14 if room else 4), PW - margin - pad, PH - margin - 14)
+    back_area = None
+    if back:                                         # le dos de la gravure : sa part de la page (demande du 27/11)
+        area, back_area = split_back(area, FW, FH, back, pad)
     aw, ah = area[2] - area[0], area[3] - area[1]
     views = plan_views(info, FW, FH, area, pad)
     return dict(bb_draw=bb_draw, plate=plate, ref=ref, W0=W0, H0=H0, frame=frame, FW=FW, FH=FH, PW=PW, PH=PH,
                 margin=margin, title_h=title_h, area=area, aw=aw, ah=ah, k=views[0]['k'], views=views,
-                leaves=leaves, bruts=bruts)
+                leaves=leaves, bruts=bruts, back=back, back_area=back_area)
 
 
 def plan_views(info: 'ProofInfo', FW: float, FH: float, area, pad: float) -> list[dict]:
@@ -864,6 +883,8 @@ def build(doc: Document, info: ProofInfo, items=None) -> tuple[list[Prim], float
         if view['label'] and (len(g['views']) > 1 or info.scale_mode == 'vues'):
             prims.append(_label(f"{view['label']} {scale_label(kv)}", 2.6, (ax0 + ax1) / 2, ay1 + 3.0, 'center',
                                 color=(0.25, 0.25, 0.25)))
+    if g['back']:                                    # le dos de la gravure (demande du 27/11) : à côté ou dessous
+        prims.extend(back_prims(g['back'], g['back_area'], g['views'][0]['k'], fmt))
     for pr in prims[drawn:]:
         pr.layer = 'dessin'
     scale_text = ' + '.join(scale_label(v['k']) for v in g['views'])
@@ -1172,6 +1193,217 @@ def _engraving_dims(doc: Document, info: ProofInfo, items, m, fmt) -> list:
 
 #: couleur du brut et de ses cotes (ou celle du thème)
 BRUT_COLOR = (0.55, 0.3, 0.05)
+#: dos de la gravure (demande du 27/11) : le brut couleur laiton — celle des pièces en laiton de `core.stepgen` —, son
+#: bord un peu plus foncé ; taraudages et cotes en noir
+BACK_COLOR = (0.80, 0.66, 0.30)
+BACK_EDGE = (0.55, 0.42, 0.12)
+BACK_INK = (0.0, 0.0, 0.0)
+#: dispositions des taraudages : aucun, un au milieu, deux sur l'axe horizontal, deux sur l'axe vertical, quatre aux
+#: coins ; leurs positions : entraxes, ou distances aux bords
+BACK_HOLES = ('', '1', '2h', '2v', '4')
+BACK_POS = ('entraxe', 'bords')
+#: pas des filetages métriques ISO (pas gros) : le foret de taraudage fait le diamètre moins le pas
+METRIC_PITCH = {1.6: 0.35, 2.0: 0.4, 2.5: 0.45, 3.0: 0.5, 3.5: 0.6, 4.0: 0.7, 5.0: 0.8, 6.0: 1.0, 8.0: 1.25,
+                10.0: 1.5, 12.0: 1.75, 14.0: 2.0, 16.0: 2.0}
+
+
+#: un dos sans taraudage (un client du carnet qui n'a pas de dos : celui du client d'avant ne reste pas)
+BACK_NONE = {'on': False, 'trous': '', 'filetage': '', 'pos': 'entraxe', 'x': 0.0, 'y': 0.0, 'dx': 0.0, 'dy': 0.0}
+
+
+def back_read(info) -> dict:
+    """Les réglages du dos de `info.back` relus sans faute, même décochés ou sans brut : {'on', 'w', 'h', 'ep',
+    'trous', 'filetage', 'pos', 'x', 'y', 'dx', 'dy'} (mm ; 'trous' dans `BACK_HOLES`, 'pos' dans `BACK_POS`) ; {}
+    s'il n'y en a pas."""
+    b = getattr(info, 'back', None)
+    if not isinstance(b, dict):
+        return {}
+
+    def num(key, lo=0.0):
+        try:
+            v = float(str(b.get(key) or 0).replace(',', '.'))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(lo, min(10000.0, v)) if v == v else 0.0         # (NaN : rien)
+    holes, pos = str(b.get('trous') or ''), str(b.get('pos') or '')
+    return {'on': b.get('on') in (True, 'true', 1), 'w': num('w'), 'h': num('h'), 'ep': num('ep'), 'x': num('x'),
+            'y': num('y'), 'dx': num('dx', -10000.0), 'dy': num('dy', -10000.0),
+            'trous': holes if holes in BACK_HOLES else '', 'pos': pos if pos in BACK_POS else 'entraxe',
+            'filetage': str(b.get('filetage') or '').strip()}
+
+
+def back_spec(info) -> dict:
+    """Le dos de la gravure à représenter (`back_read`) ; {} sans dos : case décochée, ou brut sans largeur ou sans
+    hauteur (la fenêtre le dit : `back_warnings`)."""
+    out = back_read(info)
+    return out if out.get('on') and out['w'] > 0 and out['h'] > 0 else {}
+
+
+def back_warnings(info, doc=None) -> list:
+    """Ce que la fenêtre du BAT doit dire du dos coché : brut à renseigner, cote des trous manquante, distance au
+    bord trop grande (aucun trou), filetage illisible (des croix), filetage plus grand que l'écart des trous,
+    taraudages qui dépasseraient du brut (pas dessinés), brut autre que celui du dessin `doc`. [] : rien à dire."""
+    b = back_read(info)
+    if not b.get('on'):
+        return []
+    if b['w'] <= 0 or b['h'] <= 0:
+        return [tr('Dos : renseigner le brut (largeur et hauteur) — rien n’est dessiné sans lui')]
+    fmt = number_format(info)
+    out = []
+    t, pos, sizes = b['trous'], b['pos'], thread_sizes(b['filetage'])
+    for key, axis, side, used in (('x', 'X', b['w'], ('2h', '4')), ('y', 'Y', b['h'], ('2v', '4'))):
+        if t not in used:
+            continue
+        if b[key] <= 0:
+            out.append(tr('Dos : cote {0} des trous à renseigner — aucun trou dessiné').format(axis))
+            continue
+        if pos == 'bords' and b[key] >= side / 2:
+            out.append(tr('Dos : distance au bord {0} d’au moins la moitié du brut — aucun trou dessiné').format(axis))
+            continue
+        gap = b[key] if pos == 'entraxe' else side - 2 * b[key]
+        if sizes and gap < sizes[0]:
+            out.append(tr('Dos : le filetage {0} est plus grand que l’écart des trous en {1} ({2} mm)').format(
+                b['filetage'], axis, fmt(gap)))
+    if t and b['filetage'] and sizes is None:
+        out.append(tr('Dos : filetage « {0} » illisible — les trous sont marqués d’une croix').format(b['filetage']))
+    lost = back_drawn(b)[1]
+    if lost:
+        out.append(tr('Dos : {0} taraudage(s) dépasseraient du brut — pas dessinés (entraxes, décalage ?)').format(
+            len(lost)))
+    d = back_defaults(doc) if doc is not None else {}
+    if d and (abs(d['w'] - b['w']) > 1e-6 or abs(d['h'] - b['h']) > 1e-6):
+        out.append(tr('Dos : brut de {0} × {1} mm, autre que celui du dessin ({2} × {3} mm)').format(
+            fmt(b['w']), fmt(b['h']), fmt(d['w']), fmt(d['h'])))
+    return out
+
+
+def back_defaults(doc) -> dict:
+    """Le brut du dos proposé d'office : la plaque du dessin, sinon son brut s'il n'en a qu'un ({} : rien de connu)."""
+    plate = getattr(doc, 'plate', None)
+    if plate is not None and plate.width > 0 and plate.height > 0:
+        return {'w': float(plate.width), 'h': float(plate.height), 'ep': float(plate.thickness or 0)}
+    bruts = [b for L in doc.layers for _it, b in BR.walk(L.items)]
+    if len(bruts) != 1:
+        return {}
+    w, h = BR.size(bruts[0])
+    try:
+        ep = float(bruts[0].get('thickness') or 0)
+    except (TypeError, ValueError):
+        ep = 0.0
+    return {'w': w, 'h': h, 'ep': ep}
+
+
+def thread_sizes(name: str):
+    """(diamètre nominal, diamètre du foret) d'un taraudage « M4 », « M2,5 », « M8x1 » (pas fin) ou d'un diamètre
+    seul (« 4 ») ; None si la désignation ne se lit pas."""
+    import re
+    m = re.fullmatch(r'[Mm]? *([0-9]+(?:[.,][0-9]+)?)(?: *[xX×] *([0-9]+(?:[.,][0-9]+)?))?', str(name or '').strip())
+    if not m:
+        return None
+    d = float(m.group(1).replace(',', '.'))
+    p = float(m.group(2).replace(',', '.')) if m.group(2) else METRIC_PITCH.get(d, 0.15 * d)
+    return (d, d - p) if 0 < p < d else None
+
+
+def back_holes(back: dict) -> list:
+    """Centres des taraudages vus de face (mm, origine au coin bas-gauche du brut) : seulement ceux que le formulaire
+    place — deux trous sans entraxe ni distance aux bords : aucun, rien d'inventé. Un trou seul : au milieu, décalé ;
+    en distances aux bords, le motif est centré sur le brut (sans décalage)."""
+    W, H, t = back['w'], back['h'], back['trous']
+    cx, cy = W / 2 + back['dx'], H / 2 + back['dy']
+    if t == '1':
+        return [(cx, cy)]
+    if back['pos'] == 'bords':
+        cx, cy = W / 2, H / 2
+        xs = (back['x'], W - back['x']) if 0 < back['x'] < W / 2 else ()
+        ys = (back['y'], H - back['y']) if 0 < back['y'] < H / 2 else ()
+    else:
+        xs = (cx - back['x'] / 2, cx + back['x'] / 2) if back['x'] > 0 else ()
+        ys = (cy - back['y'] / 2, cy + back['y'] / 2) if back['y'] > 0 else ()
+    if t == '2h':
+        return [(x, cy) for x in xs]
+    if t == '2v':
+        return [(cx, y) for y in ys]
+    if t == '4':
+        return [(x, y) for y in ys for x in xs]
+    return []
+
+
+def back_drawn(back: dict) -> tuple:
+    """(taraudages dessinés, taraudages hors du brut) : un taraudage qui dépasserait du brut n'est pas dessiné —
+    jamais dans les cotes ni le cartouche ; la fenêtre le dit (`back_warnings`)."""
+    sizes = thread_sizes(back['filetage'])
+    r = sizes[0] / 2 if sizes else 0.0
+    inside, out = [], []
+    for x, y in back_holes(back):
+        ok = r - 1e-9 <= x <= back['w'] - r + 1e-9 and r - 1e-9 <= y <= back['h'] - r + 1e-9
+        (inside if ok else out).append((x, y))
+    return inside, out
+
+
+def split_back(area: tuple, FW: float, FH: float, back: dict, pad: float) -> tuple:
+    """(place des vues de face, place de la vue de dos) : côte à côte (le dos à droite) ou l'une sur l'autre (le dos
+    dessous), selon ce qui les montre le plus grandes ; chacune en proportion de sa taille."""
+    x0, y0, x1, y1 = area
+    aw, ah = x1 - x0, y1 - y0
+    BW, BH = back['w'], back['h']
+    gap = 2 * pad + 6                                # les cotes de l'une, la légende de l'autre
+    side = min((aw - gap) / max(FW + BW, 1e-9), ah / max(FH, BH, 1e-9))
+    stack = min(aw / max(FW, BW, 1e-9), (ah - gap) / max(FH + BH, 1e-9))
+    if side >= stack:
+        wf = (aw - gap) * FW / max(FW + BW, 1e-9)
+        return (x0, y0, x0 + wf, y1), (x0 + wf + gap, y0, x1, y1)
+    hb = (ah - gap) * BH / max(FH + BH, 1e-9)
+    return (x0, y0 + hb + gap, x1, y1), (x0, y0, x1, y0 + hb)
+
+
+def back_prims(back: dict, area: tuple, k_face: float, fmt) -> list:
+    """La vue « Dos » dans `area` (mm de la page), à l'échelle de la face si elle y tient (sinon la réduction
+    normalisée qui tient) : le brut couleur laiton vu de dos — miroir de la face, la gauche passe à droite —, ses
+    taraudages qui tiennent dans le brut, en noir (le foret en trait fort, le filetage en trois quarts de cercle fin,
+    comme en dessin technique ; sans filetage lisible : une croix) et les cotes données (entraxes, ou distances aux
+    bords), en noir ; sous le brut, la légende « Dos » et son échelle, avec les taraudages (« 2 × M4 ») et
+    l'épaisseur s'ils sont donnés."""
+    W, H = back['w'], back['h']
+    ax0, ay0, ax1, ay1 = area
+    aw, ah = ax1 - ax0, ay1 - ay0
+    if aw <= 0 or ah <= 0:
+        return []
+    fits = lambda k: W * k <= aw + 1e-9 and H * k <= ah + 1e-9          # noqa: E731
+    k = k_face if fits(k_face) else next((1 / s for s in SCALES if fits(1 / s)), min(aw / W, ah / H))
+    bx, by = ax0 + (aw - W * k) / 2, ay0 + (ah - H * k) / 2
+    out = [Prim(Path([geom.rect(bx, by, W * k, H * k)]), BACK_EDGE, 0.3, True, BACK_COLOR)]
+    holes = [(bx + (W - x) * k, by + y * k) for x, y in back_drawn(back)[0]]   # vu de dos : miroir en X
+    sizes = thread_sizes(back['filetage'])
+    for x, y in holes:
+        if sizes:
+            out.append(Prim(Path([geom.circle((x, y), sizes[1] * k / 2)]), BACK_INK, 0.3))
+            out.append(Prim(Path([geom.arc((x, y), sizes[0] * k / 2, 90, 270)]), BACK_INK, 0.15))
+        else:
+            out.append(Prim(Path([geom.polyline([(x - 1.5, y), (x + 1.5, y)]),
+                                  geom.polyline([(x, y - 1.5), (x, y + 1.5)])]), BACK_INK, 0.15))
+    t, pos = back['trous'], back['pos']
+    under = 5.0                                      # la légende, sous le brut (et sous sa cote)
+    if holes and t in ('2h', '4') and back['x'] > 0:  # la rangée du bas, cotée sous le brut
+        low = min(y for _x, y in holes)
+        row = sorted(p for p in holes if abs(p[1] - low) < 1e-6)
+        a, b = ((bx, row[0][1]), row[0]) if pos == 'bords' else (row[0], row[-1])
+        dim = _aligned_dim(a, b, fmt(back['x']), -(row[0][1] - by) - 5.0, 2.4, BACK_INK)
+        out += dim
+        under = 13.0 if dim else under
+    if holes and t in ('2v', '4') and back['y'] > 0:  # la colonne de gauche, cotée à gauche du brut
+        left = min(x for x, _y in holes)
+        col = sorted((p for p in holes if abs(p[0] - left) < 1e-6), key=lambda p: -p[1])       # du haut en bas
+        a, b = ((col[0][0], by + H * k), col[0]) if pos == 'bords' else (col[0], col[-1])
+        out += _aligned_dim(a, b, fmt(back['y']), -(col[0][0] - bx) - 5.0, 2.4, BACK_INK)
+    parts = [f"{tr('Dos')} {scale_label(k)}"]
+    if holes and back['filetage']:
+        parts.append(f"{len(holes)} × {back['filetage']}")
+    if back['ep'] > 0:
+        parts.append(tr('ép. {0}').format(fmt(back['ep'])))
+    # sous le brut : jamais sur l'en-tête, le second logo ou la légende des outils (en haut à droite de la page)
+    out.append(_label(' — '.join(parts), 2.6, bx + W * k / 2, by - under, 'center', color=(0.25, 0.25, 0.25)))
+    return out
 
 
 def tint(rgb: tuple, k: float = 0.35) -> tuple:

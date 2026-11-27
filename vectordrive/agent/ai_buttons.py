@@ -19,7 +19,7 @@ SCOPES = ('selection', 'calque', 'tous')
 #: contrôle final : rien de plus ; un compte rendu ; il vérifie son travail ; une fenêtre Garder / Défaire à la fin
 CONTROLS = ('aucun', 'compte_rendu', 'verification', 'validation')
 #: les groupes d'outils du panneau (`agent.tools.TOOL_GROUPS`) qu'un bouton peut permettre ou non
-GROUPS = ('memory', 'scripts', 'commands', 'cam', 'copies', 'step')
+GROUPS = ('memory', 'scripts', 'commands', 'cam', 'copies', 'step', 'folders')
 MAX_BUTTONS = 40
 LABEL_MAX = 40
 TEXT_MAX = 4000

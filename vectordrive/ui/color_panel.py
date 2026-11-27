@@ -217,14 +217,22 @@ class ColorPanel(QWidget):
         self.sync(force=True)
         return len(leaves)
 
-    def _menu(self, pos) -> None:
+    def _menu(self, pos, exec_menu: bool = True):
+        """Clic droit sur une couleur : la changer, et « Disposition › » ; ailleurs, le menu du panneau (demande du
+        27/11). Rend le menu (None : hors d'une colonne, sans couleur)."""
+        from .columns import add_layout_menu, panel_menu
         item = self.list.itemAt(pos)
         if item is None:
-            return
-        index = int(item.data(Qt.ItemDataRole.UserRole))
-        m = QMenu(self)
-        m.addAction(tr('Changer la couleur…'), lambda: self.pick_color(index))
-        m.exec(self.list.mapToGlobal(pos))
+            m = panel_menu(self.list)
+        else:
+            index = int(item.data(Qt.ItemDataRole.UserRole))
+            m = QMenu(self)
+            m.addAction(tr('Changer la couleur…'), lambda: self.pick_color(index))
+            add_layout_menu(m, self.list)
+        if m is not None and exec_menu:
+            m.exec(self.list.mapToGlobal(pos))
+            m.deleteLater()
+        return m
 
     def pick_color(self, index: int) -> bool:
         tool = next((t for t in self.doc().tools if t.index == index), None)

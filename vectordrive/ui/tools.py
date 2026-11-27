@@ -4434,7 +4434,7 @@ class SmoothTool(Tool):
         return total / max(float(self.spec['length']), 1e-3) > self.SPANS_MAX
 
     def _look(self) -> None:
-        from ..core import smoothcurve as SC
+        from ..core import curvefit
         it = self.hover[1] if self.hover is not None else None
         shapes = [it] if self._targets(it) else []       # la forme survolée seule (la sélection : au clic)
         key = (tuple(id(x) for x in shapes), tuple(id(x.path) for x in shapes), tuple(sorted(self.spec.items())))
@@ -4445,7 +4445,10 @@ class SmoothTool(Tool):
             else:
                 s = self.spec
                 try:
-                    self.shown = [SC.smooth(x.path, s['length'], s['sharpness'], s['tolerance']) for x in shapes]
+                    on = getattr(self.c.window(), 'points_tolerance', lambda: 0.0)() > 0     # points minimaux
+                    fit = s['tolerance'] if on else 0.0
+                    self.shown = [curvefit.smooth(x.path, s['length'], s['sharpness'], s['tolerance'], fit)
+                                  for x in shapes]
                 except Exception:                        # noqa: BLE001 — un tracé dégénéré : rien à montrer
                     self.shown = []
         self.c.overlay_update()

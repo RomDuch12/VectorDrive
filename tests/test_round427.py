@@ -48,7 +48,7 @@ class TestOpMenu(unittest.TestCase):
                                  'Afficher ou cacher le parcours', 'Inverser le sens du parcours',
                                  'Retirer le parcours calculé',
                                  'Simuler en 2D', 'Simuler en 3D', 'Matière restante après cette opération…',
-                                 "Reprise d'usinage…"])   # rounds 699, 848, 861, 981, 998
+                                 "Reprise d'usinage…", 'Disposition'])   # rounds 699, 848, 861, 981, 998, 1185
         self.assertLess(self.tp_box()[1], 25)
         self.c.select([self.b])
         self.cp.update_op_from_selection()

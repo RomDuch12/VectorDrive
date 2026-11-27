@@ -241,6 +241,7 @@ class BatDialog(QDialog):
         self.logo2 = self._logo_combo(info.logo2)
         f2.addRow(tr('Second logo (à droite)'), self.logo2)
         options.addWidget(g2)
+        options.addWidget(self._back_group(info))       # le dos de la gravure (demande du 27/11)
         from .fit import VScroll
         self.options_scroll = VScroll(col)
         left.addWidget(self.options_scroll, 1)
@@ -276,8 +277,8 @@ class BatDialog(QDialog):
                                        'l\'en-tête'))
         self.client_book.activated.connect(self._client_chosen)
         self.client_save = QPushButton(tr('Garder ce client'))
-        self.client_save.setToolTip(tr('Le client du cartouche et le second logo sont gardés dans le carnet ; le logo '
-                                       'y est copié, quel que soit son format'))
+        self.client_save.setToolTip(tr('Le client du cartouche, le second logo et le dos de la gravure sont gardés '
+                                       'dans le carnet ; le logo y est copié, quel que soit son format'))
         self.client_save.clicked.connect(self.save_client)
         self.client_del = QPushButton(tr('Retirer'))
         self.client_del.clicked.connect(self.remove_client)
@@ -552,6 +553,12 @@ class BatDialog(QDialog):
             return
         self.edits['client'].setText(str(c['nom']))
         self.set_logo(self.logo2, CL.logo_path(self._clients_dir(), c))
+        if isinstance(c.get('dos'), dict):               # son dos de gravure gardé (le brut du dessin prime)
+            self.load_back(self._with_drawing_brut(c['dos']))
+            self._back_from_client = True
+        elif self._back_from_client:                     # sans dos : celui du client choisi juste avant ne reste
+            self.load_back(dict(proof.BACK_NONE))        # pas ; un dos saisi ou venu du dessin, lui, reste
+            self._back_from_client = False
         self._later()
 
     def save_client(self) -> str:
@@ -562,8 +569,17 @@ class BatDialog(QDialog):
             self.scale_info.setText(tr('Carnet de clients : écrire d\'abord le nom du client dans le cartouche'))
             return ''
         logo = self.logo2.currentData()
+        back = self.back_values()
+        old = CL.find(self._clients_dir(), name)
+        kept = old.get('dos') if old is not None and isinstance(old.get('dos'), dict) else None
+        if back['on']:                                   # représenté : ce dos-là est gardé pour le client
+            more = {'dos': back}
+        elif kept is not None:                           # décoché : seule la case change, le dos gardé reste
+            more = {'dos': dict(kept, on=False)}
+        else:
+            more = {}
         try:
-            c = CL.add(self._clients_dir(), name, '' if logo in (None, '?') else str(logo))
+            c = CL.add(self._clients_dir(), name, '' if logo in (None, '?') else str(logo), **more)
         except (OSError, ValueError) as ex:
             self.scale_info.setText(tr('Carnet de clients : {0}').format(ex))
             return ''
@@ -572,6 +588,129 @@ class BatDialog(QDialog):
         if kept:
             self.set_logo(self.logo2, kept)              # le BAT emploie désormais la copie du carnet
         return str(c['nom'])
+
+    # --- dos de la gravure (demande du 27/11) ---------------------------------------------------------------------
+    def _back_group(self, info) -> QGroupBox:
+        """« Représenter le dos de la gravure » (case du groupe) : le brut — repris d'office de la plaque ou du brut
+        du dessin —, ses taraudages et leurs positions ; décoché, le BAT reste celui d'avant. Les signaux sont branchés
+        une fois les valeurs posées (le minuteur de l'aperçu n'existe pas encore)."""
+        g = self.back_box = QGroupBox(tr('Représenter le dos de la gravure'))
+        g.setCheckable(True)
+        g.setChecked(False)
+        g.setToolTip(tr('Une vue « Dos » à côté de la face : le brut couleur laiton vu de dos (la gauche passe à '
+                        'droite), ses taraudages et leurs cotes en noir — seulement ce qui est renseigné ici'))
+        f = QFormLayout(g)
+
+        def spin(lo=0.0):
+            s = QDoubleSpinBox()
+            s.setRange(lo, 10000.0)
+            s.setDecimals(2)
+            s.setSuffix(' mm')
+            return s
+
+        def pair(a, b, sep):
+            row = QHBoxLayout()
+            for k, w in enumerate((a, b)):
+                if sep[k]:
+                    row.addWidget(QLabel(sep[k]))
+                row.addWidget(w, 1)
+            return row
+        self.back_w, self.back_h, self.back_ep = spin(), spin(), spin()
+        f.addRow(tr('Brut (largeur × hauteur)'), pair(self.back_w, self.back_h, ('', '×')))
+        self.back_ep.setToolTip(tr('0 : pas écrite'))
+        f.addRow(tr('Épaisseur'), self.back_ep)
+        self.back_holes = QComboBox()
+        for v, t in (('', tr('Aucun')), ('1', tr('Un au milieu')), ('2h', tr('Deux sur l’axe horizontal')),
+                     ('2v', tr('Deux sur l’axe vertical')), ('4', tr('Quatre aux coins'))):
+            self.back_holes.addItem(t, v)
+        f.addRow(tr('Taraudages'), self.back_holes)
+        self.back_thread = QComboBox()
+        self.back_thread.setEditable(True)
+        self.back_thread.addItems(['', 'M2', 'M2,5', 'M3', 'M4', 'M5', 'M6', 'M8'])
+        self.back_thread.setToolTip(tr('M3, M4… (pas fin : M8x1) ; vide : chaque trou marqué d’une croix'))
+        f.addRow(tr('Filetage'), self.back_thread)
+        self.back_pos = QComboBox()
+        self.back_pos.addItem(tr('Entraxes'), 'entraxe')
+        self.back_pos.addItem(tr('Distances aux bords'), 'bords')
+        f.addRow(tr('Positions'), self.back_pos)
+        self.back_x, self.back_y = spin(), spin()
+        self.back_x.setToolTip(tr('Entre les deux trous d’une rangée, ou d’un bord (gauche, droit) aux trous'))
+        self.back_y.setToolTip(tr('Entre les deux trous d’une colonne, ou d’un bord (haut, bas) aux trous'))
+        f.addRow(tr('Cotes des trous'), pair(self.back_x, self.back_y, ('X', 'Y')))
+        self.back_dx, self.back_dy = spin(-10000.0), spin(-10000.0)
+        for s in (self.back_dx, self.back_dy):
+            s.setToolTip(tr('Le centre des trous décalé du milieu du brut, vu de face : vu de dos, il passe de '
+                            'l’autre côté'))
+        f.addRow(tr('Décalage (vu de face)'), pair(self.back_dx, self.back_dy, ('X', 'Y')))
+        self.back_note = QLabel()                        # ce qui manque ou ne tient pas (`proof.back_warnings`)
+        self.back_note.setWordWrap(True)
+        self.back_note.setStyleSheet('color: #b22222')
+        self.back_note.hide()
+        f.addRow(self.back_note)
+        values = dict(proof.back_defaults(self.doc))
+        values.update(info.back if isinstance(getattr(info, 'back', None), dict) else {})
+        #: le dos affiché vient-il du client choisi juste avant ? (levé à toute saisie ; jamais pour celui du dessin)
+        self._back_from_client = False
+        self._back_loading = False
+        self.load_back(self._with_drawing_brut(values), later=False)
+        for s in (self.back_w, self.back_h, self.back_ep, self.back_x, self.back_y, self.back_dx, self.back_dy):
+            s.valueChanged.connect(self._back_edited)
+        for c in (self.back_holes, self.back_pos):
+            c.currentIndexChanged.connect(self._back_edited)
+        self.back_thread.currentTextChanged.connect(self._back_edited)
+        g.toggled.connect(self._back_edited)
+        return g
+
+    def _back_edited(self, *_a) -> None:
+        """Un champ du dos a changé : à la main (hors `load_back`), le dos n'est plus celui du client choisi."""
+        if not self._back_loading:
+            self._back_from_client = False
+        self._later()
+
+    def _with_drawing_brut(self, values: dict) -> dict:
+        """`values` avec le brut du dessin (sa plaque, ou son brut unique) s'il en a un : il prime sur celui d'un
+        client du carnet ou d'un BAT d'avant — la face et le dos ont la même taille ; le carnet donne les taraudages
+        et leurs positions. L'épaisseur gardée reste si le dessin n'en dit rien."""
+        v = dict(values or {})
+        d = proof.back_defaults(self.doc)
+        if d:
+            v.update(w=d['w'], h=d['h'])
+            if d['ep'] > 0:
+                v['ep'] = d['ep']
+        return v
+
+    def load_back(self, values: dict, later: bool = True) -> None:
+        """Les réglages du dos `values` (ceux d'un client du carnet, du dessin, ou d'office) posés dans le groupe ;
+        ce qu'ils ne nomment pas reste."""
+        v = values if isinstance(values, dict) else {}
+        self._back_loading = True                        # (pas une saisie : `_back_edited`)
+        try:
+            for key, s in (('w', self.back_w), ('h', self.back_h), ('ep', self.back_ep), ('x', self.back_x),
+                           ('y', self.back_y), ('dx', self.back_dx), ('dy', self.back_dy)):
+                if key in v:
+                    try:
+                        s.setValue(float(v[key] or 0))
+                    except (TypeError, ValueError):
+                        pass
+            for key, box in (('trous', self.back_holes), ('pos', self.back_pos)):
+                if key in v:
+                    box.setCurrentIndex(max(0, box.findData(str(v[key] or ''))))
+            if 'filetage' in v:
+                self.back_thread.setCurrentText(str(v['filetage'] or ''))
+            if 'on' in v:
+                self.back_box.setChecked(v['on'] in (True, 'true', 1))
+        finally:
+            self._back_loading = False
+        if later:
+            self._later()
+
+    def back_values(self) -> dict:
+        """Les réglages du dos de la fenêtre (`ProofInfo.back`, la clé `dos` du carnet de clients)."""
+        return {'on': self.back_box.isChecked(), 'w': self.back_w.value(), 'h': self.back_h.value(),
+                'ep': self.back_ep.value(), 'trous': self.back_holes.currentData() or '',
+                'filetage': self.back_thread.currentText().strip(), 'pos': self.back_pos.currentData() or 'entraxe',
+                'x': self.back_x.value(), 'y': self.back_y.value(), 'dx': self.back_dx.value(),
+                'dy': self.back_dy.value()}
 
     def remove_client(self) -> None:
         from ..io import clients as CL
@@ -729,6 +868,7 @@ class BatDialog(QDialog):
         i.watermark_gap, i.watermark_strength = self.watermark_gap.value(), int(self.watermark_strength.value())
         i.as_image, i.image_dpi = self.as_image.isChecked(), int(self.image_dpi.value())
         i.open_folder = self.open_folder.isChecked()
+        i.back = self.back_values()
         return i
 
     def refresh(self) -> None:
@@ -747,6 +887,19 @@ class BatDialog(QDialog):
             w.setEnabled(info.watermark)
         self.watermark_gap.setEnabled(info.watermark and info.watermark_layout == 'trame')
         self.image_dpi.setEnabled(info.as_image)
+        holes, pos = info.back.get('trous', ''), info.back.get('pos', 'entraxe')      # dos : les champs qui servent
+        on = self.back_box.isChecked()                   # (groupe décoché : tout reste grisé)
+        for w in (self.back_w, self.back_h, self.back_ep, self.back_holes):
+            w.setEnabled(on)
+        self.back_thread.setEnabled(on and bool(holes))
+        self.back_pos.setEnabled(on and holes in ('2h', '2v', '4'))
+        self.back_x.setEnabled(on and holes in ('2h', '4'))
+        self.back_y.setEnabled(on and holes in ('2v', '4'))
+        for w in (self.back_dx, self.back_dy):
+            w.setEnabled(on and (holes == '1' or (bool(holes) and pos == 'entraxe')))
+        notes = proof.back_warnings(info, self.doc)      # jamais un trou qui disparaît sans le dire
+        self.back_note.setText('\n'.join(notes))
+        self.back_note.setVisible(bool(notes))
         self.mode.setEnabled(not (sel and info.fit_selection))
         self.scale.setEnabled(info.scale_mode == 'imposee' and self.mode.isEnabled())
         vues = info.scale_mode == 'vues' and self.mode.isEnabled()

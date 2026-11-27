@@ -968,6 +968,12 @@ class MainWindow(QMainWindow):
           tip=tr('Montrer la zone précédente qui porte des différences'))
         a('compare_close', tr('Fermer la comparaison'), lambda _=False: self.compare_close(), None, 'compare_close',
           tip=tr('Effacer les couleurs de la comparaison'))
+        a('shape_search', tr('Dessins semblables'), lambda _=False: self.shape_search_dialog(), None, 'command_search',
+          tip=tr('Chercher, dans les dossiers indexés, les dessins qui ressemblent à la sélection (sinon au dessin '
+                 'entier), à un fichier ou à des critères : ressemblance réglable, score, double clic pour ouvrir'))
+        a('shape_index', tr('Dossiers indexés'), lambda _=False: self.shape_search_dialog('index'), None, 'open',
+          tip=tr('Choisir les dossiers à indexer et mettre l’index à jour, à la main, en arrière-plan ; l’assistant '
+                 'IA peut lire ces dossiers et cet index'))
         for k in ('compare_next', 'compare_prev', 'compare_close'):
             self.A[k].setEnabled(False)
         a('import', tr('Importer'), self.import_dialog, 'Ctrl+I', 'import')
@@ -2545,10 +2551,23 @@ class MainWindow(QMainWindow):
 
     def _dock_follows(self, dock, key: str) -> None:
         """La commande cochable `key` suit le panneau `dock` : ouvert ou fermé — pas seulement recouvert, ou
-        découvert, par l'onglet d'un voisin de sa colonne (Qt le dit « invisible » alors), ni caché avec sa colonne."""
+        découvert, par l'onglet d'un voisin de sa colonne (Qt le dit « invisible » alors), ni caché avec sa colonne,
+        ni rangé au lancement par les colonnes pas encore faites, ni caché un instant par Qt quand il se détache (son
+        bouton ⧉, tiré à la souris : fermé, il l'est encore une fois les événements passés). Demande du 27/11 : la
+        palette FAO détachée, tirée vers une colonne ou sortie des onglets au lancement fermait la FAO à moitié
+        (« Opérations » caché)."""
         def follow(v):
             cols = getattr(self, 'columns', None)
-            if (cols is not None and cols.busy()) or bool(v) == dock.isHidden():
+            if cols is None or cols.busy() or bool(v) == dock.isHidden():
+                return
+            if not v:                                    # caché : relu une fois les événements passés
+                QTimer.singleShot(0, self, lambda: apply(False))
+                return
+            apply(True)
+
+        def apply(v):
+            cols = getattr(self, 'columns', None)
+            if cols is None or cols.busy() or bool(v) == dock.isHidden():
                 return
             if self.A[key].isChecked() != bool(v):
                 self.A[key].setChecked(bool(v))
@@ -2612,6 +2631,9 @@ class MainWindow(QMainWindow):
         g.add(A['compare'])
         for k in ('compare_next', 'compare_prev', 'compare_close'):
             g.add(A[k], big=False)
+        g = t.group(tr('Formes'))                        # dessins semblables, dossiers indexés (27/11)
+        g.add(A['shape_search'])
+        g.add(A['shape_index'], big=False)
         t = r.add_tab(tr('Edition'))
         g = t.group(tr('Action'))
         g.add(A['undo']); g.add(A['redo'])
@@ -6222,14 +6244,14 @@ class MainWindow(QMainWindow):
     # --- paramètres : réglages + outils + modèles + thèmes (.vdparam) ----------------------
     def export_params(self, path: str, cats=None) -> dict:
         from ..io import params
-        return params.export(path, self.settings, cats, local_keys=self.LOCAL_KEYS)
+        return params.export(path, self.settings, cats, local_keys=self.LOCAL_KEYS, window=self)
 
     def import_params(self, path: str, cats=None, backup_dir=None) -> tuple[dict, object]:
         """Reprend les paramètres choisis ; ce qui est remplacé part d'abord dans
         un dossier de sauvegarde (rendu avec le compte de chaque catégorie)."""
         from ..io import params
         counts, backup = params.import_(path, self.settings, cats, local_keys=self.LOCAL_KEYS,
-                                        backup_dir=backup_dir)
+                                        backup_dir=backup_dir, window=self)
         if counts.get('reglages'):
             self._apply_imported_settings()
         if counts.get('outils') or counts.get('modeles_fao'):
@@ -6237,9 +6259,19 @@ class MainWindow(QMainWindow):
                 self.cam_panel.refresh()
             except Exception:                            # noqa: BLE001 - panneau FAO absent
                 pass
+        if counts.get('polices'):                        # polices ajoutées : l'inventaire refait
+            try:
+                from ..core import fonts
+                fonts.refresh()
+            except Exception:                            # noqa: BLE001
+                pass
         return counts, backup
 
-    def _params_choice(self, title: str, available: dict, intro: str) -> list | None:
+    def _params_choice(self, title: str, available: dict, intro: str, labels: dict | None = None,
+                       exec_dialog: bool = True):
+        """Les catégories à exporter ou à importer, cochées d'office quand elles portent quelque chose (celles des
+        plugins comprises ; `labels` : celles d'un fichier, dont le plugin peut manquer ici). `exec_dialog` faux
+        (essais) : la fenêtre et ses cases, sans l'ouvrir."""
         from PySide6.QtWidgets import QCheckBox
         from ..io import params
         from .dialogs import _buttons
@@ -6250,7 +6282,7 @@ class MainWindow(QMainWindow):
         form = QFormLayout(dlg)
         form.addRow(QLabel(intro))
         boxes = {}
-        for key, label in params.CATEGORIES:
+        for key, label in params.categories(labels):
             if key not in available:
                 continue
             n = available[key]
@@ -6260,13 +6292,16 @@ class MainWindow(QMainWindow):
             form.addRow(cb)
             boxes[key] = cb
         _buttons(dlg, form)
+        if not exec_dialog:
+            return dlg, boxes
         if not dlg.exec():
             return None
         return [k for k, cb in boxes.items() if cb.isChecked()]
 
     def export_params_dialog(self) -> None:
         from ..io import params
-        cats = self._params_choice(tr('Exporter les paramètres'), params.available(self.settings, self.LOCAL_KEYS),
+        cats = self._params_choice(tr('Exporter les paramètres'),
+                                   params.available(self.settings, self.LOCAL_KEYS, window=self),
                                    tr('À mettre dans le fichier :'))
         if not cats:
             return
@@ -6282,8 +6317,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr('Exporter les paramètres'), str(ex))
             return
         self.statusBar().showMessage(tr('Paramètres exportés : {0}').format(params.summary(counts)), 8000)
+        if params.last_errors:                           # fichiers laissés, plugin en erreur : dit
+            QMessageBox.warning(self, tr('Exporter les paramètres'), tr('Paramètres exportés : {0}').format(
+                params.summary(counts)) + '\n\n' + tr('Non emportés : {0}').format(' ; '.join(params.last_errors[:8])))
 
-    def import_params_dialog(self) -> None:
+    def import_params_dialog(self) -> dict | None:
         from ..io import params
         path, _ = QFileDialog.getOpenFileName(self, tr('Importer des paramètres'), self._last_dir('parametres'),
                                               tr('Paramètres VectorDrive (*.vdparam *.ini)'))
@@ -6292,12 +6330,13 @@ class MainWindow(QMainWindow):
         self._remember_dir('parametres', path)
         try:
             found = params.contents(path)
+            labels = params.file_labels(path)
         except (OSError, ValueError) as ex:
             QMessageBox.warning(self, tr('Importer des paramètres'), str(ex))
             return
         cats = self._params_choice(tr('Importer des paramètres'), found,
                                    tr('À reprendre (les outils sont ajoutés à « Mes outils », sans doublon ; '
-                                      'ce qui est remplacé est d\'abord sauvegardé) :'))
+                                      'ce qui est remplacé est d\'abord sauvegardé) :'), labels)
         if not cats:
             return
         try:
@@ -6306,9 +6345,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr('Importer des paramètres'), str(ex))
             return
         msg = tr('Paramètres importés : {0}').format(params.summary(counts))
+        if params.last_errors:
+            msg += '\n\n' + tr('Non repris : {0}').format(' ; '.join(params.last_errors[:8]))
         if backup:
             msg += '\n\n' + tr('Sauvegarde de ce qui a été remplacé : {0}').format(backup)
         QMessageBox.information(self, tr('Importer des paramètres'), msg)
+        return counts                                   # (F10 : des réglages repris, la fenêtre des options se ferme)
 
     def export_settings(self, path: str) -> int:
         from PySide6.QtCore import QSettings
@@ -6487,6 +6529,10 @@ class MainWindow(QMainWindow):
 
     # --- FAO -----------------------------------------------------------------
     def _toggle_cam_panel(self, on: bool) -> None:
+        if self.isVisible() and not getattr(self, '_closing', False):
+            # retenu d'abord : la disposition d'avant rendue (`Columns._quiet`) remet « Panneau FAO » d'après ce
+            # réglage — écrit après, la commande restait cochée, la FAO fermée (un clic de plus pour la rouvrir, 27/11)
+            self.settings.setValue('vue/panneau_fao', bool(on))
         if on and not self.dock_paths.isVisible() and getattr(self, '_docks_before_cam', None) is None:
             self._docks_before_cam = self.saveState()    # rendue à la fermeture du panneau FAO
         if not on and getattr(self, '_docks_before_cam', None) is not None:
@@ -6502,12 +6548,13 @@ class MainWindow(QMainWindow):
                     self.restoreState(state)
         self.dock_cam.setVisible(on)
         self.dock_paths.setVisible(on)
-        if self.isVisible() and not getattr(self, '_closing', False):
-            self.settings.setValue('vue/panneau_fao', bool(on))
         if on:
             self.dock_cam.raise_()
             self.dock_paths.raise_()
             self.cam_full_height()                       # toute la hauteur de la fenêtre pour les opérations
+            cols = getattr(self, 'columns', None)
+            if cols is not None:                         # une fois par poste : la palette et les opérations
+                cols.fao_opened()                        # laissées à part rendues à leurs onglets (27/11)
             self.cam_panel.refresh()
             self.cam_palette.refresh()
 
@@ -6904,7 +6951,8 @@ class MainWindow(QMainWindow):
         """Un panneau ancré mis devant, sur toute la hauteur de sa colonne : le panneau Dimensions, s'il est
         au-dessus de lui, passe en onglet à côté (un grand panneau sous Dimensions dépasserait l'écran). Le panneau
         prend d'abord son onglet dans le groupe de sa colonne, s'il était seul (demande du 25/11) ; Dimensions rangé à
-        part par l'utilisateur (sorti des onglets, au-dessus ou au-dessous d'un autre) est laissé."""
+        part par l'utilisateur (sorti des onglets, au-dessus ou au-dessous d'un autre) est laissé, Dimensions déjà en
+        onglets aussi : le panneau rangé au-dessous d'un autre ne l'emmène pas hors de son groupe (demande du 27/11)."""
         if d is None or d.isFloating() or d.isHidden():
             return
         from PySide6.QtWidgets import QDockWidget
@@ -6914,6 +6962,7 @@ class MainWindow(QMainWindow):
             cols._join_group(d)                          # pas un bloc à part avec Dimensions : son onglet
         if dims is not None and dims is not d and not dims.isHidden() and not dims.isFloating() \
                 and self.dockWidgetArea(dims) == self.dockWidgetArea(d) and dims not in self.tabifiedDockWidgets(d) \
+                and not self.tabifiedDockWidgets(dims) \
                 and not (cols is not None and 'dims' in (cols.split_names() | cols.chosen())):   # rangé à part
             self.tabifyDockWidget(d, dims)
         d.raise_()
@@ -11457,7 +11506,7 @@ class MainWindow(QMainWindow):
             self.settings.remove(f'bat/{k}')
         kept = proof.doc_fields(self.canvas.doc)         # … mais ceux du BAT déjà édité de ce dessin
         for f in dataclasses.fields(info):
-            if f.name == 'date':
+            if f.name in ('date', 'back'):              # le dos : du dessin ou du carnet, jamais des réglages
                 continue
             v = kept.get(f.name) if f.name in proof.DOC_FIELDS else self.settings.value(f'bat/{f.name}')
             if v is None and f'bat/{f.name}' in BY_KEY:      # jamais réglé : le défaut de F10 › BAT (A4 portrait…)
@@ -11483,6 +11532,7 @@ class MainWindow(QMainWindow):
             info.material = self.canvas.doc.plate.material
         if self.settings.value('bat/fill') is None:      # coloriage : comme à l'écran (Remplissage, Ctrl+9) tant
             info.fill = bool(self.canvas.show_fill)      # qu'aucun BAT n'est validé ; ensuite, le dernier choix
+        info.back = proof.doc_back(self.canvas.doc)      # le dos de la gravure du dernier BAT de ce dessin
         dlg = BatDialog(self, self.canvas.doc, info, items=list(self.canvas.selection))
         self._bat_print = False
         if not dlg.exec():
@@ -11498,7 +11548,7 @@ class MainWindow(QMainWindow):
         if getattr(dlg, 'logos_pending', None):          # logos d'un partage : copiés hors du fil de l'interface
             self._keep_logos_later(dlg.logos_pending)    # (round 1164)
         for f in dataclasses.fields(info):
-            if f.name not in ('date', 'notes') + proof.DOC_FIELDS:
+            if f.name not in ('date', 'notes', 'back') + proof.DOC_FIELDS:
                 self.settings.setValue(f'bat/{f.name}', getattr(info, f.name))
         if proof.keep_doc_fields(self.canvas.doc, info):     # client, référence… : dans le dessin (enregistrés avec
             self.modified = True                         # lui, le compagnon d'un VND compris)
@@ -11624,6 +11674,10 @@ class MainWindow(QMainWindow):
             chat = dock.widget() if dock is not None else None
             if chat is not None and hasattr(chat, 'shutdown'):
                 chat.shutdown()                          # la demande en cours s'arrête, plus aucun outil
+            job = getattr(self, '_shape_job', None)
+            if job is not None and job.running:          # l'index des formes : le fichier en cours fini, l'index gardé
+                job.cancel()
+                job.wait(5)
             ev.accept()
         else:
             ev.ignore()
@@ -12202,6 +12256,10 @@ class MainWindow(QMainWindow):
             notes.append(tr('{0} fichier(s) non repris : la nouvelle version a déjà un fichier de ce nom, différent, '
                             'ou c’est un lien (l’ancienne version est gardée) : {1}').format(
                                 len(carried.skipped), listed(carried.skipped)))
+        if carried is not None:                          # le carnet de clients : dit (demande du 27/11)
+            book = carried.book
+            taken = AU.book_taken(book, inst.exe.parent / AU.INI)
+            notes += self.book_lines(book, taken, '' if taken else AU.chosen_book(inst.exe.parent / AU.INI))
         quiet()                                          # la nouvelle version s'ouvre, au lieu de nous passer la main
         state = why = ''
         proc = None
@@ -12381,6 +12439,195 @@ class MainWindow(QMainWindow):
                 pass
             stuck_at(folder)
         return total
+
+    # --- reprendre une ancienne version portable (demandes du 27/11) ----------------------------------------------
+    def adoption_text(self, res) -> str:
+        """Le bilan d'une reprise (`app_update.Adopted`) : le dossier repris, les fichiers, les onglets passés avec
+        leurs parcours, les dossiers favoris et de la bibli, le carnet de clients du BAT (`book_lines`), les fichiers
+        remplacés et leur copie de secours, une copie arrêtée, les échecs — rien de passé sous silence."""
+        lines = [tr('Repris de « {0} » ({1}) : {2} fichier(s), {3} onglet(s) avec leurs parcours, {4} dossier(s) '
+                    'favori(s), {5} dossier(s) de la bibli.').format(res.name, res.folder, res.copied, res.tabs,
+                                                                     res.favorites, res.bibli)]
+        replaced = list(getattr(res, 'replaced', None) or [])
+        if replaced:
+            lines.append(tr('Remplacé(s), copie de secours gardée : {0}').format(' ; '.join(replaced)))
+        if getattr(res, 'stopped', False):
+            lines.append(tr('Copie arrêtée : la bibliothèque et les données ne sont peut-être pas toutes reprises. '
+                            'F10 › Mises à jour › « Reprendre d’une ancienne version… » la termine, sans rien '
+                            'remplacer.'))
+        if res.failed:
+            more = len(res.failed) - 5
+            shown = ' ; '.join(res.failed[:5]) + (f' … (+{more})' if more > 0 else '')
+            lines.append(tr('Échecs : {0}').format(shown))
+        if res.skipped:
+            lines.append(tr('{0} fichier(s) déjà là, différent(s), gardé(s) tel(s) quel(s).').format(
+                len(res.skipped)))
+        if getattr(res, 'kept', 0):
+            lines.append(tr('{0} réglage(s) déjà posé(s) ici gardé(s) (dossiers favoris et de la bibli : '
+                            'réunis).').format(res.kept))
+        if getattr(res, 'book', None) is not None:
+            lines += MainWindow.book_lines(res.book, res.book_taken, res.book_here, res.book_local, backups=False)
+        if getattr(res, 'language', ''):
+            lines.append(tr('La langue reprise (« {0} ») prendra effet au prochain lancement.').format(res.language))
+        return '\n'.join(lines)
+
+    @staticmethod
+    def book_lines(book, taken: bool = False, here: str = '', local: int = 0, backups: bool = True) -> list:
+        """Le carnet de clients du BAT d'une reprise ou d'une mise à jour (`app_update.Book`, demande du 27/11 :
+        « maj garder le carnet client ») : clients ajoutés et gardés, sa copie de secours (`backups`), le dossier
+        choisi ici où rien n'est versé d'office, le dossier choisi par l'ancienne version repris ou non (`taken` ;
+        `here` : celui choisi ici ; `local` : les clients du carnet des données d'ici, gardé)."""
+        out = []
+        if book.added or book.kept:
+            out.append(tr('Carnet de clients : {0} client(s) ajouté(s), dont {1} avec leur logo ; {2} déjà là '
+                          'gardé(s) tel(s) quel(s).').format(book.added, book.logos, book.kept))
+        if backups and book.replaced:
+            out.append(tr('Carnet de clients : copie de secours gardée : {0}').format(' ; '.join(book.replaced)))
+        if book.shared:
+            out.append(tr('Carnet de clients : le dossier choisi ici ({0}) peut être partagé par d’autres postes : les '
+                          '{1} client(s) de l’ancienne version n’y sont pas ajoutés d’office. Pour les ajouter : '
+                          'exporter la configuration de l’ancienne version (Carnet de clients), puis l’importer '
+                          'ici.').format(book.shared, book.waiting))
+        if book.chosen and taken:
+            out.append(tr('Carnet de clients : le dossier choisi par l’ancienne version est repris ({0}) ; rien '
+                          'n’est copié.').format(book.chosen))
+        elif book.chosen and here:
+            out.append(tr('Carnet de clients : le dossier choisi ici est gardé ; celui de l’ancienne version ({0}) '
+                          'n’est pas repris.').format(book.chosen))
+        elif book.chosen:
+            out.append(tr('Carnet de clients : celui des données d’ici ({0} client(s)) reste employé ; le dossier '
+                          'choisi par l’ancienne version ({1}) n’est pas repris (F10 › BAT › Carnet de clients : '
+                          'dossier).').format(local, book.chosen))
+        return out
+
+    def tell_adoption(self, res, exec_dialog: bool = True) -> str:
+        """Après une reprise (`VectorDrive.py` au premier lancement, ou `adopt_previous_version`) : le bilan dans la
+        barre d'état ; des échecs ou une copie arrêtée : dits aussi dans une fenêtre. Rend le texte."""
+        text = self.adoption_text(res)
+        self.statusBar().showMessage(text.replace('\n', ' — '), 30000)
+        if (res.failed or getattr(res, 'stopped', False)) and exec_dialog:
+            QMessageBox.warning(self, tr('Reprendre d’une ancienne version'), text)
+        return text
+
+    def _confirm_adopt(self, name: str, folder, held: bool = False):
+        """La question de « Reprendre d’une ancienne version… » ; ouverte : celle du premier lancement (Réessayer,
+        Reprendre sans attendre, Annuler)."""
+        from .. import portable
+        if held:
+            return portable._ask_adopt(name, True, path=folder, manual=True)
+        box = QMessageBox(QMessageBox.Icon.Question, tr('Reprendre d’une ancienne version'),
+                          tr('Reprendre les réglages, les dossiers favoris, les données, la bibliothèque, le '
+                             'carnet de clients et les onglets de « {0} » ?').format(name) + '\n'
+                          + tr('Dossier : {0}').format(folder),
+                          parent=self)
+        box.setInformativeText(tr('Les réglages déjà posés ici restent (dossiers favoris et de la bibli : réunis), '
+                                  'après une copie de secours (….avant_reprise) ; aucun fichier de données ou de '
+                                  'bibliothèque déjà là n’est remplacé ; « Mes outils » et le carnet de clients : '
+                                  'ceux de l’ancienne sont ajoutés, sans doublon (les clients d’ici gardés tels '
+                                  'quels ; rien d’office dans un dossier choisi ici) ; sa propre session n’est '
+                                  'jamais touchée. Rien n’est changé dans l’ancien dossier.'))
+        yes = box.addButton(tr('Reprendre'), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(yes)
+        box.exec()
+        return box.clickedButton() is yes
+
+    def adopt_previous_version(self, params=None, exec_dialog: bool = True) -> dict:
+        """F10 › Mises à jour › « Reprendre d’une ancienne version… » (demande du 27/11) : la nouvelle version n'était
+        pas posée à côté de l'ancienne, ou a déjà été lancée — rien n'était plus proposé. Un dossier choisi (proposé :
+        la version posée à côté, sinon la plus récente du dossier VD ; le dossier parent qui contient `VectorDrive/`
+        est accepté), contrôlé (VectorDrive.exe et un VectorDrive.ini avec des réglages ; jamais celle-ci, chemins
+        résolus compris : `app_update.same_place`), une confirmation (encore ouverte : Réessayer, Reprendre sans
+        attendre, Annuler), puis la même reprise qu'au premier lancement (`portable.adopt`, fenêtre de
+        progression) — rien de déjà là n'est remplacé (1re relecture du 27/11 : des outils ajoutés ici disparaissaient
+        de l'interface), « Mes outils » fusionnés, réglages d'ici gardés (listes de favoris et de dossiers réunies :
+        `app_update.merge_settings`) après leur copie de secours, ses onglets passés et
+        rouverts aussitôt (`reopen_after_update`) ; la session de cette fenêtre jamais écrasée. Le tout sous le verrou
+        de la reprise (`portable._adoption_lock`, 4e relecture) : déjà tenu (une autre reprise, un lancement qui
+        attend), rien n'est fait. Version non portable :
+        rien (le bouton est grisé). `params` (essais) : 'dossier' (sans choix), 'choisir' (fonction(dossier proposé)
+        → dossier ou ''), 'demande' (fonction(nom, held=False) → vrai, faux ou `portable.RETRY`), 'progression'
+        (fonction(fn) → résultat) ; sans fenêtre, 'ok' vaut accord. Rend {'etat': 'non_portable' | 'annule' |
+        'erreur' | 'refuse' | 'en_cours' | 'repris', …}."""
+        from .. import app_update as AU
+        from .. import portable
+        p = dict(params or {})
+        title = tr('Reprendre d’une ancienne version')
+
+        def say(text: str, bad: bool = False) -> None:
+            self.statusBar().showMessage(text.replace('\n', ' — '), 15000)
+            if exec_dialog:
+                (QMessageBox.warning if bad else QMessageBox.information)(self, title, text)
+
+        app = portable.app_dir() if portable.is_portable() else None
+        if app is None:
+            say(tr('Seule une version portable (VectorDrive.ini à côté de VectorDrive.exe) reprend une ancienne '
+                   'version : ailleurs, les réglages sont ceux du poste.'), True)
+            return {'etat': 'non_portable'}
+        folder = p.get('dossier')
+        guess = None
+        if not folder:
+            guess = AU.guess_previous(app, AU.versions_dir(self.settings))
+            choose = p.get('choisir')
+            if choose is None:
+                if not exec_dialog:
+                    return {'etat': 'annule', 'propose': guess}
+
+                def choose(start):
+                    return QFileDialog.getExistingDirectory(self, title, str(start or app.parent.parent))
+            folder = choose(guess)
+            if not folder:
+                return {'etat': 'annule', 'propose': guess}
+        old = AU.old_app_of(folder)
+        if old is None:
+            text = tr('« {0} » n’est pas une version portable de VectorDrive qui a servi : il y faut '
+                      'VectorDrive.exe et un VectorDrive.ini avec des réglages (dans ce dossier ou dans son '
+                      'dossier « VectorDrive »).').format(folder)
+            say(text, True)
+            return {'etat': 'erreur', 'message': text, 'propose': guess}
+        if AU.same_place(old, app):
+            text = tr('« {0} » est la version en cours.').format(old)
+            say(text, True)
+            return {'etat': 'erreur', 'message': text, 'propose': guess}
+        name = AU.version_label(old)
+        ask = p.get('demande')
+        if ask is None:
+            if exec_dialog:
+                def ask(n, held=False):
+                    return self._confirm_adopt(n, old, held)
+            else:
+                def ask(n, held=False):
+                    return bool(p.get('ok'))
+        held = portable.session_held(old)
+        while True:
+            answer = ask(name, held=True) if held else ask(name)
+            if answer != portable.RETRY:
+                break
+            held = portable.session_held(old)
+            if not held:                                 # fermée : la reprise demandée se fait
+                answer = True
+                break
+        if not answer:
+            return {'etat': 'refuse', 'propose': guess}
+        lock = portable._adoption_lock(app)              # 4e relecture : jamais deux reprises à la fois (un
+        if lock is None:                                 # lancement pendant celle-ci la verrait par sa marque)
+            text = tr('Une reprise est déjà en cours, sur ce poste ou un autre : rien n’est fait.') \
+                if portable.WAIT_END == 'delai' else tr('Le verrou de la reprise (« {0} ») ne peut pas être pris : '
+                                                        'rien n’est fait.').format(app / portable.ADOPT_LOCK)
+            say(text, True)
+            return {'etat': 'en_cours', 'message': text, 'propose': guess}
+        try:
+            self.settings.sync()
+            progress = p.get('progression') or (lambda fn: portable.run_with_progress(fn, self))
+            res = portable.adopt(old, app, settings=self.settings, keep=True, progress=progress)
+            n = self.reopen_after_update() if res.handover is not None else 0
+        finally:
+            lock.unlock()
+        text = self.tell_adoption(res, exec_dialog=False) + '\n' + tr(
+            'Relancez VectorDrive pour que tous les réglages repris s’appliquent.')
+        if exec_dialog:
+            (QMessageBox.warning if res.failed or res.stopped else QMessageBox.information)(self, title, text)
+        return {'etat': 'repris', 'resultat': res, 'rouverts': n, 'message': text, 'propose': guess}
 
     def _app_update_keep_state(self, errors: list | None = None) -> bool:
         """Avant de copier réglages et données vers la nouvelle version : la place de la fenêtre, les onglets gardés
@@ -15747,6 +15994,14 @@ class MainWindow(QMainWindow):
         res, n = PF.build(items, stroke, delete)
         if not n:
             return 0
+        fit = self.points_tolerance()                    # points minimaux (F10 › Dessin)
+        if fit > 0:
+            from ..core import curvefit
+            from .progress import Cancelled, run
+            try:
+                res = run(self, tr('Concepteur de formes'), curvefit.minimal_pairs, res, fit)
+            except Cancelled:                            # annulé : les pièces telles que calculées
+                pass
         self._replace_selection([Shape(path=p, tool=t) for p, t in res])
         return n
 
@@ -15768,7 +16023,9 @@ class MainWindow(QMainWindow):
             return []
         from .progress import Cancelled, run
         try:
-            res = run(self, tr('Pathfinder'), PF.apply, op, items)
+            from ..core import curvefit
+            fit = self.points_tolerance()                # points minimaux (F10 › Dessin)
+            res = run(self, tr('Pathfinder'), lambda: curvefit.minimal_pairs(PF.apply(op, items), fit))
         except Cancelled:
             return []
         new = [Shape(path=p, tool=t) for p, t in res]
@@ -15777,7 +16034,7 @@ class MainWindow(QMainWindow):
         return new
 
     def boolean(self, op: str) -> None:
-        from ..core import pathops
+        from ..core import curvefit, pathops
         keep = self._held_on(f'bool_{op}')               # TypeEdit : Ctrl ou Maj garde les contours originaux
         shapes = self._selected_shapes()
         if len(shapes) < 2:
@@ -15802,7 +16059,8 @@ class MainWindow(QMainWindow):
                     break
             return out
         try:
-            res = run(self, tr('Booléens'), work)
+            fit = self.points_tolerance()                # points minimaux (F10 › Dessin)
+            res = run(self, tr('Booléens'), lambda: curvefit.minimal_path(work(), fit))
         except Cancelled:
             return
         except Exception as ex:
@@ -15841,6 +16099,15 @@ class MainWindow(QMainWindow):
             self.settings.setValue('texte/compression_globale', percent)
         return self.textbar.set_global_compression(percent)
 
+    def points_tolerance(self) -> float:
+        """Points minimaux (F10 › Dessin, demande du 27/11) : l'écart toléré (mm) pour rendre les tracés produits avec
+        le moins de nœuds possible (`core.curvefit`) ; 0 : interrupteur coupé, les tracés tels que les calculs les
+        rendent."""
+        from .options import value
+        if not value(self.settings, 'dessin/points_minimaux'):
+            return 0.0
+        return max(1e-4, float(value(self.settings, 'dessin/points_tolerance')))
+
     def offset_dialog(self) -> None:
         from .dialogs import OffsetDialog
         shapes = self._selected_shapes()
@@ -15869,6 +16136,7 @@ class MainWindow(QMainWindow):
         s.setValue('decalage/reunir', union)
         from ..core import parallel
         from .progress import Cancelled, run
+        fit = self.points_tolerance()                    # points minimaux (F10 › Dessin) ; 0 : coupé
 
         def work():
             # un tracé à la fois ; un long travail (milliers d'objets) passe sur plusieurs processus
@@ -15913,6 +16181,9 @@ class MainWindow(QMainWindow):
                         kept.append((k, tool, geom.Path(rest[i])))
                     kept += [(k, tool, q) for q in adds.get(i, [])]
                 out = kept
+            from ..core import curvefit                  # le moins de nœuds possible : droites, arcs exacts, Bézier
+            fitted = curvefit.minimal_paths([p for _k, _t, p in out], fit)
+            out = [(k, tool, q) for (k, tool, _p), q in zip(out, fitted)]
             return ([Shape(path=p, tool=tool) for _k, tool, p in out], sum(r[1] for r in res), sum(r[2] for r in res),
                     [s for s, r in zip(shapes, res) if not r[0]], (joined, into))
         try:
@@ -16006,6 +16277,16 @@ class MainWindow(QMainWindow):
         if not shapes:
             return rep.count()
         new = I.apply(method, shapes, limit=limit)
+        fit = self.points_tolerance() if method in ('normalize', 'nonzero', 'union', 'outer') else 0.0
+        if fit > 0 and new:                              # points minimaux (F10 › Dessin)
+            from ..core import curvefit
+            from .progress import Cancelled, run
+            try:
+                for x, q in zip(new, run(self, tr('Points d\'intersection'), curvefit.minimal_paths,
+                                         [x.path for x in new], fit)):
+                    x.path = q
+            except Cancelled:                            # annulé : les tracés tels que calculés
+                pass
         self._replace_selection(new)
         left = sum(1 for c in I.find(new).crossings if c.kind in kinds)
         self.canvas.cross_marks = []
@@ -18141,6 +18422,22 @@ class MainWindow(QMainWindow):
             return None
         return self.compare_with(other, pathlib.Path(path).name)
 
+    def shape_search_dialog(self, page: str = 'recherche', exec_dialog: bool = True):
+        """Dessins semblables et dossiers indexés (demande du 27/11) : la fenêtre non modale (`ui.shape_search`),
+        reprise si elle est ouverte, à l'onglet `page` ('recherche', 'ressemblance', 'index') ; rendue sans être
+        montrée si `exec_dialog` est faux."""
+        from shiboken6 import isValid
+        from .shape_search import ShapeSearchDialog
+        dlg = getattr(self, '_shape_dlg', None)
+        if dlg is None or not isValid(dlg):
+            dlg = self._shape_dlg = ShapeSearchDialog(self)
+        dlg.show_page(page)
+        if exec_dialog:
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
+        return dlg
+
     def compare_with(self, other, name: str = ''):
         """Comparaison du dessin affiché avec le document `other`, montrée en
         couleurs sur le canevas ; la première zone est montrée."""
@@ -19184,14 +19481,15 @@ class MainWindow(QMainWindow):
 
     def _smooth_selection(self, p: dict):
         """Les formes choisies remplacées par leur courbe lisse ; rend l'écart maxi (mm), None si rien n'est fait."""
-        from ..core import smoothcurve as SC
+        from ..core import curvefit
         shapes = self._selected_shapes()
         if not shapes:
             return None
         length, sharp, tol = p['length'], p['sharpness'], p['tolerance']
+        fit = tol if self.points_tolerance() > 0 else 0.0  # points minimaux (F10 › Dessin) : à l'écart de tracé
         before = [s.path for s in shapes]
         report: dict = {}
-        self._fit_selection(tr('Courbe lisse'), lambda path: SC.smooth(path, length, sharp, tol, report))
+        self._fit_selection(tr('Courbe lisse'), lambda path: curvefit.smooth(path, length, sharp, tol, fit, report))
         after = [s.path for s in self._selected_shapes()]
         if len(after) != len(before) or all(a is b for a, b in zip(after, before)):
             return None                                  # abandonné

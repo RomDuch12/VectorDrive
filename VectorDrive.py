@@ -1624,6 +1624,30 @@ def make_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def after_offer(args, adopting: bool, instance, portable) -> int | None:
+    """Après la question de la reprise (`portable.offer_previous`, demandes du 27/11) : 0 → ce lancement s'arrête,
+    None → il ouvre sa fenêtre. Un autre lancement posait la question (`WAITED`, sans reprise faite ici) : son
+    fichier va à la fenêtre de l'autre. Le délai écoulé pendant que l'autre fait encore la reprise (`BUSY`) : jamais
+    deux fenêtres sur la même reprise — le lot (`--lots`) ou le fichier passé à l'autre si son canal écoute, sinon
+    dit avec leurs noms (`portable.tell_busy`) ; « Ouvrir quand même » : la fenêtre s'ouvre (`FORCED`)."""
+    if adopting and portable.WAITED and portable.LAST is None and instance.forward_waiting(args.fichier or ''):
+        return 0
+    if not portable.BUSY:
+        return None
+    if args.lots:
+        if instance.forward_lots(args.lots):
+            return 0
+        names = list(args.lots)
+    else:
+        if instance.forward(args.fichier or ''):
+            return 0
+        names = [args.fichier] if args.fichier else []
+    if portable.tell_busy(names):                        # « Ouvrir quand même » : sans rouvrir les passages
+        portable.FORCED = True
+        return None
+    return 0
+
+
 def main(argv=None) -> int:
     from vectordrive import winpaths  # noqa: F401 — lecteur verrouillé, réseau perdu : « absent » plutôt qu'une erreur
     args = make_parser().parse_args(argv)
@@ -1666,7 +1690,8 @@ def main(argv=None) -> int:
     app.setOrganizationName('VectorDrive')
     from vectordrive.ui import instance
     starting = None
-    if not args.new_window and args.lots:
+    adopting = portable.launch_adopting(args.new_window, args.lots)   # reprise d'une ancienne version à proposer
+    if not args.new_window and args.lots:                # (27/11) : pas passé à sa fenêtre, peut-être encore ouverte
         # clic droit « Traitement par lots… » : une commande par fichier choisi ;
         # la première lance la fenêtre, les suivantes lui passent leur fichier
         if instance.forward_lots(args.lots):
@@ -1674,16 +1699,19 @@ def main(argv=None) -> int:
         starting = instance.starting_lock()
         if starting is None and instance.forward_lots(args.lots, wait_s=30):
             return 0
-    elif not args.new_window and instance.forward(args.fichier or ''):
+    elif instance.forward_allowed(args.new_window, args.lots, adopting) and instance.forward(args.fichier or ''):
         return 0                                         # ouvert dans un onglet de la fenêtre déjà lancée
     i18n.install_qt_translations(app)
     from vectordrive import portable
     from vectordrive.ui.theme import apply_theme
     from vectordrive.ui.themes import DEFAULT_KEY
     try:
-        portable.offer_previous()                        # portable neuf à côté du précédent : reprendre ses réglages ?
+        portable.offer_previous(busy=not args.script)    # portable neuf à côté du précédent : reprendre ses réglages ?
     except Exception:                                    # noqa: BLE001 — jamais un lancement empêché pour cela
         pass
+    code = after_offer(args, adopting, instance, portable)
+    if code is not None:                                 # passé à la fenêtre d'un autre lancement, ou reprise en cours
+        return code
     st = portable.settings()
     apply_theme(app, str(st.value('vue/theme', DEFAULT_KEY) or DEFAULT_KEY), st)
     from PySide6.QtGui import QIcon
@@ -1703,7 +1731,17 @@ def main(argv=None) -> int:
     session_on = not args.new_window and option(st, 'options/session') and w.start_session()
     w.show_at_start(bool(session_on))                    # plein écran d'office, sinon la fenêtre de la dernière fois
     if not args.new_window:
-        w._instance_server = instance.serve(w)            # lancements suivants : un onglet ici
+        held = False
+        if adopting:                                     # l'ancienne version tient peut-être encore le canal : pris
+            try:                                         # dès sa fermeture, jamais deux fenêtres dessus
+                held = instance.taken()
+            except Exception:                            # noqa: BLE001
+                held = False
+        if held:
+            w._instance_server = None
+            instance.serve_when_free(w)
+        else:
+            w._instance_server = instance.serve(w)        # lancements suivants : un onglet ici
     if starting is not None:
         starting.unlock()
     if sys.platform == 'win32':                           # cartes graphiques lues en fond : F10 s'ouvre aussitôt
@@ -1734,10 +1772,12 @@ def main(argv=None) -> int:
     if session_on:
         app.processEvents()
         w.restore_session()                              # sans question
-    if not args.new_window and not args.script:          # premier lancement après une mise à jour de l'application :
-        w.reopen_after_update()                          # les onglets de l'ancienne version, même sans session
+    if not args.new_window and not args.script and not portable.FORCED:     # premier lancement après une mise à
+        w.reopen_after_update()                          # jour : les onglets de l'ancienne version, même sans session
     if not args.new_window and not args.script:          # lancement normal : les onglets gardés à la fermeture d'une
         w.reopen_kept()                                  # fenêtre sans session reviennent (sinon : au prochain)
+    if portable.LAST is not None:                        # repris d'une ancienne version à ce lancement : le bilan
+        w.tell_adoption(portable.LAST)
     if args.fichier:
         w.open_path(args.fichier)
     if args.lots:

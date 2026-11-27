@@ -149,15 +149,15 @@ class Bars(Base):
         d = self.dock('layers')
         m = self.cols.menu(d)
         acts = {a.text(): a for a in m.actions() if a.text()}
-        self.assertEqual([t for t in acts if t not in (tr('En onglet avec'), tr('Sortir des onglets'),
-                                                       tr('Au-dessus de'), tr('Au-dessous de'),     # 1028
-                                                       'Titres entiers dans les onglets')],         # 1049
-                         [tr('Plein écran translucide'), tr('Détacher seul'), tr('Colonne de gauche'),   # 1093
-                          tr('Colonne de droite'), tr('Fermer')])                # 1013 : et les onglets
-        self.assertTrue(acts[tr('Colonne de droite')].isChecked())
-        self.assertFalse(acts[tr('Colonne de droite')].isEnabled())     # il y est déjà
-        self.assertTrue(acts[tr('Colonne de gauche')].isEnabled())
-        acts[tr('Colonne de gauche')].trigger()
+        self.assertEqual([t for t in acts if t not in (tr('Au-dessus de'), tr('Au-dessous de'),     # 1028
+                                                       'Titres entiers dans les onglets',             # 1049
+                                                       tr('Tous les panneaux'))],                     # rcol2
+                         [tr('Seul à gauche'), tr('Seul à droite'), tr('Masquer'),   # rcol2 : le modèle du 27/11
+                          tr('Plein écran translucide'), tr('Détacher seul')])                # 1093
+        self.assertTrue(acts[tr('Seul à droite')].isChecked())
+        self.assertFalse(acts[tr('Seul à droite')].isEnabled())     # il y est déjà
+        self.assertTrue(acts[tr('Seul à gauche')].isEnabled())
+        acts[tr('Seul à gauche')].trigger()
         app.processEvents()
         self.assertEqual(self.cols.side(d), 'gauche')
         self.assertFalse(d.isHidden())

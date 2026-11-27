@@ -119,9 +119,9 @@ class Form(unittest.TestCase):
     def test_saved_in_the_tool_sheet_with_history(self):
         d = self.open()
         w = d.widgets['finish_feed']
-        self.assertIn('900 mm/min', w.specialValueText())                     # l'outil n'en a pas : celle d'ébauche
+        self.assertEqual('900', w.specialValueText())                         # l'outil n'en a pas : celle d'ébauche
         d.widgets['feed'].setValue(700.0)
-        self.assertIn('700 mm/min', w.specialValueText())                     # celle d'ébauche de l'opération
+        self.assertEqual('700', w.specialValueText())                         # celle d'ébauche de l'opération
         d.widgets['feed'].setValue(0.0)
         self.assertTrue(d.feed_save_buttons['finition'].isEnabled())          # outil du document
         d._sync_feed_buttons(model.CamTool(name='Mes outils 1018'))

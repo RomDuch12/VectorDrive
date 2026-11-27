@@ -2,6 +2,7 @@
 symboles .smb et dessins DXF/VDZ posés d'un double-clic, vignettes des DXF."""
 import os
 import pathlib
+import shutil
 import tempfile
 import unittest
 
@@ -35,6 +36,8 @@ class TestLibrary(unittest.TestCase):
         from vectordrive.ui import symbols as SY
         from vectordrive.ui.main_window import MainWindow
         self.assertEqual(SY.library_root(), LIB)
+        shutil.rmtree(LIB, ignore_errors=True)        # vide au début (un essai d'avant : « Logos BAT »)
+        self.addCleanup(shutil.rmtree, LIB, True)     # et à la fin (l'export des essais suivants)
         f = make_dxf(LIB / 'plaque_type.dxf') if LIB.mkdir(parents=True, exist_ok=True) is None else None
         (LIB / 'notes.txt').write_text('pas un dessin', encoding='utf-8')
         w = MainWindow()

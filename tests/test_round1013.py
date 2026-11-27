@@ -62,25 +62,23 @@ class F2AndLayers(unittest.TestCase):
         self.assertEqual(w.columns.side(dims), w.columns.side(layers))
         self.assertIn(layers, w.tabifiedDockWidgets(dims))                    # d'office : en onglet (round 1022)
         self.assertTrue(w.columns.untab(dims))                                # séparés : Dimensions au-dessus
-        m = w.columns.menu(dims)
-        sub = m.findChild(QMenu, 'en_onglet_avec')
-        self.assertIsNotNone(sub)                                             # avant : aucun moyen au clic droit
-        acts = {a.text(): a for a in sub.actions()}
-        self.assertIn(layers.windowTitle(), acts)                             # avant : aucun moyen au clic droit
-        acts[layers.windowTitle()].trigger()
+        m = w.columns.menu(dims)                                              # rcol2 (27/11) : ni « En
+        self.addCleanup(m.deleteLater)                                        # onglet avec », ni « Sortir des
+        self.assertIsNone(m.findChild(QMenu, 'en_onglet_avec'))               # onglets » ; « Seul à … »
+        self.assertNotIn('Sortir des onglets', [a.text() for a in m.actions()])
+        side = w.columns.side(layers)
+        act = next(a for a in m.actions() if a.objectName() == f'seul_{side}')
+        self.assertFalse(act.isChecked())                                     # hors des onglets
+        act.trigger()
         self.assertIn(layers, w.tabifiedDockWidgets(dims))
         self.assertFalse(dims.isHidden())
-        self.assertEqual(w.settings.value('panneaux_colonnes/onglet/dims'), 'layers')
+        self.assertIsNone(w.settings.value('panneaux_colonnes/seul/dims'))
         m = w.columns.menu(dims)
-        texts = [a.text() for a in m.actions()]
-        self.assertIn('Sortir des onglets', texts)
-        sub = m.findChild(QMenu, 'en_onglet_avec')
-        self.assertTrue(sub is None or layers.windowTitle() not in [a.text() for a in sub.actions()])
-        next(a for a in m.actions() if a.text() == 'Sortir des onglets').trigger()
-        self.assertEqual(w.tabifiedDockWidgets(dims), [])
-        self.assertFalse(dims.isHidden())
+        self.addCleanup(m.deleteLater)
+        act = next(a for a in m.actions() if a.objectName() == f'seul_{side}')
+        self.assertTrue(act.isChecked())
+        self.assertFalse(act.isEnabled())                                     # il y est déjà
         self.assertEqual(w.columns.side(dims), w.columns.side(layers))        # toujours dans sa colonne
-        self.assertIsNone(w.settings.value('panneaux_colonnes/onglet/dims'))
 
     def test_kept_for_the_next_start(self):
         w = window()

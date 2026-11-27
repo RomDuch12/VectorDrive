@@ -118,7 +118,7 @@ class TestAdopt(Base):
         self.assertEqual(k[P.ADOPTED_KEY], 'VectorDrive-0.743.0-portable')
         self.assertTrue((self.new / 'donnees/outils/tools.json').is_file())
         self.assertTrue((self.new / 'donnees/modeles_fao/m.json').is_file())
-        self.assertTrue((self.new / 'donnees/session/index.json').is_file())
+        self.assertFalse((self.new / 'donnees/session').exists())   # passée comme une mise à jour, jamais copiée
         self.assertTrue((self.new / 'bibliotheque/logo.svg').is_file())
         self.assertFalse((self.new / 'donnees/recuperation').exists())          # la récupération reste à l'ancienne
 
@@ -148,9 +148,9 @@ class TestAdopt(Base):
         mine = self.new / 'donnees/outils/tools.json'
         mine.parent.mkdir(parents=True)
         mine.write_text('{"les miens": 1}', encoding='utf-8')
-        n = P.adopt(self.old, self.new)
+        n = P.adopt(self.old, self.new).copied
         self.assertEqual(mine.read_text(encoding='utf-8'), '{"les miens": 1}')
-        self.assertEqual(n, 3)                                                  # modèles, session, bibliothèque
+        self.assertEqual(n, 3)                                                  # réglages, modèles, bibliothèque
 
     def test_a_used_version_is_never_asked(self):
         s = QSettings(str(self.new / P.INI), QSettings.Format.IniFormat)
@@ -184,9 +184,9 @@ class TestAdopt(Base):
             seen['default'] = box.defaultButton().text()
             return 0
         with mock.patch.object(QMessageBox, 'exec', fake_exec):
-            self.assertFalse(P._ask_adopt('VectorDrive-0.743.0-portable'))
+            self.assertEqual(P._ask_adopt('VectorDrive-0.743.0-portable'), P.LATER)   # fermée : rien de retenu
         self.assertIn('VectorDrive-0.743.0-portable', seen['text'])
-        self.assertEqual(sorted(seen['buttons']), ['Partir de zéro', 'Reprendre ses réglages'])
+        self.assertEqual(sorted(seen['buttons']), ['Partir de zéro', 'Plus tard', 'Reprendre ses réglages'])
         self.assertEqual(seen['default'], 'Reprendre ses réglages')
 
 
@@ -194,9 +194,9 @@ class TestStart(unittest.TestCase):
 
     def test_the_program_asks_before_reading_its_settings(self):
         src = (pathlib.Path(__file__).resolve().parents[1] / 'VectorDrive.py').read_text(encoding='utf-8')
-        at = src.index('portable.offer_previous()')
+        at = src.index('portable.offer_previous(busy=not args.script)')   # un script : jamais d'attente
         self.assertLess(at, src.index('st = portable.settings()\n    apply_theme'))
-        self.assertGreater(at, src.index('instance.forward(args.fichier'))   # une fenêtre déjà lancée : rien demandé
+        self.assertGreater(at, src.index('instance.forward(args.fichier', src.index('\ndef main(')))   # déjà lancée
 
 
 if __name__ == '__main__':

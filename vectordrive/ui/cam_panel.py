@@ -7,8 +7,8 @@ import json
 import math
 import pathlib
 
-from PySide6.QtCore import QLocale, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QEvent, QLocale, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QValidator
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
@@ -348,6 +348,9 @@ FIELD_CHOICES = {
 TOOL_DEFAULT = ('step_down', 'feed', 'plunge', 'spindle', 'finish_feed')
 #: unité de la valeur de l'outil montrée dans ces champs
 TOOL_UNITS = {'feed': 'mm/min', 'plunge': 'mm/min', 'spindle': 'tr/min', 'step_down': 'mm', 'finish_feed': 'mm/min'}
+#: champs de vitesse : la valeur de l'outil n'y est écrite qu'en nombre (demande du 27/11 : « outil champs vitesse ne
+#: pas y écrire le mm/min ») ; l'unité reste dans le libellé du champ (« Avance (mm/min) ») et dans sa bulle
+SPEED_FIELDS = ('feed', 'plunge', 'spindle', 'finish_feed')
 #: section Vitesses d'une opération : ses deux cadres (clé, titre, champs) — demande du 14/11, 19 h 45
 FEED_FRAMES = (('ebauche', 'Ébauche', ('feed', 'plunge', 'spindle')), ('finition', 'Finition', ('finish_feed',)))
 #: champs à 0 qui prennent une valeur tirée de l'outil (la distance entre passes : une part de son diamètre)
@@ -363,7 +366,8 @@ def _num(v: float) -> str:
 
 def tool_value_text(name: str, tool) -> str:
     """Ce que montre le champ `name` à 0 : la valeur prise de l'outil `tool` et son unité, rien d'autre (demande du
-    15/11 : pas de « celle de l'outil » dans le champ) ; « — » si l'outil ne la donne pas (aucun outil choisi, valeur
+    15/11 : pas de « celle de l'outil » dans le champ) — le nombre seul dans un champ de vitesse (`SPEED_FIELDS`,
+    demande du 27/11 : l'unité est dans son libellé) ; « — » si l'outil ne la donne pas (aucun outil choisi, valeur
     pas réglée dans l'outil) ; « auto » pour une distance entre passes que la stratégie calcule. L'explication :
     `tool_value_tip`, dans la bulle du champ."""
     if tool is None:
@@ -375,9 +379,11 @@ def tool_value_text(name: str, tool) -> str:
         return '≈ {0} mm'.format(_num(frac * float(tool.diameter)))
     value = float(getattr(tool, name, 0.0) or 0.0)
     if name == 'finish_feed' and value <= 0 and float(getattr(tool, 'feed', 0.0) or 0.0) > 0:
-        return '{0} mm/min'.format(_num(float(tool.feed)))       # l'outil n'a pas d'avance de finition : d'ébauche
+        return _num(float(tool.feed))                    # l'outil n'a pas d'avance de finition : d'ébauche
     if value <= 0:
         return '—'
+    if name in SPEED_FIELDS:                             # une vitesse : le nombre seul (27/11)
+        return _num(value)
     return '{0} {1}'.format(_num(value), tr(TOOL_UNITS.get(name, '')))
 
 
@@ -400,6 +406,120 @@ def tool_value_tip(name: str, tool) -> str:
     if value <= 0:
         return tr('non réglée dans l’outil')
     return tr('{0} {1} (outil)').format(_num(value), tr(TOOL_UNITS.get(name, '')))
+
+
+class ToolValueSpin(QDoubleSpinBox):
+    """Champ « 0 = la valeur de l'outil » du formulaire d'une opération (`ZERO_IS_TOOL`). Son texte spécial est la
+    valeur de l'outil, un nombre valide pour une vitesse (« 750 », demande du 27/11) : tant que l'utilisateur ne l'a pas
+    tapé lui-même, valider ce texte — Entrée (OK par défaut), Tab, perte du focus, `interpretText` — garde 0, le lien à
+    l'outil, jamais 750 figé en silence (l'avance suivrait mal un outil changé ensuite). Taper « 750 » fixe 750. La
+    valeur héritée s'écrit de la couleur atténuée du thème (`PlaceholderText`), suivie au changement de valeur, de
+    texte spécial et de thème.
+
+    Une saisie : le texte d'une frappe (`textEdited`) faite depuis la dernière réécriture du champ par Qt — celle-ci
+    vide l'historique d'annulation de la ligne ; une annulation (Ctrl+Z, menu) qui ramène tout au texte d'avant n'est
+    pas une saisie (plus rien à annuler). Qt réécrit la ligne signaux bloqués : la frappe retenue est oubliée par
+    `setValue`, `setSpecialValueText` (valeur à 0) et dès que la valeur change sans être celle du texte tapé."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        #: texte de la dernière frappe depuis la dernière réécriture par Qt (None : aucune)
+        self._edited = None
+        self._marked = None
+        le = self.lineEdit()
+        le.textEdited.connect(self._typed)
+        le.installEventFilter(self)
+        self.valueChanged.connect(self._value_changed)
+
+    def _typed(self, text: str) -> None:
+        # rien à annuler : la ligne est revenue au texte écrit par Qt (annulation complète), pas une saisie
+        self._edited = text if self.lineEdit().isUndoAvailable() else None
+
+    def _value_changed(self, _v) -> None:
+        le = self.lineEdit()
+        if self.value() == self.minimum() and self.specialValueText() and le.text() == self.specialValueText():
+            self._forget()                                        # revenu à 0 (Page↓, `stepBy`…) : celle de l'outil
+        elif le.text() != self._edited:                           # valeur changée par Qt ou le code : la frappe
+            self._edited = None                                   # ne vaut plus
+        self.mark()
+
+    def _forget(self) -> None:
+        """Plus aucune frappe ne compte : celle retenue est oubliée ; si Qt n'a pas réécrit un texte identique (« 5 »
+        tapé puis 0 avec texte spécial « 5 »), l'historique d'annulation de la ligne est vidé comme par une
+        réécriture (rien si seul un « refaire » reste possible)."""
+        self._edited = None
+        le = self.lineEdit()
+        if le.isUndoAvailable():
+            blocked = le.blockSignals(True)
+            le.setText(le.text())
+            le.blockSignals(blocked)
+
+    def setValue(self, v) -> None:                                # noqa: N802 — API Qt
+        self._edited = None                                       # le champ réécrit : aucune frappe ne compte plus
+        super().setValue(v)
+        self._forget()
+
+    def fixup(self, text: str) -> str:                            # noqa: D102 — API Qt
+        special = self.specialValueText()
+        if special and not str(text).strip():
+            return special                                        # champ vidé : la valeur de l'outil (0)
+        return super().fixup(text)
+
+    def shows_tool_value(self, text: str) -> bool:
+        """Vrai si `text` est le texte spécial que Qt a écrit (la valeur de l'outil), pas une saisie."""
+        special = self.specialValueText()
+        if not special or text != special:
+            return False
+        le = self.lineEdit()
+        typing = le.isUndoAvailable() and le.text() == text      # en pleine frappe (avant `textEdited`)
+        return not typing and self._edited != text
+
+    def validate(self, text, pos):                                # noqa: D102 — API Qt
+        if self.shows_tool_value(text):
+            return QValidator.State.Acceptable, text, pos
+        return super().validate(text, pos)
+
+    def valueFromText(self, text: str) -> float:                  # noqa: N802 — API Qt
+        if self.shows_tool_value(text):
+            return self.minimum()                                 # 0 : celle de l'outil, toujours
+        return super().valueFromText(text)
+
+    def setSpecialValueText(self, text: str) -> None:            # noqa: N802 — API Qt
+        if self.value() == self.minimum():
+            self._edited = None                                   # Qt y écrit la nouvelle valeur de l'outil
+        super().setSpecialValueText(text)
+        self.mark(force=True)
+
+    def inherits_tool(self) -> bool:
+        return bool(self.specialValueText()) and self.value() == self.minimum()
+
+    def mark(self, force: bool = False) -> None:
+        """La ligne de saisie en couleur atténuée tant que la valeur est celle de l'outil."""
+        on = self.inherits_tool()
+        if on == self._marked and not force:
+            return
+        self._marked = on
+        le, own = self.lineEdit(), self.palette()
+        role = QPalette.ColorRole.PlaceholderText if on else QPalette.ColorRole.Text
+        want = {g: own.color(g, role) for g in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive)}
+        pal = le.palette()
+        if all(pal.color(g, QPalette.ColorRole.Text) == c for g, c in want.items()):
+            return                                                # déjà juste : rien de réécrit (pas de boucle)
+        pal = QPalette(pal)
+        for g, c in want.items():
+            pal.setColor(g, QPalette.ColorRole.Text, c)
+        le.setPalette(pal)
+
+    def changeEvent(self, ev) -> None:                            # noqa: N802 — API Qt
+        super().changeEvent(ev)
+        if ev.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange,
+                         QEvent.Type.StyleChange):
+            self.mark(force=True)                                 # autre thème : ses couleurs
+
+    def eventFilter(self, obj, ev) -> bool:                       # noqa: N802 — API Qt
+        if obj is self.lineEdit() and ev.type() in (QEvent.Type.PaletteChange, QEvent.Type.StyleChange):
+            self.mark(force=True)                                 # repeinte par le style (feuille de style) : remise
+        return super().eventFilter(obj, ev)
 
 
 def rename_kept_cases(settings) -> bool:
@@ -1431,7 +1551,8 @@ class FieldsDialog(QDialog):
                 w.setSpecialValueText(tr('toute la pièce'))
             w.setValue(v)
         elif isinstance(v, float):
-            w = QDoubleSpinBox()
+            w = ToolValueSpin() if name in ZERO_IS_TOOL and isinstance(obj, model.Operation) and v >= 0 \
+                else QDoubleSpinBox()                    # 0 = l'outil : jamais figé par une simple validation
             w.setDecimals(3)
             w.setRange(-100000, 1000000)
             w.setValue(v)
@@ -1673,14 +1794,31 @@ class FieldsDialog(QDialog):
             if not isinstance(w, QDoubleSpinBox) or not w.specialValueText():
                 continue
             text, tip = tool_value_text(name, tool), tool_value_tip(name, tool)
-            rough = self.widgets.get('feed')
-            if name == 'finish_feed' and tool is not None and float(getattr(tool, 'finish_feed', 0.0) or 0.0) <= 0 \
-                    and isinstance(rough, QDoubleSpinBox) and rough.value() > 0:   # l'avance d'ébauche de l'opération
-                text = '{0} mm/min'.format(_num(rough.value()))
-                tip = tr('{0} mm/min (avance d’ébauche)').format(_num(rough.value()))
+            if name == 'finish_feed' and tool is not None:
+                text, tip = self._finish_shown(tool, text, tip)
             w.setToolTip(tr('À 0, le champ prend la valeur de l’outil : {0}').format(tip))
             if text != w.specialValueText():             # Qt réécrit le champ : seulement si l'outil a changé,
                 w.setSpecialValueText(text)              # jamais pendant la frappe
+
+    def _finish_shown(self, tool, text: str, tip: str) -> tuple:
+        """Le champ « Avance de finition » à 0 : exactement l'avance que le calcul donnera aux passes de finition
+        (`model.move_feed` d'une passe de finition, avec l'avance d'ébauche et le cadre actif du formulaire) — une
+        avance d'ébauche propre à l'opération l'emporte sur la finition de l'outil dans le cadre Ébauche
+        (`finish_feed_of`). Le nombre seul ; d'où elle vient, dans la bulle. Rien à montrer : `text`, `tip`."""
+        from types import SimpleNamespace
+        w = self.widgets.get('feed')
+        own = float(w.value()) if isinstance(w, QDoubleSpinBox) else 0.0
+        op = SimpleNamespace(feed=own, finish_feed=0.0, feed_frame=self.feed_frame())
+        used = float(model.move_feed(SimpleNamespace(fin=True), op, tool) or 0.0)
+        if used <= 0:
+            return text, tip
+        if own > 0 and abs(used - own) < 1e-9:
+            tip = tr('{0} mm/min (avance d’ébauche)').format(_num(used))
+        elif abs(used - float(getattr(tool, 'finish_feed', 0.0) or 0.0)) < 1e-9:
+            tip = tr('{0} {1} (outil)').format(_num(used), tr(TOOL_UNITS['finish_feed']))
+        else:
+            tip = tr('{0} mm/min (avance de l’outil)').format(_num(used))
+        return _num(used), tip
 
     def choose_member(self, key: str) -> None:
         """Parcours unifiés : un autre parcours de la famille choisi dans la liste — ce formulaire se ferme (rien
@@ -2241,8 +2379,9 @@ class CamPanel(QWidget):
         g = QGroupBox(tr('Outils d\'usinage'))
         gl = QVBoxLayout(g)
         self.tools = QTableWidget(0, 5)
-        self.tools.setHorizontalHeaderLabels(['T', tr('Nom'), tr('Nature'), 'Ø', tr('Avance')])
-        hh = self.tools.horizontalHeader()
+        self.tools.setHorizontalHeaderLabels(['T', tr('Nom'), tr('Nature'), 'Ø', tr('Avance (mm/min)')])
+        from .tool_columns import unit_header             # « Avance », l'unité en très petit dessous (27/11)
+        hh = unit_header(self.tools, (4,))
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for c in (0, 2, 3, 4):                           # panneau étroit : colonnes à leur contenu, pas de défilement
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
@@ -3945,6 +4084,8 @@ class CamPanel(QWidget):
         a = m.addAction(tr('Reprise d\'usinage…'), lambda: self.restart_op())
         a.setToolTip(tr('N\'usiner qu\'une partie du parcours, après une casse d\'outil par exemple : du point de reprise au dernier point choisi'))
         m.setToolTipsVisible(True)
+        from .columns import add_layout_menu
+        add_layout_menu(m, self.ops)                     # « Disposition › » : la place du panneau (27/11)
         if exec_menu:
             m.exec(self.ops.viewport().mapToGlobal(pos) if pos is not None else self.cursor().pos())
             m.deleteLater()
@@ -3952,11 +4093,17 @@ class CamPanel(QWidget):
 
     def _loose_menu(self, pos=None, exec_menu: bool = True):
         """Clic droit sur un parcours sans opération (réponse 13 du 14/11) : en faire une opération, le montrer ou le
-        cacher, l'inverser, le retirer. None : aucune de ces lignes choisie."""
+        cacher, l'inverser, le retirer. Aucune de ces lignes choisie : le menu du panneau (demande du 27/11), None hors
+        d'une colonne."""
         from PySide6.QtWidgets import QMenu
         i = self._loose_row()
-        if i < 0:
-            return None
+        if i < 0:                                        # une zone vide : le menu du panneau (27/11)
+            from .columns import panel_menu
+            m = panel_menu(self.ops)
+            if m is not None and exec_menu:
+                m.exec(self.ops.viewport().mapToGlobal(pos) if pos is not None else self.cursor().pos())
+                m.deleteLater()
+            return m
         r = self._n_ops + self._loose.index(i)
         m = QMenu(self)
         m.addAction(tr('En faire une opération…'), self.edit_op).setShortcut('Ctrl+M')
@@ -3967,6 +4114,8 @@ class CamPanel(QWidget):
             self.reverse_path()
         m.addAction(tr('Inverser le sens du parcours'), reverse)
         m.addAction(tr('Retirer le parcours'), self.remove_op).setShortcut('Del')
+        from .columns import add_layout_menu
+        add_layout_menu(m, self.ops)                     # « Disposition › » : la place du panneau (27/11)
         if exec_menu:
             m.exec(self.ops.viewport().mapToGlobal(pos) if pos is not None else self.cursor().pos())
             m.deleteLater()

@@ -11,6 +11,20 @@ from PySide6.QtWidgets import QApplication
 app = QApplication.instance() or QApplication([])
 
 
+def keep(w):
+    """Les réglages au début de l'essai (partagés par les modules lancés ensemble)."""
+    return {k: w.settings.value(k) for k in w.settings.allKeys()}
+
+
+def give_back(w, kept):
+    """Les réglages rendus tels qu'au début : ajoutés retirés, changés remis."""
+    for k in w.settings.allKeys():
+        if k not in kept:
+            w.settings.remove(k)
+    for k, v in kept.items():
+        w.settings.setValue(k, v)
+
+
 class TestPostInOptions(unittest.TestCase):
     def setUp(self):
         from vectordrive.plugins import REGISTRY
@@ -23,6 +37,7 @@ class TestPostInOptions(unittest.TestCase):
     def test_choose_in_options(self):
         from vectordrive.ui.main_window import MainWindow
         w = MainWindow()
+        kept = keep(w)
         try:
             p = w.cam_panel
             self.assertFalse(p.post.isVisibleTo(p))                          # plus de liste dans le panneau
@@ -42,10 +57,12 @@ class TestPostInOptions(unittest.TestCase):
         finally:
             w.modified = False
             w.close()
+            give_back(w, kept)
 
     def test_opacity(self):
         from vectordrive.ui.main_window import MainWindow
         w = MainWindow()
+        kept = keep(w)
         try:
             w.settings.setValue('fao/opacite', 80)
             w.show()
@@ -60,6 +77,7 @@ class TestPostInOptions(unittest.TestCase):
         finally:
             w.modified = False
             w.close()
+            give_back(w, kept)
 
 
 if __name__ == '__main__':

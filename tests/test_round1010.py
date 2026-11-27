@@ -50,9 +50,9 @@ class ToolValues(unittest.TestCase):
         d = self.open()
         dp = QLocale().decimalPoint()                                           # le séparateur des champs
         self.assertIs(d.current_tool(), self.big)
-        self.assertEqual(self.shown(d, 'feed'), '750 mm/min')                  # round 1031 : la valeur seule
-        self.assertEqual(self.shown(d, 'plunge'), '150 mm/min')
-        self.assertEqual(self.shown(d, 'spindle'), '18000 ' + tr('tr/min'))
+        self.assertEqual(self.shown(d, 'feed'), '750')                         # round 1183 : sans « mm/min »
+        self.assertEqual(self.shown(d, 'plunge'), '150')
+        self.assertEqual(self.shown(d, 'spindle'), '18000')
         self.assertEqual(self.shown(d, 'step_down'), f'0{dp}3 mm')
         self.assertIn('1 mm', self.shown(d, 'stepover_mm'))                     # 50 % de 2 mm
         self.assertIn('50 %', d.widgets['stepover_mm'].toolTip())             # round 1031 : dans la bulle
@@ -60,8 +60,8 @@ class ToolValues(unittest.TestCase):
         tools = d.widgets['tool_id']
         tools.setCurrentIndex(tools.findData(self.small.id))                   # un autre outil : elles suivent
         self.assertIs(d.current_tool(), self.small)
-        self.assertIn(f'420{dp}5 mm/min', self.shown(d, 'feed'))
-        self.assertIn('24000 ' + tr('tr/min'), self.shown(d, 'spindle'))
+        self.assertEqual(f'420{dp}5', self.shown(d, 'feed'))
+        self.assertEqual('24000', self.shown(d, 'spindle'))
         self.assertIn(f'0{dp}4 mm', self.shown(d, 'stepover_mm'))
         self.check_typing(d)
         self.assertEqual(d.widgets['stepover_mm'].minimum(), 0.0)

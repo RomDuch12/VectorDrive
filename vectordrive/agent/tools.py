@@ -56,6 +56,8 @@ TOOL_GROUPS = {'memory_read': 'memory', 'memory_write': 'memory', 'memory_topics
                                      'cam_operation_settings', 'cam_add_operation', 'cam_edit_operation',
                                      'cam_remove_operation', 'cam_move_operation', 'cam_compute', 'cam_program')},
                'save_copy': 'copies', 'list_copies': 'copies',
+               **{k: 'folders' for k in ('folders_allowed', 'folder_list', 'files_find', 'drawing_info',
+                                         'shape_search')},
                **{k: 'step' for k in ('step_families', 'step_family', 'step_generate', 'step_from_drawing',
                                       'step_check', 'step_build')}}
 MAX_DOC = 12000
@@ -684,7 +686,7 @@ class ToolSet:
                 'empty': new is None}
 
     def smooth_curve(self, args: dict) -> dict:
-        from ..core import smoothcurve as SC
+        from ..core import curvefit
         from ..core.document import Group, Shape
         pairs = self._items(args.get('ids'))
         self._free(pairs)
@@ -709,7 +711,8 @@ class ToolSet:
         if total / length > MAX_SMOOTH_RATIO:            # des dizaines de milliers de morceaux : la fenêtre figée
             raise ToolError(f'"length" is too small for these shapes: at least {total / MAX_SMOOTH_RATIO:.3g} mm')
         report: dict = {}
-        new = [SC.smooth(x.path, length, sharp, tol, report) for x in shapes]
+        fit = tol if self.win.points_tolerance() > 0 else 0.0       # points minimaux (F10 › Dessin)
+        new = [curvefit.smooth(x.path, length, sharp, tol, fit, report) for x in shapes]
         if all(a is b for x, n in zip(shapes, new) for a, b in zip(x.path.contours, n.contours)):
             raise ToolError('nothing to smooth: these contours are too short (fewer than 3 points)')
         self._step()
@@ -904,6 +907,42 @@ class ToolSet:
         a('step_check', 'STEP: read back a file of your STEP folder ("name") with the STEP reader of the application: '
           'faces, faces meshed, triangles, bounds, "ok". Without "name": the files of your STEP folder.',
           _schema({'name': {'type': 'string'}}), self.step_check)
+        # les dossiers choisis par l'utilisateur et l'index des formes (demande du 27/11) : `agent.folder_tools`,
+        # en lecture seule, jamais hors de ces dossiers
+        from . import folder_tools as FT
+        a('folders_allowed', 'The folders the user lets you read (read only: nothing is ever written there), the '
+          'state of the shape index built from them, and the indexed drawing formats. Call this before the other '
+          'folder tools.', _schema({}), lambda args: FT.folders_allowed(self.win, args))
+        a('folder_list', 'List a folder (absolute path, inside an allowed folder): sub-folders first, then files with '
+          'size and modification date. Hidden names, links and junctions are not shown.',
+          _schema({'path': {'type': 'string'}, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': FT.MAX_LISTED}},
+                  ['path']), lambda args: FT.folder_list(self.win, args))
+        a('files_find', 'Find files in the allowed folders (or in "folder", inside one of them): "name" (words '
+          'contained, without case or accents, or a pattern with * and ?), "extensions" (such as [".dxf", ".vnd"]), '
+          '"modified_after" / "modified_before" (dates such as 2026-11-27), "recursive" (default true). Read only.',
+          _schema({'name': {'type': 'string'}, 'extensions': {'type': 'array', 'items': {'type': 'string'}},
+                   'folder': {'type': 'string'}, 'modified_after': {'type': 'string'},
+                   'modified_before': {'type': 'string'}, 'recursive': {'type': 'boolean'},
+                   'limit': {'type': 'integer', 'minimum': 1, 'maximum': FT.MAX_LISTED}}),
+          lambda args: FT.files_find(self.win, args))
+        a('drawing_info', 'Information on a drawing file inside an allowed folder, without opening it in the window: '
+          'width and height (mm), contours, objects, layers, texts. From the shape index when it is up to date '
+          'there, else read from the file (read only).',
+          _schema({'path': {'type': 'string'}}, ['path']), lambda args: FT.drawing_info(self.win, args))
+        a('shape_search', 'Search the shape index (the drawings of the allowed folders, indexed by the user) for '
+          'drawings similar to: "source" "selection" (the selected objects, else the whole drawing), "drawing" (the '
+          'whole open drawing), "file" (the drawing at "path", inside an allowed folder) or "criteria" (min_width, '
+          'max_width, min_height, max_height in mm, min_contours, max_contours, "text" contained in the drawing, '
+          '"name" part of the file name). The user\'s similarity settings apply; "scale", "rotation", "mirror" (true: '
+          'ignored) and "threshold" (%) override them for this search. Returns paths with their score (%), size, '
+          'contours and the score of each criterion. Opening a result is left to the user.',
+          _schema({'source': {'type': 'string', 'enum': ['selection', 'drawing', 'file', 'criteria']},
+                   'path': {'type': 'string'}, 'min_width': NUM, 'max_width': NUM, 'min_height': NUM,
+                   'max_height': NUM, 'min_contours': NUM, 'max_contours': NUM, 'text': {'type': 'string'},
+                   'name': {'type': 'string'}, 'scale': {'type': 'boolean'}, 'rotation': {'type': 'boolean'},
+                   'mirror': {'type': 'boolean'}, 'threshold': NUM,
+                   'limit': {'type': 'integer', 'minimum': 1, 'maximum': FT.MAX_RESULTS}}),
+          lambda args: FT.shape_search(self.win, args))
         for name, group in TOOL_GROUPS.items():         # retirés par les options (F10 › Assistant)
             if group in self.without:
                 self._tools.pop(name, None)

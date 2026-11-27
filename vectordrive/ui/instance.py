@@ -70,6 +70,70 @@ def starting_lock():
     return lock if lock.tryLock(0) else None
 
 
+def taken() -> bool:
+    """Une fenêtre de VectorDrive (n'importe quelle version) tient le canal — cherché sans rien lui envoyer
+    (`app_update.answers`)."""
+    from ..app_update import answers
+    return answers(channel())
+
+
+def forward_allowed(new_window: bool, lots, adopting: bool) -> bool:
+    """Ce lancement passe son fichier à la fenêtre déjà ouverte (`forward`) : ni fenêtre à part, ni traitement par
+    lots (il a son propre chemin), ni reprise d'une ancienne version en attente (`portable.launch_adopting` : la
+    fenêtre ouverte est peut-être l'ancienne, et rien ne serait proposé)."""
+    return not new_window and not lots and not adopting
+
+
+def forward_waiting(path: str, wait_s: float = 30.0, step_s: float = 0.25) -> bool:
+    """`forward`, en attendant jusqu'à `wait_s` secondes que la fenêtre d'un autre lancement écoute (elle démarre
+    après la question de la reprise, `portable.WAITED`)."""
+    import time
+    end = time.monotonic() + wait_s
+    while True:
+        if forward(path):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(step_s)
+
+
+#: canal libéré mais pas pris (`serve` rend None) : autant de nouvelles tentatives, une par intervalle
+SERVE_TRIES = 20
+
+
+def serve_when_free(win, probe=None, every_ms: int = 3000):
+    """Le canal est tenu par une autre fenêtre (l'ancienne version, encore ouverte pendant la reprise, demande du
+    27/11) : jamais deux fenêtres dessus — il est pris par `win` dès qu'il est libre (`probe`, d'office `taken`,
+    toutes les `every_ms` ms) ; libre mais pas pris (`serve` rend None) : retenté, `SERVE_TRIES` fois au plus. Rend
+    la minuterie."""
+    from PySide6.QtCore import QTimer
+    timer = QTimer(win)
+    timer.setInterval(every_ms)
+    failed = [0]
+
+    def tick():
+        if getattr(win, '_closing', False) or getattr(win, '_instance_server', None) is not None:
+            timer.stop()
+            return
+        try:
+            busy = bool((probe or taken)())
+        except Exception:                                # noqa: BLE001 — pas de réponse sûre : on attend
+            return
+        if busy:
+            return
+        win._instance_server = serve(win)
+        if win._instance_server is not None:
+            timer.stop()
+            return
+        failed[0] += 1
+        if failed[0] >= SERVE_TRIES:                     # rien de plus à espérer : cette fenêtre reste seule
+            timer.stop()
+    timer.timeout.connect(tick)
+    timer.start()
+    win._instance_timer = timer
+    return timer
+
+
 def serve(win) -> QLocalServer | None:
     """Écoute les lancements suivants : chaque fichier reçu s'ouvre dans un
     onglet de `win`, qui passe au premier plan."""

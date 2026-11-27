@@ -381,13 +381,17 @@ class AssistantPanel(QWidget):
         self.stack.setCurrentWidget(v)
         return v
 
-    def _view_menu(self, v, pos) -> None:
+    def _view_menu(self, v, pos, exec_menu: bool = True):
         m = v.createStandardContextMenu(pos)
         m.addSeparator()
         m.addAction(tr('Copier toute la discussion'), lambda: QApplication.clipboard().setText(v.toPlainText()))
         m.addAction(tr('Enregistrer la discussion…'), lambda: self.save_discussion())
-        m.exec(v.viewport().mapToGlobal(pos))
-        m.deleteLater()
+        from .columns import add_layout_menu
+        add_layout_menu(m, v)                            # dans sa colonne : « Disposition › » (27/11)
+        if exec_menu:
+            m.exec(v.viewport().mapToGlobal(pos))
+            m.deleteLater()
+        return m
 
     # --- un assistant par onglet ----------------------------------------------------------------------------
     def _current_tab(self):

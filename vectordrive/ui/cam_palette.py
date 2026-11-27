@@ -698,7 +698,7 @@ class CamPalette(QWidget):
             return None
         return self.win.cam_panel.new_operation(key, template=item.data(0, ROLE_TPL) or None, **kw)
 
-    def _menu(self, pos) -> None:
+    def _menu(self, pos, exec_menu: bool = True):
         item = self.tree.itemAt(pos)
         name = item.data(0, ROLE_TPL) if item is not None else None
         m = QMenu(self)
@@ -744,7 +744,11 @@ class CamPalette(QWidget):
         uni.setCheckable(True)
         uni.setChecked(self.unified())
         uni.toggled.connect(self.set_unified)
-        m.popup(self.tree.viewport().mapToGlobal(pos))
+        from .columns import add_layout_menu
+        add_layout_menu(m, self.tree)                    # « Disposition › » : la place du panneau (27/11)
+        if exec_menu:
+            m.popup(self.tree.viewport().mapToGlobal(pos))
+        return m
 
     # --- process (demande du 15/11, 23 h 30) ------------------------------------------------------------------------
     def save_process(self, name: str | None = None, description: str = '') -> str | None:

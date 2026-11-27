@@ -1681,7 +1681,12 @@ class SymbolPanel(QWidget):
                 self.tree.setCurrentItem(it)
                 if it.data(0, Qt.ItemDataRole.UserRole) in VIRTUAL:
                     self._folder_clicked(it)
-                    return None
+                    from .columns import panel_menu    # Récents, Favoris : le menu du panneau (27/11) ; None hors
+                    m = panel_menu(widget)               # d'une colonne (la bibliothèque en grand)
+                    if m is not None and exec_menu:
+                        m.exec(widget.viewport().mapToGlobal(pos) if pos is not None else QCursor.pos())
+                        m.deleteLater()
+                    return m
                 self.show_folder(pathlib.Path(it.data(0, Qt.ItemDataRole.UserRole)))
         else:
             it = self.list.itemAt(pos) if pos is not None else None
@@ -1721,6 +1726,8 @@ class SymbolPanel(QWidget):
         m.addAction(tr('Enregistrer la sélection sous…'), self.saveRequested.emit)
         m.addAction(tr('Ouvrir dans l\'explorateur'), self.reveal)
         m.addAction(tr('Actualiser'), self.refresh)
+        from .columns import add_layout_menu
+        add_layout_menu(m, widget)                       # dans sa colonne : « Disposition › » (27/11)
         if exec_menu:
             m.exec(widget.viewport().mapToGlobal(pos) if pos is not None else QCursor.pos())
             m.deleteLater()

@@ -139,7 +139,7 @@ class ClickSelects(unittest.TestCase):
         le = feed.lineEdit()
         self.click(le)
         self.assertTrue(feed.hasFocus() or le.hasFocus())
-        self.assertEqual(le.selectedText(), '750 mm/min')       # la valeur de l'outil, prête à être remplacée
+        self.assertEqual(le.selectedText(), '750')              # la valeur de l'outil, prête à être remplacée
 
 
 class ToolValueInTheField(unittest.TestCase):
@@ -147,8 +147,8 @@ class ToolValueInTheField(unittest.TestCase):
     def test_only_the_value_and_its_unit(self):
         tool = model.CamTool(name='Cyl 2', diameter=2.0, feed=750.0, plunge=150.0, spindle=18000.0, step_down=0.3,
                              stepover=0.5, number=1)
-        self.assertEqual(CP.tool_value_text('feed', tool), '750 mm/min')        # avant : « 750 mm/min (outil) »
-        self.assertEqual(CP.tool_value_text('spindle', tool), '18000 ' + tr('tr/min'))
+        self.assertEqual(CP.tool_value_text('feed', tool), '750')               # round 1183 : sans « mm/min »
+        self.assertEqual(CP.tool_value_text('spindle', tool), '18000')
         self.assertTrue(CP.tool_value_text('stepover_mm', tool).startswith('≈ 1 mm'))
         self.assertEqual(CP.tool_value_text('feed', None), '—')
         vee = model.CamTool(name='V 30', kind='conique', diameter=3.175, angle=30.0, stepover=0.4, feed=0.0, number=3)
@@ -164,7 +164,7 @@ class ToolValueInTheField(unittest.TestCase):
         dlg = CP.FieldsDialog(None, 'essai', op, tools=[tool])
         self.addCleanup(dlg.deleteLater)
         feed = dlg.widgets['feed']
-        self.assertEqual(feed.specialValueText(), '750 mm/min')
+        self.assertEqual(feed.specialValueText(), '750')
         self.assertIn(tr('{0} {1} (outil)').format('750', 'mm/min'), feed.toolTip())
         own = CP.FieldsDialog(None, 'essai', model.Operation(kind='poche', tool_id=tool.id, feed=999.0), tools=[tool])
         self.addCleanup(own.deleteLater)

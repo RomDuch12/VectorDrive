@@ -159,6 +159,14 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Tirets longs et courts, un tiret long à chaque bout'),
         F('axe/echelle', 'Ligne d\'axe : échelle du trait mixte', 0.25, 0.01, 100, ' ×', 2,
           tip='1 : motif CENTER des DAO (tiret long de 31,75 mm) ; 0,25 : tiret long de 7,9 mm'),
+        B('dessin/points_minimaux', 'Points minimaux : décalages, booléens, Pathfinder et lissages avec le moins de '
+          'nœuds possible', True,
+          tip='Comme TypeEdit : des droites, des arcs de cercle exacts et des courbes de Bézier dont les points hors '
+              'courbe portent la forme, au lieu de courbes chargées de nœuds rapprochés ; coins vifs gardés. '
+              'Décoché : les tracés tels que les calculs les rendent, comme avant'),
+        F('dessin/points_tolerance', 'Points minimaux : écart toléré', 0.01, 0.0005, 1.0, ' mm', 4,
+          tip='Le plus grand écart permis entre le tracé calculé et le tracé aux points minimaux (la Courbe lisse '
+              'garde son propre écart de tracé)'),
     ]),
     ('Affichage', [
         B('vue/regles', 'Règles', True),
@@ -452,6 +460,8 @@ SPEC: list[tuple[str, list[Opt]]] = [
           tip='Dans le dossier des copies ; jamais par-dessus un fichier qui n’est pas l’une de ses copies'),
         B('assistant/outils_step', 'Il crée des pièces STEP : catalogue, contours du dessin', True,
           tip='Dans le dossier « step » de ses copies ; jamais par-dessus un fichier qui n’est pas l’un des siens'),
+        B('assistant/outils_dossiers', 'Il lit les dossiers indexés et cherche des dessins semblables', True,
+          tip='Seulement les dossiers choisis dans Fichier › Dossiers indexés, en lecture seule : rien n’y est écrit'),
         B('assistant/outils_commandes', 'Il lance les commandes du ruban', True,
           tip='Jamais celles qui enregistrent, exportent, impriment, ferment ou touchent aux réglages'),
         Opt('assistant/dossier_copies', 'Dossier des copies de l’assistant', 'folder', '',
@@ -477,6 +487,7 @@ ASSISTANT_ADVANCED = frozenset({
     'assistant/modele_local', 'assistant/adresse_local', 'assistant/contexte_local', 'assistant/demarrage_local',
     'assistant/tours_max', 'assistant/devise', 'assistant/outils_memoire', 'assistant/outils_scripts',
     'assistant/outils_fao', 'assistant/outils_copies', 'assistant/outils_step', 'assistant/outils_commandes', 'assistant/dossier_copies',
+    'assistant/outils_dossiers',
     'assistant/dossier_modeles', 'assistant/taille_texte', 'assistant/couleur_vous', 'assistant/couleur_assistant',
     'assistant/couleur_valeurs', 'assistant/couleur_outils', 'assistant/valeurs_couleur', 'assistant/montrer_outils'})
 #: onglets de la fenêtre, repris en boutons dans l'onglet Options du ruban : titre → (clé, icône)
@@ -637,6 +648,8 @@ class OptionsDialog(QDialog):
                 form.insertRow(0, note)
             if title == 'Mises à jour' and hasattr(parent, 'update_application'):
                 self._app_update_row(form, parent)
+            if title == 'Mises à jour' and hasattr(parent, 'adopt_previous_version'):
+                self._config_group(form, parent)
             if title == 'Performances':
                 form.addRow(QLabel(self._gpu_text()))
                 from PySide6.QtWidgets import QPushButton
@@ -720,6 +733,58 @@ class OptionsDialog(QDialog):
         for key in self.APP_UPDATE_KEYS:
             self.settings.setValue(key, self.read(key))
         return parent.update_application()
+
+    def _config_group(self, form, parent) -> None:
+        """Onglet Mises à jour, sous « Mettre à jour l’application… » (demandes du 27/11 : « import depuis ancienne
+        version », « ajouter boutons exports/imports configuration/réglages ») : le groupe « Configuration » —
+        exporter et importer (les commandes `settings_export` / `settings_import`, fichier .vdparam), reprendre
+        d’une ancienne version portable (`MainWindow.adopt_previous_version` ; grisé hors version portable)."""
+        from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QPushButton
+        from .. import portable
+        box = self.config_group = QGroupBox(tr('Configuration'))
+        box.setObjectName('configGroup')
+        row = QHBoxLayout(box)
+        ex = self.config_export_button = QPushButton(tr('Exporter la configuration…'))
+        ex.setObjectName('configExportButton')
+        ex.setToolTip(tr('Un fichier .vdparam : réglages, Mes outils, modèles, thèmes, bibliothèque interne, polices '
+                         'ajoutées, scripts, assistant, autres données — jamais une clé ni un jeton'))
+        ex.clicked.connect(lambda _=False: parent.export_params_dialog())
+        im = self.config_import_button = QPushButton(tr('Importer une configuration…'))
+        im.setObjectName('configImportButton')
+        im.setToolTip(tr('Choisir ce qu’on reprend d’un fichier .vdparam ; ce qui est remplacé est d’abord '
+                         'sauvegardé, un fichier de bibliothèque ou une police déjà là n’est jamais écrasé'))
+        im.clicked.connect(lambda _=False: self.run_config_import(parent))
+        ad = self.adopt_button = QPushButton(tr('Reprendre d’une ancienne version…'))
+        ad.setObjectName('adoptButton')
+        if portable.is_portable():
+            ad.setToolTip(tr('Choisir le dossier d’une ancienne version portable : ses réglages, dossiers favoris, '
+                             'données, bibliothèque et onglets (avec leurs parcours) repris ici ; rien n’est changé '
+                             'dans son dossier'))
+        else:
+            ad.setEnabled(False)
+            ad.setToolTip(tr('Seulement pour une version portable (VectorDrive.ini à côté de VectorDrive.exe) : '
+                             'depuis les sources ou une version installée, les réglages sont ceux du poste'))
+        ad.clicked.connect(lambda _=False: self.run_adopt(parent))
+        for b in (ex, im, ad):
+            row.addWidget(b)
+        row.addStretch(1)
+        form.insertRow(1 if getattr(self, 'app_update_button', None) is not None else 0, box)
+
+    def run_config_import(self, parent):
+        """« Importer une configuration… » ; des réglages repris : la fenêtre des options se ferme sans écrire ses
+        champs (lus avant l'import, ils remettraient les anciennes valeurs)."""
+        counts = parent.import_params_dialog()
+        if counts and counts.get('reglages'):
+            self.reject()
+        return counts
+
+    def run_adopt(self, parent):
+        """« Reprendre d’une ancienne version… » ; reprise faite : la fenêtre des options se ferme sans écrire ses
+        champs (lus avant la reprise, ils remettraient les anciennes valeurs)."""
+        res = parent.adopt_previous_version()
+        if isinstance(res, dict) and res.get('etat') == 'repris':
+            self.reject()
+        return res
 
     def _shortcuts_page(self, form, parent) -> None:
         """L'onglet Raccourcis (demande du 19/11) : la fenêtre des raccourcis, toute (`shortcuts.dialog_class`,

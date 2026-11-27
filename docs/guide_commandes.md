@@ -1,4 +1,4 @@
-# Guide des commandes — VectorDrive 1.36.0
+# Guide des commandes — VectorDrive 1.46.0
 
 Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande réelle.
 
@@ -41,6 +41,13 @@ Généré depuis le ruban (outils/guide.py) : chaque ligne est une commande rée
 | Différence suivante |  | Montrer la zone suivante qui porte des différences |
 | Différence précédente |  | Montrer la zone précédente qui porte des différences |
 | Fermer la comparaison |  | Effacer les couleurs de la comparaison |
+
+### Formes
+
+| Commande | Raccourci | Rôle |
+|---|---|---|
+| Dessins semblables |  | Chercher, dans les dossiers indexés, les dessins qui ressemblent à la sélection (sinon au dessin entier), à un fichier ou à des critères : ressemblance réglable, score, double clic pour ouvrir |
+| Dossiers indexés |  | Choisir les dossiers à indexer et mettre l’index à jour, à la main, en arrière-plan ; l’assistant IA peut lire ces dossiers et cet index |
 
 ## Edition
 

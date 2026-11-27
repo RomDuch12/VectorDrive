@@ -21,7 +21,8 @@ MAX_INSTRUCTIONS = 4000
 #: les groupes d'outils qu'un réglage peut retirer : réglage → groupe de `agent.tools.ToolSet(without=…)`
 TOOL_GROUPS = {'assistant/outils_memoire': 'memory', 'assistant/outils_scripts': 'scripts',
                'assistant/outils_commandes': 'commands', 'assistant/outils_fao': 'cam',
-               'assistant/outils_copies': 'copies', 'assistant/outils_step': 'step'}
+               'assistant/outils_copies': 'copies', 'assistant/outils_step': 'step',
+               'assistant/outils_dossiers': 'folders'}
 
 
 def instructions(settings) -> str:
@@ -58,6 +59,9 @@ def system_text(settings, removed=None) -> str:
         topics = topics_prompt()                         # les mémoires thématiques : titres et descriptions
         if topics:
             parts.append(topics)
+    if 'folders' not in (without(settings) if removed is None else removed):
+        from ..agent.chat import FOLDERS_NOTE         # les outils des dossiers : cités seulement s'ils sont permis
+        parts.append(FOLDERS_NOTE)
     return '\n\n'.join(parts)
 
 

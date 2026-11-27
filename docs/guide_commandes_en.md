@@ -1,4 +1,4 @@
-# Command guide — VectorDrive 1.36.0
+# Command guide — VectorDrive 1.46.0
 
 Generated from the ribbon (outils/guide.py): every row is a real command.
 
@@ -41,6 +41,13 @@ Generated from the ribbon (outils/guide.py): every row is a real command.
 | Next difference |  | Show the next area holding differences |
 | Previous difference |  | Show the previous area holding differences |
 | Close the comparison |  | Clear the comparison colours |
+
+### Shapes
+
+| Command | Shortcut | Purpose |
+|---|---|---|
+| Similar drawings |  | Search the indexed folders for drawings that look like the selection (else the whole drawing), a file or criteria: adjustable similarity, score, double-click to open |
+| Indexed folders |  | Choose the folders to index and update the index, by hand, in the background; the AI assistant can read these folders and this index |
 
 ## Edit
 

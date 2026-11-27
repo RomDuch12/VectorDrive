@@ -91,9 +91,9 @@ class ToolPickerDialog(QDialog):
         self._opening = False                            # (dépliage fait par la liste elle-même : pas retenu)
         self.tree.itemExpanded.connect(lambda it: self._fav_folded(it, True))
         self.tree.itemCollapsed.connect(lambda it: self._fav_folded(it, False))
-        self.tree.header().sortIndicatorChanged.connect(lambda c, _o: self._lock_favorites(c))
         from .tool_columns import install                 # colonnes arrangeables, n° T dans la sienne (cachée)
-        install(self.tree, settings, 'outils/choix_colonnes')
+        install(self.tree, settings, 'outils/choix_colonnes')   # un en-tête neuf : ses signaux branchés après
+        self.tree.header().sortIndicatorChanged.connect(lambda c, _o: self._lock_favorites(c))
         from .tool_filters import sortable
         sortable(self.tree, lambda: self._refill(), settings, SORT)   # clic sur un titre : trier (retenu) ;
         # troisième clic : l'ordre d'origine

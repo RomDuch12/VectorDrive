@@ -149,6 +149,8 @@ class Registry:
     machines: list = field(default_factory=list)             # MachineSpec : fraiseuses et lasers du ruban FAO
     #: opérations d'un plugin dans la liste des opérations FAO : clé → fournisseur (`cam.external`)
     op_providers: dict = field(default_factory=dict)
+    #: données emportées dans la configuration (.vdparam) : (clé `plugin:<clé>`, libellé, files, module du plugin)
+    config_data: list = field(default_factory=list)
 
 
 REGISTRY = Registry()
@@ -371,6 +373,17 @@ class Api:
 
     def set_update_manifest(self, name: str) -> None:
         self._r.update_manifest = name
+
+    def add_config_data(self, key: str, label: str, files: Callable[[], list[pathlib.Path]]) -> None:
+        """Des fichiers de données du plugin emportés dans la configuration exportée (F10 › Mises à jour ›
+        Configuration, fichier .vdparam ; demande du 27/11) : `files()` rend leurs chemins (existants ou non), sous
+        `portable.data_dir()` ; rangés sous `donnees/<chemin relatif>`, rendus au même chemin à l'import (un fichier
+        déjà là : d'abord copié dans la sauvegarde de l'import). Hors des données, lien, dossier, code : laissé, et
+        dit. Chaque appel : une catégorie à elle (`plugin:<key>`, `label`), cochée d'office ; une erreur de `files()`
+        n'empêche jamais l'export. Un second appel de même clé remplace le premier."""
+        cat = 'plugin:' + str(key)
+        self._r.config_data[:] = [c for c in self._r.config_data if c[0] != cat]
+        self._r.config_data.append((cat, str(label), files, self.info.module))
 
     def add_autotest(self, name: str, fn: Callable) -> None:
         """Vérification de `--autotest` : fn() → texte du résultat (lève en cas d'échec)."""

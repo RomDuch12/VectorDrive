@@ -307,6 +307,12 @@ class CornerDialog(QDialog):
         form.addRow(tr('Rayon (négatif : creusé)') if kind == 'fillet' else tr('Recul'), self.size)
         _buttons(self, form)
 
+    def showEvent(self, ev) -> None:                     # noqa: N802 (API Qt)
+        super().showEvent(ev)
+        if not ev.spontaneous():                         # K, Alt+K (Mode Point) : le rayon ou le recul au focus, toute
+            from .fields import focus_first              # sa valeur sélectionnée — la frappe le remplace, Entrée
+            focus_first([self.size])                     # valide (demande du 27/11)
+
     def value(self) -> float:
         return self.size.value()
 

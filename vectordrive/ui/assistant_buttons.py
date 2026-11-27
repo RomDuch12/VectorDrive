@@ -24,7 +24,8 @@ CONTROL_LABELS = {'aucun': 'Aucun : appliqué tel quel', 'compte_rendu': 'Compte
                   'verification': 'Il vérifie son travail et dit ce qui est conforme',
                   'validation': 'Validation : Garder ou Défaire à la fin'}
 GROUP_LABELS = {'memory': 'Sa mémoire', 'scripts': 'Les scripts de forme', 'commands': 'Les commandes du ruban',
-                'cam': 'La FAO', 'copies': 'Les copies du dessin', 'step': 'Les pièces STEP'}
+                'cam': 'La FAO', 'copies': 'Les copies du dessin', 'step': 'Les pièces STEP',
+                'folders': 'Les dossiers indexés'}
 
 
 # --- le plan de travail et la demande ------------------------------------------------------------------------------
